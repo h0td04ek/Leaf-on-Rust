@@ -1,0 +1,57 @@
+# Mac filesystem dust
+.DS_Store/
+.DS_Store
+
+# Linux temp files
+*~
+
+# vim
+.*.sw[a-p]
+
+# IntelliJ
+*.iml
+.idea
+!.idea/icon.svg
+
+# Gradle
+!gradle/wrapper/gradle-wrapper.jar
+.gradle
+build
+
+# Leaf
+build-data/dev-imports.txt
+leaf-archived-patches/todo
+run
+
+leaf-api/build.gradle.kts
+leaf-server/build.gradle.kts
+leaf-server/src/minecraft
+paper-api
+paper-server
+
+# Rust / JVM-on-Rust
+java-25-on-rust/
+target/
+
+# Leaf-on-Rust: только Rust-часть в репо, Java-исходники остаются локально
+leaf-server/
+leaf-api/
+paper-api/
+paper-server/
+leaf-archived-patches/
+build-data/
+gradle/
+gradlew
+gradlew.bat
+*.gradle.kts
+settings.gradle.kts
+gradle.properties
+build/
+run/
+target/
+java-25-on-rust/
+.github/
+.idea/
+public/
+scripts/
+CONTRIBUTING.md

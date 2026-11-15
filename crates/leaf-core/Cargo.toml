@@ -1,0 +1,9 @@
+[package]
+name = "leaf-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+indexmap = "2"
+flate2 = "1"
+md-5 = "0.10"
