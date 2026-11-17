@@ -9,6 +9,8 @@
 //! Постепенно горячие подсистемы будут переписываться на Rust и
 //! подключаться к JVM через JNI или заменять Java-классы.
 
+pub mod core;
+pub mod joml;
 pub mod nbt;
 pub mod random;
 pub mod server;

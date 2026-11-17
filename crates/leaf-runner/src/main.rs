@@ -217,6 +217,16 @@ fn main() -> ExitCode {
     }
     println!("[leaf-runner] args:    {:?}", cfg.server_args);
 
+    // Paper/Leaf ждёт стандартные каталоги в рабочей директории;
+    // plugins обязателен — без него DirectoryProviderSource падает с NoSuchFileException.
+    for dir in ["plugins", "cache", "libraries", "versions", "logs", "world"] {
+        let p = Path::new(dir);
+        if let Err(e) = std::fs::create_dir_all(p) {
+            eprintln!("leaf-runner: не удалось создать {dir}: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+
     let mut cmd = Command::new(&cfg.jvm);
     cmd.arg("--modules").arg(cfg.modules.as_ref().unwrap());
     match (&cfg.jar, &cfg.classpath, &cfg.main_class) {
