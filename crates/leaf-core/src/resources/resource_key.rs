@@ -101,3 +101,15 @@ impl<T> std::fmt::Display for ResourceKey<T> {
         write!(f, "ResourceKey[{} / {}]", self.registry_name, self.identifier)
     }
 }
+
+impl<T> PartialOrd for ResourceKey<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for ResourceKey<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.registry_name, &self.identifier).cmp(&(&other.registry_name, &other.identifier))
+    }
+}

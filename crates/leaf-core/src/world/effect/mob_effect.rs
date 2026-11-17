@@ -7,7 +7,7 @@
 //! `MobEffectInstance` и реестром `Registries.MOB_EFFECT`.
 
 use crate::core::holder::Holder;
-use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 
@@ -29,26 +29,16 @@ impl MobEffect {
         self.id.to_string()
     }
 
-    /// `MobEffect.STREAM_CODEC` — `ByteBufCodecs.holderRegistry(MOB_EFFECT)`:
-    /// на проводе только VarInt holder-id реестра (Reference).
-    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Holder<MobEffect>> {
-        FnCodec::new(
-            |buf: &mut FriendlyByteBuf, holder: &Holder<MobEffect>| match holder {
-                Holder::Reference(id) => {
-                    buf.write_var_int(id + 1);
-                }
-                Holder::Direct(effect) => {
-                    panic!(
-                        "holderRegistry codec cannot encode direct holder: {}",
-                        effect.id
-                    );
-                }
-            },
-            |buf: &mut FriendlyByteBuf| {
-                let i = buf.read_var_int();
-                assert!(i != 0, "invalid mob effect holder id");
-                Holder::Reference(i - 1)
-            },
-        )
+    /// `isInstantenous` — базовая реализация `false`;
+    /// мгновенные эффекты (harm и т.п.) переопределяют —
+    /// поле добавится с полной моделью MobEffect.
+    pub fn is_instantaneous(&self) -> bool {
+        false
+    }
+
+    /// `MobEffect.STREAM_CODEC` — `holderRegistry(MOB_EFFECT)`:
+    /// plain VarInt registry-id (0-based).
+    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Holder<MobEffect>> + Send + Sync + 'static {
+        crate::core::holder::holder_registry_stream_codec::<MobEffect>()
     }
 }

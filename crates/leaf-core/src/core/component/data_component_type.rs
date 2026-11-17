@@ -90,6 +90,46 @@ impl ComponentStreamCodec {
     }
 }
 
+/// Type-erased persistent (NBT) кодек значения компонента —
+/// аналог `DataComponentType.codec` (`Codec<T>`), сериализующий
+/// значение в `Tag` через NbtOps.
+#[derive(Clone)]
+pub struct ComponentNbtCodec {
+    encode: Arc<dyn Fn(&dyn Any) -> Result<crate::nbt::tag::Tag, String> + Send + Sync>,
+    decode: Arc<dyn Fn(&crate::nbt::tag::Tag) -> Result<ComponentValue, String> + Send + Sync>,
+}
+
+impl ComponentNbtCodec {
+    /// Обёртка над типизированной парой функций.
+    pub fn new<T, E, D>(encode: E, decode: D) -> Self
+    where
+        T: Any + Send + Sync + Clone + PartialEq + std::fmt::Debug + 'static,
+        E: Fn(&T) -> Result<crate::nbt::tag::Tag, String> + Send + Sync + 'static,
+        D: Fn(&crate::nbt::tag::Tag) -> Result<T, String> + Send + Sync + 'static,
+    {
+        Self {
+            encode: Arc::new(move |v| {
+                let t = v.downcast_ref::<T>().expect("component nbt value type mismatch");
+                encode(t)
+            }),
+            decode: Arc::new(move |tag| {
+                let v = decode(tag)?;
+                Ok(Box::new(v) as ComponentValue)
+            }),
+        }
+    }
+
+    /// `codec.encodeStart(ops, value)`.
+    pub fn encode(&self, value: &dyn Any) -> Result<crate::nbt::tag::Tag, String> {
+        (self.encode)(value)
+    }
+
+    /// `codec.parse(ops, tag)`.
+    pub fn decode(&self, tag: &crate::nbt::tag::Tag) -> Result<ComponentValue, String> {
+        (self.decode)(tag)
+    }
+}
+
 /// `DataComponentType<T>` — запись реестра `DATA_COMPONENT_TYPE`.
 #[derive(Clone)]
 pub struct DataComponentType {
@@ -103,6 +143,10 @@ pub struct DataComponentType {
     /// `streamCodec` — network-кодек значения (`@Nullable`:
     /// transient-only типы не имеют network-кодека).
     pub stream_codec: Option<ComponentStreamCodec>,
+    /// `codec` — persistent NBT-кодек (`Codec<T>`); `None` —
+    /// ещё не портирован (encode через VALUE_MAP_CODEC упадёт,
+    /// как `codecOrThrow` для codec-less типов).
+    pub nbt_codec: Option<ComponentNbtCodec>,
 }
 
 impl DataComponentType {
@@ -253,3 +297,10 @@ where
 pub fn component_value_downcast<T: 'static>(value: &dyn Any) -> Option<&T> {
     value.downcast_ref::<T>()
 }
+
+impl PartialEq for DataComponentType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for DataComponentType {}

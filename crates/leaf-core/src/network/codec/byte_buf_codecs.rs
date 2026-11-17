@@ -7,7 +7,7 @@ use crate::core::vec3i::Vec3i;
 use crate::nbt::accounter::NbtAccounter;
 use crate::nbt::compound::CompoundTag;
 use crate::nbt::tag::Tag;
-use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::{CodecError, FriendlyByteBuf};
 use crate::network::{utf8_string, var_int, var_long};
 use crate::resources::Identifier;
@@ -461,6 +461,55 @@ pub fn list<T: 'static>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Syn
     collection(Vec::with_capacity, codec)
 }
 
+/// `list(maxSize, codec)` — список с лимитом размера
+/// (`ByteBufCodecs.list(maxSize)` читает count и проверяет
+/// `count <= maxSize`).
+pub fn list_limited<T: 'static>(
+    max_size: usize,
+    codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static,
+) -> impl StreamCodec<FriendlyByteBuf, Vec<T>> + Send + Sync + 'static {
+    let codec: std::sync::Arc<dyn StreamCodec<FriendlyByteBuf, T> + Send + Sync> =
+        std::sync::Arc::new(codec);
+    let codec_enc = codec.clone();
+    let codec_dec = codec;
+    sync_fn(
+        move |buf: &mut FriendlyByteBuf, v: &Vec<T>| {
+            buf.write_var_int(v.len() as i32);
+            for item in v {
+                codec_enc.encode(buf, item);
+            }
+        },
+        move |buf: &mut FriendlyByteBuf| {
+            let count = buf.read_var_int();
+            assert!(count >= 0 && count as usize <= max_size, "collection size {count} exceeds max {max_size}");
+            let mut out = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                out.push(codec_dec.decode(buf));
+            }
+            out
+        },
+    )
+}
+
+/// `compoundTag()` — обязателен `CompoundTag` (не Option):
+/// `ByteBufCodecs.COMPOUND_TAG` для non-null тега
+/// (`TypedEntityData`, NbtPredicate).
+pub const COMPOUND_TAG_REQUIRED: CompoundTagRequiredCodec = CompoundTagRequiredCodec;
+
+#[derive(Clone, Copy)]
+pub struct CompoundTagRequiredCodec;
+
+impl StreamCodec<FriendlyByteBuf, crate::nbt::compound::CompoundTag> for CompoundTagRequiredCodec {
+    fn encode(&self, buf: &mut FriendlyByteBuf, value: &crate::nbt::compound::CompoundTag) {
+        buf.write_nbt_compound(Some(value)).unwrap_or_else(|e| enc_err(e.0));
+    }
+    fn decode(&self, buf: &mut FriendlyByteBuf) -> crate::nbt::compound::CompoundTag {
+        buf.read_nbt_compound()
+            .unwrap_or_else(|e| dec_err(e.0))
+            .unwrap_or_default()
+    }
+}
+
 /// `optional(codec)`
 pub fn optional<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static) -> OptionalCodec<T> {
     OptionalCodec { codec: Box::new(codec) }
@@ -568,7 +617,7 @@ pub fn increase_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sy
 
 /// `ByteBufCodecs.GAME_PROFILE_PROPERTIES` — PropertyMap.
 pub fn game_profile_properties() -> impl StreamCodec<FriendlyByteBuf, crate::authlib::property_map::PropertyMap> {
-    FnCodec::new(
+    sync_fn(
         |buf: &mut FriendlyByteBuf, map: &crate::authlib::property_map::PropertyMap| {
             buf.write_var_int(map.size() as i32);
             for p in map.values() {
@@ -606,7 +655,7 @@ pub fn game_profile_properties() -> impl StreamCodec<FriendlyByteBuf, crate::aut
 /// `ByteBufCodecs.GAME_PROFILE` — uuid + name(16) + properties.
 pub fn game_profile() -> impl StreamCodec<FriendlyByteBuf, crate::authlib::game_profile::GameProfile> {
     let props = game_profile_properties();
-    FnCodec::new(
+    sync_fn(
         move |buf: &mut FriendlyByteBuf, p: &crate::authlib::game_profile::GameProfile| {
             buf.write_uuid(&p.id);
             buf.write_utf_n(&p.name, 16).expect("profile name too long");

@@ -30,4 +30,5 @@ pub mod command;
 pub mod commands;
 pub mod plugin;
 pub mod authlib;
+pub mod advancements;
 pub mod tags;

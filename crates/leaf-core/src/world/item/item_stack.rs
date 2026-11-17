@@ -71,6 +71,7 @@ impl ItemStack {
         match self.item.as_ref()? {
             Holder::Direct(i) => Some(i.id.clone()),
             Holder::Reference(id) => item::item_by_id(*id).map(|i| i.id.clone()),
+            Holder::Key(k) => Some(k.identifier.clone()),
         }
     }
 
@@ -82,6 +83,17 @@ impl ItemStack {
     /// `copy`.
     pub fn copy(&self) -> ItemStack {
         self.clone()
+    }
+
+    /// `getMaxStackSize()` — `item.getMaxStackSize()`:
+    /// `MAX_STACK_SIZE` компонент предмета, default 64.
+    pub fn get_max_stack_size(&self) -> i32 {
+        let id = crate::resources::identifier::Identifier::parse("max_stack_size")
+            .expect("max_stack_size id");
+        if let Some(max) = self.components.get_by_id::<i32>(&id) {
+            return *max;
+        }
+        64
     }
 
     /// `matches(a, b)` — одинаковый item и count (без компонентов).
@@ -183,5 +195,23 @@ impl ItemStack {
 impl PartialEq for ItemStack {
     fn eq(&self, other: &Self) -> bool {
         self.item == other.item && self.count == other.count
+    }
+}
+
+impl crate::core::component::data_component_getter::DataComponentGetter for ItemStack {
+    fn get_raw(&self, component: &crate::core::component::data_component_type::DataComponentType) -> Option<crate::core::component::data_component_type::ComponentValue> {
+        self.components.effective_raw(&component.id)
+    }
+
+    fn has_component(&self, component: &crate::core::component::data_component_type::DataComponentType) -> bool {
+        self.components.has(component)
+    }
+
+    fn iter_raw(&self) -> Vec<(crate::resources::identifier::Identifier, Option<crate::core::component::data_component_type::ComponentValue>)> {
+        self.components
+            .iter()
+            .into_iter()
+            .map(|t| (t.component_type.id.clone(), Some(t.value)))
+            .collect()
     }
 }

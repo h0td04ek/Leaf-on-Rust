@@ -9,6 +9,7 @@
 
 use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::resources::resource_key::ResourceKey;
 
 /// `DIRECT_HOLDER_ID`.
 pub const DIRECT_HOLDER_ID: i32 = 0;
@@ -20,6 +21,10 @@ pub enum Holder<T> {
     Direct(T),
     /// Ссылка на запись реестра (registry holder id).
     Reference(i32),
+    /// `Holder.Reference` с известным `ResourceKey`, но без
+    /// присвоенного registry-id (результат декода NBT/тегов).
+    /// На stream-проводе кодируется как Reference после привязки id.
+    Key(ResourceKey<T>),
 }
 
 /// `Holder.Kind`.
@@ -46,7 +51,7 @@ impl<T> Holder<T> {
     pub fn kind(&self) -> HolderKind {
         match self {
             Holder::Direct(_) => HolderKind::Direct,
-            Holder::Reference(_) => HolderKind::Reference,
+            Holder::Reference(_) | Holder::Key(_) => HolderKind::Reference,
         }
     }
 
@@ -54,7 +59,16 @@ impl<T> Holder<T> {
     pub fn value(&self) -> Option<&T> {
         match self {
             Holder::Direct(v) => Some(v),
-            Holder::Reference(_) => None,
+            Holder::Reference(_) | Holder::Key(_) => None,
+        }
+    }
+
+    /// `unwrapKey` — `Some` для `Key` (и потенциально Reference
+    /// после привязки).
+    pub fn key(&self) -> Option<&ResourceKey<T>> {
+        match self {
+            Holder::Key(k) => Some(k),
+            _ => None,
         }
     }
 
@@ -64,6 +78,7 @@ impl<T> Holder<T> {
         match self {
             Holder::Direct(v) => v,
             Holder::Reference(id) => panic!("Holder.Reference({id}) has no direct value"),
+            Holder::Key(_) => panic!("Holder.Key has no direct value"),
         }
     }
 }
@@ -92,6 +107,9 @@ impl<T> StreamCodec<FriendlyByteBuf, Holder<T>> for HolderStreamCodec<T> {
             Holder::Reference(id) => {
                 buf.write_var_int(id + 1);
             }
+            Holder::Key(_) => {
+                panic!("Holder.Key has no registry id bound yet")
+            }
         }
     }
 
@@ -103,4 +121,27 @@ impl<T> StreamCodec<FriendlyByteBuf, Holder<T>> for HolderStreamCodec<T> {
             Holder::Reference(i - 1)
         }
     }
+}
+
+/// `ByteBufCodecs.holderRegistry(registryKey)` — кодек holder'а,
+/// который ОБЯЗАН быть registry-ссылкой: на проводе plain VarInt
+/// registry-id (0-based, без direct-ветки и без +1).
+/// Decode → `Holder::Reference(id)`.
+pub fn holder_registry_stream_codec<T>() -> impl StreamCodec<FriendlyByteBuf, Holder<T>> + Send + Sync + 'static
+where
+    T: Send + Sync + 'static,
+{
+    crate::network::codec::stream_codec::sync_fn(
+        |buf: &mut FriendlyByteBuf, holder: &Holder<T>| match holder {
+            Holder::Reference(id) => {
+                buf.write_var_int(*id);
+            }
+            Holder::Direct(_) => panic!("holderRegistry requires registry reference"),
+            Holder::Key(_) => panic!("holderRegistry cannot encode unbound key"),
+        },
+        |buf: &mut FriendlyByteBuf| {
+            let id = buf.read_var_int();
+            Holder::Reference(id)
+        },
+    )
 }

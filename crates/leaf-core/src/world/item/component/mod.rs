@@ -1,15 +1,48 @@
 //! Перенос `net.minecraft.world.item.component` — payload-типы
 //! data components (UseEffects, TooltipDisplay, ...).
 
+pub mod bees;
+pub mod consumable;
 pub mod custom_model_data;
 pub mod damage_resistant;
 pub mod dyed_item_color;
 pub mod item_lore;
 pub mod ominous_bottle_amplifier;
+pub mod resolvable_profile;
+pub mod suspicious_stew_effects;
+pub mod typed_entity_data;
 pub mod tooltip_display;
 pub mod use_cooldown;
 pub mod use_effects;
+pub mod variants;
 
+pub mod adventure_mode_predicate;
+pub mod attack_range;
+pub mod block_item_state_properties;
+pub mod blocks_attacks;
+pub mod bundle_contents;
+pub mod charged_projectiles;
+pub mod custom_data;
+pub mod death_protection;
+pub mod firework_explosion;
+pub mod fireworks;
+pub mod instrument_component;
+pub mod item_attribute_modifiers;
+pub mod item_container_contents;
+pub mod jukebox_playable;
+pub mod kinetic_weapon;
+pub mod lodestone_tracker;
+pub mod map_item_color;
+pub mod map_post_processing;
+pub mod piercing_weapon;
+pub mod potion_contents;
+pub mod provides_trim_material;
+pub mod swing_animation;
+pub mod tool;
+pub mod use_remainder;
+pub mod weapon;
+pub mod writable_book_content;
+pub mod written_book_content;
 pub use custom_model_data::CustomModelData;
 pub use damage_resistant::DamageResistant;
 pub use dyed_item_color::DyedItemColor;
@@ -18,3 +51,4 @@ pub use ominous_bottle_amplifier::OminousBottleAmplifier;
 pub use tooltip_display::TooltipDisplay;
 pub use use_cooldown::UseCooldown;
 pub use use_effects::UseEffects;
+pub use variants::*;

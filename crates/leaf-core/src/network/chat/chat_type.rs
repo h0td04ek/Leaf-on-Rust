@@ -92,9 +92,8 @@ impl ChatTypeBound {
                 c.with_style(t.chat.style.clone());
                 c
             }
-            Holder::Reference(id) => {
+            Holder::Reference(_) | Holder::Key(_) => {
                 // Реестр ChatType ещё не портирован — вернуть content с именем.
-                let _ = id;
                 content.clone()
             }
         }

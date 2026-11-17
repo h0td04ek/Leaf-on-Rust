@@ -43,6 +43,33 @@ impl Uuid {
         Self::new(msb, lsb)
     }
 
+    /// `UUID.nameUUIDFromBytes` — MD5 → version 3, IETF variant.
+    pub fn name_uuid_from_bytes(bytes: &[u8]) -> Self {
+        use md5::{Digest, Md5};
+        let hash = Md5::digest(bytes);
+        let mut msb = 0i64;
+        let mut lsb = 0i64;
+        for i in 0..8 {
+            msb = (msb << 8) | hash[i] as i64;
+            lsb = (lsb << 8) | hash[i + 8] as i64;
+        }
+        // version 3
+        let msb = (msb & !(0xF << 12)) | (3 << 12);
+        // variant IETF (10xx)
+        let lsb = (lsb & !(0x3 << 62)) | (0x2 << 62);
+        Self::new(msb, lsb)
+    }
+
+    /// `UUIDUtil.createOfflinePlayerUUID` — nameUUIDFromBytes("OfflinePlayer:"+name).
+    pub fn create_offline_player_uuid(username: &str) -> Self {
+        Self::name_uuid_from_bytes(format!("OfflinePlayer:{username}").as_bytes())
+    }
+
+    /// `Util.NIL_UUID`-эквивалент.
+    pub fn nil() -> Self {
+        Self::NIL
+    }
+
     /// `UUID.fromString` — базовый парсинг.
     pub fn from_string(s: &str) -> Option<Self> {
         let hex: String = s.chars().filter(|&c| c != '-').collect();

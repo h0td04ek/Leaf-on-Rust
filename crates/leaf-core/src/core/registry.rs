@@ -1,35 +1,239 @@
-//! Перенос `net.minecraft.core.Registry` — на данном этапе только
-//! типовая метка и константы имён реестров (`Registries`).
-//! Полная реализация маппингов/holders — следующий этап.
+//! Перенос `net.minecraft.core.Registry`/`MappedRegistry` —
+//! реальная реализация реестра: упорядоченные записи,
+//! `ResourceKey`-индексы, holder'ы (`Holder::Reference`).
 
+use crate::core::holder::Holder;
+use crate::resources::resource_key::ResourceKey;
 use crate::resources::Identifier;
+use std::any::Any;
+use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::{Arc, RwLock};
 
+/// `Registry<T>` — упорядоченный реестр значений по `ResourceKey`.
+///
+/// Порядок регистрации = wire-id (holderRegistry-кодек пишет
+/// 0-based индекс). Значения T должны быть `Clone` (реестр
+/// отдаёт ссылки через `Holder::Direct` при inline-использовании).
 pub struct Registry<T> {
-    pub _phantom: PhantomData<fn() -> T>,
+    entries: Vec<RegistryEntry<T>>,
+    by_key: HashMap<ResourceKey<T>, usize>,
+    frozen: bool,
 }
 
-impl<T> Clone for Registry<T> {
-    fn clone(&self) -> Self {
-        Self { _phantom: PhantomData }
+#[derive(Clone)]
+struct RegistryEntry<T> {
+    key: ResourceKey<T>,
+    value: T,
+}
+
+impl<T: Clone + PartialEq + Send + Sync + 'static> Registry<T> {
+    /// `new MappedRegistry`.
+    pub fn new() -> Self {
+        Self { entries: Vec::new(), by_key: HashMap::new(), frozen: false }
+    }
+
+    /// `register(ResourceKey, T)` — возвращает holder записи.
+    /// Паника при повторной регистрации (как `IllegalStateException`
+    /// в Java при замене).
+    pub fn register(&mut self, key: ResourceKey<T>, value: T) -> Holder<T> {
+        assert!(!self.frozen, "registry is frozen");
+        assert!(!self.by_key.contains_key(&key), "duplicate key {:?}", key.id());
+        let id = self.entries.len() as i32;
+        self.entries.push(RegistryEntry { key: key.clone(), value });
+        self.by_key.insert(key, id as usize);
+        Holder::Reference(id)
+    }
+
+    /// `freeze` — запрещает дальнейшую регистрацию.
+    pub fn freeze(&mut self) {
+        self.frozen = true;
+    }
+
+    /// `isFrozen`.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen
+    }
+
+    /// `size`.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// `getId(ResourceKey)` — 0-based wire-id.
+    pub fn get_id(&self, key: &ResourceKey<T>) -> Option<i32> {
+        self.by_key.get(key).map(|&i| i as i32)
+    }
+
+    /// `getKey(T)` — `ResourceKey` по значению.
+    pub fn get_key(&self, value: &T) -> Option<&ResourceKey<T>> {
+        self.entries.iter().find(|e| &e.value == value).map(|e| &e.key)
+    }
+
+    /// `getValue(ResourceKey)`.
+    pub fn get_value(&self, key: &ResourceKey<T>) -> Option<&T> {
+        self.by_key.get(key).map(|&i| &self.entries[i].value)
+    }
+
+    /// `getValueOrThrow`.
+    pub fn get_value_or_throw(&self, key: &ResourceKey<T>) -> &T {
+        self.get_value(key).unwrap_or_else(|| panic!("missing registry entry {:?}", key.id()))
+    }
+
+    /// `getOptional(ResourceKey)`.
+    pub fn get_optional(&self, key: &ResourceKey<T>) -> Option<&T> {
+        self.get_value(key)
+    }
+
+    /// `getHolder(ResourceKey)` — `Holder::Reference` по ключу.
+    pub fn get_holder(&self, key: &ResourceKey<T>) -> Option<Holder<T>> {
+        self.get_id(key).map(Holder::Reference)
+    }
+
+    /// `getHolderOrThrow(ResourceKey)`.
+    pub fn get_holder_or_throw(&self, key: &ResourceKey<T>) -> Holder<T> {
+        self.get_holder(key).unwrap_or_else(|| panic!("missing holder {:?}", key.id()))
+    }
+
+    /// `getHolder(int)` — holder по registry-id.
+    pub fn get_holder_by_id(&self, id: i32) -> Option<Holder<T>> {
+        (id >= 0 && (id as usize) < self.entries.len()).then_some(Holder::Reference(id))
+    }
+
+    /// `getValue(int)` — значение по registry-id.
+    pub fn get_value_by_id(&self, id: i32) -> Option<&T> {
+        self.entries.get(id as usize).map(|e| &e.value)
+    }
+
+    /// `getKey(int)`.
+    pub fn get_key_by_id(&self, id: i32) -> Option<&ResourceKey<T>> {
+        self.entries.get(id as usize).map(|e| &e.key)
+    }
+
+    /// `entrySet` — `(ResourceKey, &T)` в порядке регистрации.
+    pub fn entry_set(&self) -> impl Iterator<Item = (&ResourceKey<T>, &T)> {
+        self.entries.iter().map(|e| (&e.key, &e.value))
+    }
+
+    /// `stream` / `keySet`.
+    pub fn keys(&self) -> impl Iterator<Item = &ResourceKey<T>> {
+        self.entries.iter().map(|e| &e.key)
+    }
+
+    /// `getId(T)` — id по значению.
+    pub fn get_id_of_value(&self, value: &T) -> Option<i32> {
+        self.entries.iter().position(|e| &e.value == value).map(|i| i as i32)
+    }
+
+    /// Поиск по `Identifier` (location).
+    pub fn get_value_by_identifier(&self, id: &Identifier) -> Option<&T> {
+        self.entries.iter().find(|e| e.key.id() == id).map(|e| &e.value)
+    }
+
+    /// `getHolderOrThrow(Identifier)`.
+    pub fn get_holder_by_identifier(&self, id: &Identifier) -> Option<Holder<T>> {
+        self.entries
+            .iter()
+            .position(|e| e.key.id() == id)
+            .map(|i| Holder::Reference(i as i32))
+    }
+
+    /// Все значения по порядку.
+    pub fn values(&self) -> impl Iterator<Item = &T> {
+        self.entries.iter().map(|e| &e.value)
     }
 }
 
-impl<T> std::fmt::Debug for Registry<T> {
+impl<T: std::fmt::Debug> std::fmt::Debug for Registry<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Registry")
+        f.debug_struct("Registry").field("size", &self.entries.len()).finish()
     }
 }
 
-impl<T> PartialEq for Registry<T> {
-    fn eq(&self, _other: &Self) -> bool {
-        true
+impl<T: PartialEq> PartialEq for Registry<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries.len() == other.entries.len()
+            && self.entries.iter().zip(other.entries.iter()).all(|(a, b)| a.key == b.key && a.value == b.value)
+    }
+}
+impl<T: PartialEq> Eq for Registry<T> {}
+
+impl<T> Default for Registry<T>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl<T> Eq for Registry<T> {}
+/// `RegistryAccess` — типизированный доступ к реестрам уровня
+/// (алиас над `RegistryAccessMap`).
+pub type RegistryAccess = RegistryAccessMap;
 
-/// `net.minecraft.core.registries.Registries` — константы имён реестров.
+/// Type-erased `Registry<T>` для хранения в `RegistryAccess`.
+struct AnyRegistryEntry {
+    name: Identifier,
+    inner: Arc<dyn Any + Send + Sync>,
+}
+
+/// Расширенный `RegistryAccess` с type-erased хранением —
+/// позволяет `lookup::<T>` без `AnyRegistry` bound-проблем.
+#[derive(Default)]
+pub struct RegistryAccessMap {
+    registries: RwLock<HashMap<Identifier, Arc<dyn Any + Send + Sync>>>,
+}
+
+impl RegistryAccessMap {
+    /// `new`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `register(name, registry)`.
+    pub fn register<T: Clone + PartialEq + Send + Sync + 'static>(
+        &self,
+        name: Identifier,
+        registry: Arc<Registry<T>>,
+    ) {
+        self.registries.write().unwrap().insert(name, registry);
+    }
+
+    /// `lookup(name)` → `Arc<Registry<T>>`.
+    pub fn lookup<T: Clone + PartialEq + Send + Sync + 'static>(
+        &self,
+        name: &Identifier,
+    ) -> Option<Arc<Registry<T>>> {
+        self.registries
+            .read()
+            .unwrap()
+            .get(name)?
+            .clone()
+            .downcast::<Registry<T>>()
+            .ok()
+    }
+
+    /// `registryOrThrow`.
+    pub fn registry_or_throw<T: Clone + PartialEq + Send + Sync + 'static>(
+        &self,
+        name: &Identifier,
+    ) -> Arc<Registry<T>> {
+        self.lookup(name).unwrap_or_else(|| panic!("missing registry {name}"))
+    }
+
+    /// Имена реестров.
+    pub fn registry_names(&self) -> Vec<Identifier> {
+        self.registries.read().unwrap().keys().cloned().collect()
+    }
+}
+
+/// Глобальный доступ к `RegistryAccess` (`BuiltInRegistries` +
+/// per-level `RegistryAccess`). Заполняется bootstrap'ом.
+pub fn builtin_registry_access() -> &'static std::sync::OnceLock<Arc<RegistryAccessMap>> {
+    static ACCESS: std::sync::OnceLock<Arc<RegistryAccessMap>> = std::sync::OnceLock::new();
+    &ACCESS
+}
+
 pub mod registries {
     use crate::resources::Identifier;
 

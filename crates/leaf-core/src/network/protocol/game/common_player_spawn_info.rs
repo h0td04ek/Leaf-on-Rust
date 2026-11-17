@@ -76,6 +76,7 @@ impl CommonPlayerSpawnInfo {
                 buf.write_var_int(id);
             }
             Holder::Direct(_) => panic!("DimensionType direct holder cannot be encoded without registry"),
+            Holder::Key(_) => panic!("DimensionType unbound key cannot be encoded without registry"),
         }
         let _ = buf.write_resource_key(&self.dimension);
         buf.write_long(self.seed);

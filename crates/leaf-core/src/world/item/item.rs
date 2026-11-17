@@ -73,6 +73,9 @@ pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Holder<Item>> + Send 
         move |buf: &mut FriendlyByteBuf, holder: &Holder<Item>| {
             let id = match holder {
                 Holder::Reference(id) => *id,
+                Holder::Key(_) => {
+                    panic!("holderRegistry codec cannot encode unbound key")
+                }
                 Holder::Direct(item) => item_registry_id(item)
                     .expect("direct item is not in registry"),
             };

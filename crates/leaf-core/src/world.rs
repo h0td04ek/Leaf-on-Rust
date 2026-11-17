@@ -6,6 +6,8 @@ pub mod phys;
 pub mod scores;
 pub mod boss_event;
 pub mod effect;
+pub mod food;
+pub mod flag;
 pub mod waypoints;
 pub mod damagesource;
 pub mod gametest;

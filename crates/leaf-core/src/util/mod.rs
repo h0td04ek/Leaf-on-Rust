@@ -22,6 +22,7 @@ pub mod easing_type;
 pub mod either;
 pub mod exception_collector;
 pub mod fast_buffered_input_stream;
+pub mod fraction;
 pub mod file_util;
 pub mod file_zipper;
 pub mod graph;

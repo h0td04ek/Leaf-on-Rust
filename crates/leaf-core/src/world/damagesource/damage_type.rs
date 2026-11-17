@@ -6,7 +6,7 @@
 //! (сообщения смерти, эффекты, истощение) — с реестром `DamageType`.
 
 use crate::core::holder::Holder;
-use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 
@@ -23,22 +23,9 @@ impl DamageType {
         Self { id }
     }
 
-    /// `DamageType.STREAM_CODEC` — holderRegistry: только VarInt id.
-    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Holder<DamageType>> {
-        FnCodec::new(
-            |buf: &mut FriendlyByteBuf, holder: &Holder<DamageType>| match holder {
-                Holder::Reference(id) => {
-                    buf.write_var_int(id + 1);
-                }
-                Holder::Direct(damage_type) => {
-                    panic!("holderRegistry codec cannot encode direct holder: {}", damage_type.id);
-                }
-            },
-            |buf: &mut FriendlyByteBuf| {
-                let i = buf.read_var_int();
-                assert!(i != 0, "invalid damage type holder id");
-                Holder::Reference(i - 1)
-            },
-        )
+    /// `DamageType.STREAM_CODEC` — `holderRegistry(DAMAGE_TYPE)`:
+    /// plain VarInt registry-id (0-based).
+    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Holder<DamageType>> + Send + Sync + 'static {
+        crate::core::holder::holder_registry_stream_codec::<DamageType>()
     }
 }

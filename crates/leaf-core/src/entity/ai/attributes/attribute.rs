@@ -31,6 +31,9 @@ impl Attribute {
                 Holder::Reference(id) => {
                     buf.write_var_int(id + 1);
                 }
+                Holder::Key(_) => {
+                    panic!("holderRegistry codec cannot encode unbound key")
+                }
                 Holder::Direct(attr) => {
                     panic!("holderRegistry codec cannot encode direct holder: {}", attr.id);
                 }

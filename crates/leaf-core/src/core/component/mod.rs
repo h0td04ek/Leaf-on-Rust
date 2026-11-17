@@ -13,3 +13,6 @@ pub use data_component_patch::{ComponentPatchValue, DataComponentPatch};
 pub use data_component_type::{data_component_type_stream_codec, DataComponentType};
 pub use patched_data_component_map::PatchedDataComponentMap;
 pub use typed_data_component::TypedDataComponent;
+pub mod data_component_exact_predicate;
+pub mod data_component_getter;
+pub mod predicates;
