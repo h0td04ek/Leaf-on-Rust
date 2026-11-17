@@ -1,6 +1,7 @@
 //! Перенос `net.minecraft.core` — базовые core-типы (Vec3i, Direction, ...).
 
 pub mod block_pos;
+pub mod rotations;
 pub mod component;
 pub mod direction;
 pub mod global_pos;

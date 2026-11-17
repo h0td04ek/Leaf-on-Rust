@@ -16,6 +16,7 @@ pub mod nbt;
 pub mod random;
 pub mod reported_exception;
 pub mod server;
+pub mod stats;
 pub mod util;
 pub mod world;
 pub mod level;

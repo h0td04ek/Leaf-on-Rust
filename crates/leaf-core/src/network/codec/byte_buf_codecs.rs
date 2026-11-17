@@ -672,3 +672,78 @@ pub fn game_profile() -> impl StreamCodec<FriendlyByteBuf, crate::authlib::game_
         },
     )
 }
+
+// ---------------------------------------------------------- примитивные кодеки
+
+/// `ByteBufCodecs.BYTE`.
+pub fn byte() -> impl StreamCodec<FriendlyByteBuf, i8> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &i8| { buf.write_byte(*v as i32); },
+        |buf: &mut FriendlyByteBuf| buf.read_byte(),
+    )
+}
+
+/// `ByteBufCodecs.VAR_INT`.
+pub fn var_int() -> impl StreamCodec<FriendlyByteBuf, i32> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &i32| { buf.write_var_int(*v); },
+        |buf: &mut FriendlyByteBuf| buf.read_var_int(),
+    )
+}
+
+/// `ByteBufCodecs.VAR_LONG`.
+pub fn var_long() -> impl StreamCodec<FriendlyByteBuf, i64> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &i64| { buf.write_var_long(*v); },
+        |buf: &mut FriendlyByteBuf| buf.read_var_long(),
+    )
+}
+
+/// `ByteBufCodecs.FLOAT`.
+pub fn float() -> impl StreamCodec<FriendlyByteBuf, f32> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &f32| { buf.write_float(*v); },
+        |buf: &mut FriendlyByteBuf| buf.read_float(),
+    )
+}
+
+/// `ByteBufCodecs.BOOL`.
+pub fn bool_() -> impl StreamCodec<FriendlyByteBuf, bool> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &bool| { buf.write_bool(*v); },
+        |buf: &mut FriendlyByteBuf| buf.read_bool(),
+    )
+}
+
+/// `ByteBufCodecs.VECTOR3F` — `Vector3fc`.
+pub fn vector3f() -> impl StreamCodec<FriendlyByteBuf, crate::joml::vector3f::Vector3f> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &crate::joml::vector3f::Vector3f| {
+            buf.write_float(v.x);
+            buf.write_float(v.y);
+            buf.write_float(v.z);
+        },
+        |buf: &mut FriendlyByteBuf| {
+            crate::joml::vector3f::Vector3f::new_from(buf.read_float(), buf.read_float(), buf.read_float())
+        },
+    )
+}
+
+/// `ByteBufCodecs.QUATERNIONF` — `Quaternionfc`.
+pub fn quaternionf() -> impl StreamCodec<FriendlyByteBuf, crate::joml::quaternionf::Quaternionf> + Send + Sync + 'static {
+    sync_fn(
+        |buf: &mut FriendlyByteBuf, v: &crate::joml::quaternionf::Quaternionf| {
+            buf.write_float(v.x);
+            buf.write_float(v.y);
+            buf.write_float(v.z);
+            buf.write_float(v.w);
+        },
+        |buf: &mut FriendlyByteBuf| {
+            {
+                let mut q = crate::joml::quaternionf::Quaternionf::new();
+                q.set(buf.read_float(), buf.read_float(), buf.read_float(), buf.read_float());
+                q
+            }
+        },
+    )
+}

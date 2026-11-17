@@ -548,6 +548,23 @@ impl Direction {
         crate::util::shuffle(&mut list, random);
         list
     }
+
+    /// `by3DDataValue` — поиск по 3d data value.
+    pub fn by_3d_data_value(value: i32) -> Direction {
+        Self::VALUES.iter().find(|d| d.get_3d_data_value() == value).copied().unwrap_or(Direction::DOWN)
+    }
+
+    /// `STREAM_CODEC` — `ByteBufCodecs.idMapper(Direction::by3DDataValue)`.
+    pub fn stream_codec() -> impl crate::network::codec::stream_codec::StreamCodec<crate::network::friendly_byte_buf::FriendlyByteBuf, Direction> + Send + Sync + 'static {
+        crate::network::codec::stream_codec::sync_fn(
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, d: &Direction| {
+                buf.write_var_int(d.get_3d_data_value());
+            },
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| {
+                Direction::by_3d_data_value(buf.read_var_int())
+            },
+        )
+    }
 }
 
 impl std::fmt::Display for Direction {
