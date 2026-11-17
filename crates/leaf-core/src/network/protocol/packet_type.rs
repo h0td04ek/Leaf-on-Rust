@@ -52,3 +52,11 @@ impl<T> fmt::Display for PacketType<T> {
         write!(f, "{}/{}", self.flow.id(), self.id)
     }
 }
+
+impl<T> PacketType<T> {
+    /// Стирание типа пакета → `PacketTypePtr` (аналог unchecked cast
+    /// `PacketType<T>` → `PacketType<? extends Packet<?>>`).
+    pub fn erase(self) -> crate::network::protocol::packet::PacketTypePtr {
+        PacketType::new(self.flow, self.id)
+    }
+}

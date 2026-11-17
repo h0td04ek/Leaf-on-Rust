@@ -563,3 +563,63 @@ pub fn track_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> 
 pub fn increase_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> impl StreamCodec<FriendlyByteBuf, T> {
     codec
 }
+
+// ---------------------------------------------------------- game profile
+
+/// `ByteBufCodecs.GAME_PROFILE_PROPERTIES` — PropertyMap.
+pub fn game_profile_properties() -> impl StreamCodec<FriendlyByteBuf, crate::authlib::property_map::PropertyMap> {
+    FnCodec::new(
+        |buf: &mut FriendlyByteBuf, map: &crate::authlib::property_map::PropertyMap| {
+            buf.write_var_int(map.size() as i32);
+            for p in map.values() {
+                buf.write_utf_n(&p.name, 64).expect("property name too long");
+                buf.write_utf_n(&p.value, 32767).expect("property value too long");
+                match &p.signature {
+                    Some(sig) => {
+                        buf.write_bool(true);
+                        buf.write_utf_n(sig, 1024).expect("signature too long");
+                    }
+                    None => {
+                        buf.write_bool(false);
+                    }
+                }
+            }
+        },
+        |buf: &mut FriendlyByteBuf| {
+            let count = buf.read_var_int();
+            let mut map = crate::authlib::property_map::PropertyMap::new();
+            for _ in 0..count {
+                let name = buf.read_utf_n(64).expect("invalid property name");
+                let value = buf.read_utf_n(32767).expect("invalid property value");
+                let signature = if buf.read_bool() {
+                    Some(buf.read_utf_n(1024).expect("invalid signature"))
+                } else {
+                    None
+                };
+                map.put(crate::authlib::property::Property::new(name, value, signature));
+            }
+            map
+        },
+    )
+}
+
+/// `ByteBufCodecs.GAME_PROFILE` — uuid + name(16) + properties.
+pub fn game_profile() -> impl StreamCodec<FriendlyByteBuf, crate::authlib::game_profile::GameProfile> {
+    let props = game_profile_properties();
+    FnCodec::new(
+        move |buf: &mut FriendlyByteBuf, p: &crate::authlib::game_profile::GameProfile| {
+            buf.write_uuid(&p.id);
+            buf.write_utf_n(&p.name, 16).expect("profile name too long");
+            props.encode(buf, &p.properties);
+        },
+        {
+            let props = game_profile_properties();
+            move |buf: &mut FriendlyByteBuf| {
+                let id = buf.read_uuid();
+                let name = buf.read_utf_n(16).expect("invalid profile name");
+                let properties = props.decode(buf);
+                crate::authlib::game_profile::GameProfile::with_properties(id, name, properties)
+            }
+        },
+    )
+}

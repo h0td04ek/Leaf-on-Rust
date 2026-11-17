@@ -210,3 +210,18 @@ pub fn at_bottom_center_of(to_copy: &Vec3i) -> Vec3 {
 pub fn up_from_bottom_center_of(to_copy: &Vec3i, vertical_offset: f64) -> Vec3 {
     at_lower_corner_with_offset(to_copy, 0.5, vertical_offset, 0.5)
 }
+
+impl Vec3 {
+    /// `Vec3.STREAM_CODEC` — 3 double (`readVec3`/`writeVec3`).
+    pub fn stream_codec() -> impl crate::network::codec::stream_codec::StreamCodec<
+        crate::network::friendly_byte_buf::FriendlyByteBuf,
+        Vec3,
+    > {
+        crate::network::codec::stream_codec::FnCodec::new(
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, v: &Vec3| {
+                buf.write_vec3(v);
+            },
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| buf.read_vec3(),
+        )
+    }
+}

@@ -1,1 +1,26 @@
-// TODO: портируется
+//! Перенос `net.minecraft.network.protocol.configuration`.
+
+pub mod client_configuration_packet_listener;
+pub mod clientbound_code_of_conduct_packet;
+pub mod clientbound_finish_configuration_packet;
+pub mod clientbound_registry_data_packet;
+pub mod clientbound_reset_chat_packet;
+pub mod clientbound_select_known_packs;
+pub mod clientbound_update_enabled_features_packet;
+pub mod configuration_packet_types;
+pub mod configuration_protocols;
+pub mod server_configuration_packet_listener;
+pub mod serverbound_accept_code_of_conduct_packet;
+pub mod serverbound_finish_configuration_packet;
+pub mod serverbound_select_known_packs;
+
+pub use clientbound_code_of_conduct_packet::ClientboundCodeOfConductPacket;
+pub use clientbound_finish_configuration_packet::ClientboundFinishConfigurationPacket;
+pub use clientbound_registry_data_packet::ClientboundRegistryDataPacket;
+pub use clientbound_reset_chat_packet::ClientboundResetChatPacket;
+pub use clientbound_select_known_packs::ClientboundSelectKnownPacks;
+pub use clientbound_update_enabled_features_packet::ClientboundUpdateEnabledFeaturesPacket;
+pub use configuration_packet_types::ConfigurationPacketTypes;
+pub use serverbound_accept_code_of_conduct_packet::ServerboundAcceptCodeOfConductPacket;
+pub use serverbound_finish_configuration_packet::ServerboundFinishConfigurationPacket;
+pub use serverbound_select_known_packs::ServerboundSelectKnownPacks;

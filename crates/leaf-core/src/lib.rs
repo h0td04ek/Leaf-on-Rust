@@ -25,5 +25,8 @@ pub mod chunk;
 pub mod locale;
 pub mod network;
 pub mod resources;
+pub mod sounds;
 pub mod command;
+pub mod commands;
 pub mod plugin;
+pub mod authlib;

@@ -3,8 +3,10 @@
 pub mod block_pos;
 pub mod direction;
 pub mod global_pos;
+pub mod holder;
 pub mod quart_pos;
 pub mod registry;
+pub mod registry_synchronization;
 pub mod section_pos;
 pub mod shared_constants;
 pub mod vec3i;

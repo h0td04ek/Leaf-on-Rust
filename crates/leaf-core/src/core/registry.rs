@@ -9,6 +9,26 @@ pub struct Registry<T> {
     pub _phantom: PhantomData<fn() -> T>,
 }
 
+impl<T> Clone for Registry<T> {
+    fn clone(&self) -> Self {
+        Self { _phantom: PhantomData }
+    }
+}
+
+impl<T> std::fmt::Debug for Registry<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Registry")
+    }
+}
+
+impl<T> PartialEq for Registry<T> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<T> Eq for Registry<T> {}
+
 /// `net.minecraft.core.registries.Registries` — константы имён реестров.
 pub mod registries {
     use crate::resources::Identifier;
@@ -179,6 +199,9 @@ pub mod registries {
     }
     pub fn custom_stat() -> Identifier {
         Identifier::minecraft("custom_stat")
+    }
+    pub fn chat_type() -> Identifier {
+        Identifier::minecraft("chat_type")
     }
     pub fn dialog_type() -> Identifier {
         Identifier::minecraft("dialog_type")

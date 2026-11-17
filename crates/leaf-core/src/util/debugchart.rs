@@ -4,6 +4,7 @@
 pub mod abstract_sample_logger;
 pub mod local_sample_logger;
 pub mod sample_logger;
+pub mod remote_debug_sample_type;
 pub mod sample_storage;
 
 pub use abstract_sample_logger::AbstractSampleLogger;

@@ -476,7 +476,12 @@ fn read_style_json(obj: &Map<String, Value>) -> Result<Style, String> {
         ("obfuscated", &mut style.obfuscated),
     ] {
         if let Some(v) = obj.get(key) {
-            *field = Some(v.as_bool().ok_or_else(|| format!("{} must be bool", key))?);
+            // NBT round-trip: bool приходит как byte 0/1
+            *field = Some(match v {
+                Value::Bool(b) => *b,
+                Value::Number(n) => n.as_i64().map_or(false, |x| x != 0),
+                _ => return Err(format!("{} must be bool", key)),
+            });
         }
     }
     if let Some(v) = obj.get("font") {
@@ -652,16 +657,18 @@ fn read_hover_event_json(v: &Value) -> Result<HoverEvent, String> {
 use crate::network::codec::stream_codec::StreamCodec;
 
 /// `ComponentSerialization.TRUSTED_CONTEXT_FREE_STREAM_CODEC`
-/// (`ByteBufCodecs.fromCodecTrusted(CODEC)`) — JSON как UTF-8 строка.
+/// (`ByteBufCodecs.fromCodecTrusted(CODEC)`) — компонент как NBT tag
+/// (JSON-представление кодека, конвертированное через NbtOps).
 pub fn component_stream_codec() -> impl StreamCodec<crate::network::friendly_byte_buf::FriendlyByteBuf, Component> {
     crate::network::codec::stream_codec::FnCodec::new(
         |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, c: &Component| {
-            let json = serde_json::to_string(&component_to_json(c)).expect("component serialization");
-            buf.write_utf(&json).expect("component json too long");
+            let json = component_to_json(c);
+            let tag = crate::nbt::json::tag_from_json(&json).expect("component nbt encode");
+            buf.write_nbt(Some(&tag)).expect("component nbt write");
         },
         |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| {
-            let json = buf.read_utf().expect("invalid component json");
-            let value: Value = serde_json::from_str(&json).expect("invalid component json");
+            let tag = buf.read_nbt().expect("invalid component nbt").unwrap_or(crate::nbt::tag::Tag::End);
+            let value = crate::nbt::json::json_from_tag(&tag).expect("component nbt decode");
             component_from_json(&value).expect("invalid component")
         },
     )
@@ -683,4 +690,22 @@ pub fn optional_component_stream_codec() -> impl StreamCodec<crate::network::fri
             Some(component_stream_codec().decode(buf))
         },
     )
+}
+
+// ------------------------------------------------------------ style codec JSON
+
+/// `Style.Serializer.CODEC` — JSON-представление (для NBT stream codec
+/// и `ChatTypeDecoration.STREAM_CODEC`).
+pub fn style_to_json(style: &crate::network::chat::style::Style) -> Value {
+    let mut obj = Map::new();
+    write_style_json(style, &mut obj);
+    Value::Object(obj)
+}
+
+/// Обратная конвертация `style_to_json`.
+pub fn style_from_json(value: &Value) -> Result<crate::network::chat::style::Style, String> {
+    match value {
+        Value::Object(obj) => read_style_json(obj),
+        _ => Err("style must be an object".to_string()),
+    }
 }

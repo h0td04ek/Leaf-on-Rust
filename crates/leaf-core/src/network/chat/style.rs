@@ -330,3 +330,23 @@ impl fmt::Display for Style {
         write!(f, "}}")
     }
 }
+
+// ------------------------------------------------------------ stream codec
+
+/// `Style.Serializer.TRUSTED_STREAM_CODEC` — Style как NBT tag
+/// (codec → NbtOps; JSON-поля конвертируются через `nbt::json`).
+pub fn style_stream_codec()
+-> impl crate::network::codec::stream_codec::StreamCodec<crate::network::friendly_byte_buf::FriendlyByteBuf, Style> {
+    crate::network::codec::stream_codec::FnCodec::new(
+        |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, style: &Style| {
+            let json = crate::network::chat::component_json::style_to_json(style);
+            let tag = crate::nbt::json::tag_from_json(&json).expect("style nbt encode");
+            buf.write_nbt(Some(&tag)).expect("style nbt write");
+        },
+        |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| {
+            let tag = buf.read_nbt().expect("invalid style nbt").unwrap_or(crate::nbt::tag::Tag::End);
+            let json = crate::nbt::json::json_from_tag(&tag).expect("style nbt decode");
+            crate::network::chat::component_json::style_from_json(&json).expect("invalid style")
+        },
+    )
+}

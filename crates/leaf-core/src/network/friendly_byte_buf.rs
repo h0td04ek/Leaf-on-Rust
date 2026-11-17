@@ -1221,6 +1221,25 @@ impl FriendlyByteBuf {
         self
     }
 
+    // ---- PublicKey (Crypt.byteToPublicKey / X509 SPKI DER) ----------
+
+    /// `readPublicKey` — byte[] (max 512) → X509 RSA public key.
+    pub fn read_public_key(&mut self) -> Result<rsa::RsaPublicKey, CodecError> {
+        let bytes = self.read_byte_array_n(512)?;
+        crate::network::encryption::crypt::byte_to_public_key(&bytes)
+            .map_err(|e| CodecError(e.to_string()))
+    }
+
+    /// `writePublicKey` — `publicKey.getEncoded()` (X509 SPKI DER).
+    pub fn write_public_key(&mut self, key: &rsa::RsaPublicKey) -> Result<&mut Self, CodecError> {
+        use rsa::pkcs8::EncodePublicKey;
+        let der = key
+            .to_public_key_der()
+            .map_err(|e| CodecError(e.to_string()))?;
+        self.write_byte_array(der.as_bytes());
+        Ok(self)
+    }
+
     // ---- BitSet ------------------------------------------------------
 
     /// `readBitSet` — long array → bitset (Vec<u64>).
