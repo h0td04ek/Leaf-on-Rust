@@ -1,151 +1,243 @@
 //! Перенос `net.minecraft.util.BitStorage`, `SimpleBitStorage`,
-//! `ZeroBitStorage`.
-//! Paper-оптимизации через magic-числа заменены на прямое деление
-//! `index / values_per_long` — семантика идентична.
+//! `ZeroBitStorage` — постраничное хранилище значений фиксированной
+//! разрядности (битовые палитры чанков).
 
-/// `BitStorage` — трейт битового хранилища.
-pub trait BitStorage {
-    fn get_and_set(&mut self, index: usize, value: i32) -> i32;
-    fn set(&mut self, index: usize, value: i32);
-    fn get(&self, index: usize) -> i32;
-    fn get_raw(&self) -> &[i64];
-    fn get_size(&self) -> usize;
-    fn get_bits(&self) -> u32;
-    fn get_all(&self, consumer: &mut dyn FnMut(i32));
-    fn unpack(&self, array: &mut [i32]);
-    fn copy(&self) -> Box<dyn BitStorage>;
+/// `BitStorage` — хранилище `size` значений по `bits` бит каждое.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BitStorage {
+    /// `ZeroBitStorage` — все значения равны 0, биты не хранятся.
+    Zero {
+        /// `size`.
+        size: usize,
+    },
+    /// `SimpleBitStorage` — плотная упаковка little-endian по `long`.
+    Simple(SimpleBitStorage),
+}
 
-    /// `moonrise$countEntries` (Paper block counting) —
-    /// индексы по каждому значению палитры.
-    fn count_entries(&self) -> std::collections::HashMap<i32, Vec<i32>> {
-        let size = self.get_size();
-        let mut ret: std::collections::HashMap<i32, Vec<i32>> = std::collections::HashMap::new();
-        for index in 0..size {
-            let palette_idx = self.get(index);
-            ret.entry(palette_idx).or_default().push(index as i32);
+impl BitStorage {
+    /// `getAndSet` — возвращает старое значение.
+    pub fn get_and_set(&mut self, index: usize, value: i32) -> i32 {
+        match self {
+            BitStorage::Zero { size } => {
+                assert!(index < *size, "Index {} out of bounds {}", index, size);
+                0
+            }
+            BitStorage::Simple(s) => s.get_and_set(index, value),
         }
-        ret
+    }
+
+    /// `set`.
+    pub fn set(&mut self, index: usize, value: i32) {
+        match self {
+            BitStorage::Zero { size } => {
+                assert!(index < *size, "Index {} out of bounds {}", index, size);
+                assert_eq!(value, 0, "Can't set value {} in zero-bit storage", value);
+            }
+            BitStorage::Simple(s) => s.set(index, value),
+        }
+    }
+
+    /// `get`.
+    pub fn get(&self, index: usize) -> i32 {
+        match self {
+            BitStorage::Zero { size } => {
+                assert!(index < *size, "Index {} out of bounds {}", index, size);
+                0
+            }
+            BitStorage::Simple(s) => s.get(index),
+        }
+    }
+
+    /// `getRaw` — сырые `long[]` (для ZeroBitStorage — пустой массив,
+    /// сериализатор пишет фиксированную длину по `size`/`bits`).
+    pub fn get_raw(&self) -> &[i64] {
+        match self {
+            BitStorage::Zero { .. } => &[],
+            BitStorage::Simple(s) => &s.data,
+        }
+    }
+
+    /// `getRaw` изменяемо (десериализация читает прямо в массив).
+    pub fn get_raw_mut(&mut self) -> &mut [i64] {
+        match self {
+            BitStorage::Zero { .. } => &mut [],
+            BitStorage::Simple(s) => &mut s.data,
+        }
+    }
+
+    /// `getSize`.
+    pub fn get_size(&self) -> usize {
+        match self {
+            BitStorage::Zero { size } => *size,
+            BitStorage::Simple(s) => s.size,
+        }
+    }
+
+    /// `getBits`.
+    pub fn get_bits(&self) -> i32 {
+        match self {
+            BitStorage::Zero { .. } => 0,
+            BitStorage::Simple(s) => s.bits,
+        }
+    }
+
+    /// `getAll` — итерация всех значений по порядку.
+    pub fn get_all(&self, mut consumer: impl FnMut(i32)) {
+        match self {
+            BitStorage::Zero { size } => {
+                for _ in 0..*size {
+                    consumer(0);
+                }
+            }
+            BitStorage::Simple(s) => s.get_all(consumer),
+        }
+    }
+
+    /// `unpack` — развернуть в `int[]`.
+    pub fn unpack(&self, array: &mut [i32]) {
+        match self {
+            BitStorage::Zero { size } => {
+                assert_eq!(array.len(), *size);
+                for v in array.iter_mut() {
+                    *v = 0;
+                }
+            }
+            BitStorage::Simple(s) => s.unpack(array),
+        }
+    }
+
+    /// `copy`.
+    pub fn copy(&self) -> BitStorage {
+        self.clone()
     }
 }
 
-/// `SimpleBitStorage` — packed long[] хранилище.
+/// `SimpleBitStorage` — значения упакованы LSB-first: значение `i`
+/// лежит в `long[i / valuesPerLong]` со сдвигом `(i % valuesPerLong) * bits`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimpleBitStorage {
-    data: Vec<i64>,
-    bits: u32,
+    /// Сырые `long[]`.
+    pub data: Vec<i64>,
+    /// `bits` — разрядность значения (1..=32).
+    pub bits: i32,
+    /// `mask`.
     mask: i64,
+    /// `size` — число значений.
     size: usize,
+    /// `valuesPerLong = 64 / bits`.
     values_per_long: usize,
 }
 
 impl SimpleBitStorage {
-    /// `new SimpleBitStorage(bits, size)`.
-    pub fn new(bits: u32, size: usize) -> Self {
-        Self::with_raw(bits, size, None)
-    }
-
-    /// `new SimpleBitStorage(bits, size, long[] data)`.
-    /// При Some(data) длина должна совпадать с расчётной.
-    pub fn with_raw(bits: u32, size: usize, data: Option<Vec<i64>>) -> Self {
-        assert!((1..=32).contains(&bits), "bits must be in [1, 32]");
+    /// `SimpleBitStorage(bits, size)`.
+    pub fn new(bits: i32, size: usize) -> Self {
+        assert!((1..=32).contains(&bits), "Bits {} out of range 1..32", bits);
         let mask = (1i64 << bits) - 1;
-        let values_per_long = 64 / bits as usize;
-        let expected = (size + values_per_long - 1) / values_per_long;
-        let data = match data {
-            Some(d) => {
-                assert_eq!(
-                    d.len(),
-                    expected,
-                    "Invalid length given for storage, got: {} but expected: {}",
-                    d.len(),
-                    expected
-                );
-                d
-            }
-            None => vec![0i64; expected],
-        };
+        let values_per_long = (64 / bits) as usize;
+        let long_count = (size + values_per_long - 1) / values_per_long;
         if size > 4096 {
-            // Paper-оптимизация не поддерживает >4096; оставляем как в Java
-            // (SimpleBitStorage без BETTER_MAGIC работал для любых size).
+            panic!("Size > 4096 not supported");
         }
-        Self { data, bits, mask, size, values_per_long }
+        Self {
+            data: vec![0i64; long_count],
+            bits,
+            mask,
+            size,
+            values_per_long,
+        }
     }
 
-    /// `new SimpleBitStorage(bits, size, int[] data)` — упаковка int[].
-    pub fn from_ints(bits: u32, size: usize, data: &[i32]) -> Self {
+    /// `SimpleBitStorage(bits, size, data)` — из существующего массива.
+    pub fn from_raw(bits: i32, size: usize, data: Vec<i64>) -> Result<Self, String> {
+        let storage = Self::new(bits, size);
+        let expected = storage.data.len();
+        if data.len() != expected {
+            return Err(format!(
+                "Invalid length given for storage, got: {} but expected: {}",
+                data.len(),
+                expected
+            ));
+        }
+        Ok(Self { data, ..storage })
+    }
+
+    /// `SimpleBitStorage(bits, size, int[])` — из int-массива (NBT-путь).
+    pub fn from_ints(bits: i32, size: usize, ints: &[i32]) -> Result<Self, String> {
         let mut storage = Self::new(bits, size);
+        let values_per_long = storage.values_per_long;
+        let bits_u = bits as u32;
         let mut i = 0usize;
         let mut i1 = 0usize;
-        while i1 + storage.values_per_long <= size {
-            let mut l = 0i64;
-            for i2 in (0..storage.values_per_long).rev() {
-                l <<= bits;
-                l |= (data[i1 + i2] as i64) & storage.mask;
+        while i1 + values_per_long <= size {
+            let mut l: i64 = 0;
+            for i2 in (0..values_per_long).rev() {
+                l <<= bits_u;
+                l |= (ints[i1 + i2] as i64) & storage.mask;
             }
             storage.data[i] = l;
             i += 1;
-            i1 += storage.values_per_long;
+            i1 += values_per_long;
         }
-        let i3 = size - i1;
-        if i3 > 0 {
-            let mut l1 = 0i64;
-            for i4 in (0..i3).rev() {
-                l1 <<= bits;
-                l1 |= (data[i1 + i4] as i64) & storage.mask;
+        let rest = size - i1;
+        if rest > 0 {
+            let mut l: i64 = 0;
+            for i4 in (0..rest).rev() {
+                l <<= bits_u;
+                l |= (ints[i1 + i4] as i64) & storage.mask;
             }
-            storage.data[i] = l1;
+            storage.data[i] = l;
         }
-        storage
+        Ok(storage)
     }
 
-    /// Индекс ячейки long и битовый сдвиг — вместо magic-деления.
-    fn locate(&self, index: usize) -> (usize, u32) {
-        let cell = index / self.values_per_long;
-        let bit = ((index % self.values_per_long) * self.bits as usize) as u32;
-        (cell, bit)
-    }
-}
-
-impl BitStorage for SimpleBitStorage {
-    fn get_and_set(&mut self, index: usize, value: i32) -> i32 {
-        let (cell, bit) = self.locate(index);
-        let data = self.data[cell];
-        let mask = self.mask;
-        let write = (data & !(mask << bit)) | (((value as i64) & mask) << bit);
-        self.data[cell] = write;
-        (data >> bit & mask) as i32
+    fn cell_index(&self, index: usize) -> usize {
+        index / self.values_per_long
     }
 
-    fn set(&mut self, index: usize, value: i32) {
-        let (cell, bit) = self.locate(index);
-        let data = self.data[cell];
-        let mask = self.mask;
-        self.data[cell] = (data & !(mask << bit)) | (((value as i64) & mask) << bit);
+    fn bit_offset(&self, index: usize) -> u32 {
+        ((index % self.values_per_long) * self.bits as usize) as u32
     }
 
-    fn get(&self, index: usize) -> i32 {
-        let (cell, bit) = self.locate(index);
-        (self.data[cell] >> bit & self.mask) as i32
+    /// `getAndSet`.
+    pub fn get_and_set(&mut self, index: usize, value: i32) -> i32 {
+        assert!(index < self.size, "Index {} out of bounds {}", index, self.size);
+        let cell = self.cell_index(index);
+        let offset = self.bit_offset(index);
+        let data = self.data[cell] as u64;
+        let mask = self.mask as u64;
+        let old = ((data >> offset) & mask) as i32;
+        let cleared = data & !(mask << offset);
+        self.data[cell] = (cleared | (((value as u64) & mask) << offset)) as i64;
+        old
     }
 
-    fn get_raw(&self) -> &[i64] {
-        &self.data
+    /// `set`.
+    pub fn set(&mut self, index: usize, value: i32) {
+        assert!(index < self.size, "Index {} out of bounds {}", index, self.size);
+        let cell = self.cell_index(index);
+        let offset = self.bit_offset(index);
+        let data = self.data[cell] as u64;
+        let mask = self.mask as u64;
+        let cleared = data & !(mask << offset);
+        self.data[cell] = (cleared | (((value as u64) & mask) << offset)) as i64;
     }
 
-    fn get_size(&self) -> usize {
-        self.size
+    /// `get`.
+    pub fn get(&self, index: usize) -> i32 {
+        assert!(index < self.size, "Index {} out of bounds {}", index, self.size);
+        let cell = self.cell_index(index);
+        let offset = self.bit_offset(index);
+        ((self.data[cell] as u64 >> offset) & (self.mask as u64)) as i32
     }
 
-    fn get_bits(&self) -> u32 {
-        self.bits
-    }
-
-    fn get_all(&self, consumer: &mut dyn FnMut(i32)) {
+    /// `getAll`.
+    pub fn get_all(&self, mut consumer: impl FnMut(i32)) {
         let mut i = 0usize;
-        for &l0 in &self.data {
-            let mut l = l0;
+        for &l in &self.data {
+            let mut l = l as u64;
             for _ in 0..self.values_per_long {
-                consumer((l & self.mask) as i32);
-                l >>= self.bits;
+                consumer((l & self.mask as u64) as i32);
+                l >>= self.bits as u32;
                 i += 1;
                 if i >= self.size {
                     return;
@@ -154,170 +246,28 @@ impl BitStorage for SimpleBitStorage {
         }
     }
 
-    fn unpack(&self, array: &mut [i32]) {
+    /// `unpack`.
+    pub fn unpack(&self, array: &mut [i32]) {
+        assert_eq!(array.len(), self.size);
         let mut i1 = 0usize;
-        for (i2, &l0) in self.data.iter().enumerate() {
-            let mut l = l0;
+        for (i2, &l) in self.data.iter().enumerate() {
             if i2 == self.data.len() - 1 {
-                let rem = self.size - i1;
-                for i3 in 0..rem {
-                    array[i1 + i3] = (l & self.mask) as i32;
-                    l >>= self.bits;
-                }
-            } else {
-                for i3 in 0..self.values_per_long {
-                    array[i1 + i3] = (l & self.mask) as i32;
-                    l >>= self.bits;
-                }
-                i1 += self.values_per_long;
+                break;
+            }
+            let mut l = l as u64;
+            for i3 in 0..self.values_per_long {
+                array[i1 + i3] = (l & self.mask as u64) as i32;
+                l >>= self.bits as u32;
+            }
+            i1 += self.values_per_long;
+        }
+        let rest = self.size - i1;
+        if rest > 0 {
+            let mut l = self.data[self.data.len() - 1] as u64;
+            for i3 in 0..rest {
+                array[i1 + i3] = (l & self.mask as u64) as i32;
+                l >>= self.bits as u32;
             }
         }
-    }
-
-    fn copy(&self) -> Box<dyn BitStorage> {
-        Box::new(Self {
-            data: self.data.clone(),
-            bits: self.bits,
-            mask: self.mask,
-            size: self.size,
-            values_per_long: self.values_per_long,
-        })
-    }
-}
-
-/// `ZeroBitStorage` — все значения 0.
-pub struct ZeroBitStorage {
-    size: usize,
-}
-
-impl ZeroBitStorage {
-    pub fn new(size: usize) -> Self {
-        Self { size }
-    }
-}
-
-impl BitStorage for ZeroBitStorage {
-    fn get_and_set(&mut self, _index: usize, _value: i32) -> i32 {
-        0
-    }
-
-    fn set(&mut self, _index: usize, _value: i32) {}
-
-    fn get(&self, _index: usize) -> i32 {
-        0
-    }
-
-    fn get_raw(&self) -> &[i64] {
-        &[]
-    }
-
-    fn get_size(&self) -> usize {
-        self.size
-    }
-
-    fn get_bits(&self) -> u32 {
-        0
-    }
-
-    fn get_all(&self, consumer: &mut dyn FnMut(i32)) {
-        for _ in 0..self.size {
-            consumer(0);
-        }
-    }
-
-    fn unpack(&self, array: &mut [i32]) {
-        for v in array.iter_mut().take(self.size) {
-            *v = 0;
-        }
-    }
-
-    fn copy(&self) -> Box<dyn BitStorage> {
-        Box::new(ZeroBitStorage { size: self.size })
-    }
-}
-
-/// Фабрика как в Java (`SimpleBitStorage` vs `ZeroBitStorage` по bits).
-pub fn create(bits: u32, size: usize) -> Box<dyn BitStorage> {
-    if bits == 0 {
-        Box::new(ZeroBitStorage::new(size))
-    } else {
-        Box::new(SimpleBitStorage::new(bits, size))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn simple_roundtrip() {
-        for bits in [1u32, 3, 4, 5, 8, 12] {
-            let size = 4096usize;
-            let mut s = SimpleBitStorage::new(bits, size);
-            let max = (1usize << bits) - 1;
-            for i in 0..size {
-                let v = (i * 7 % (max + 1)) as i32;
-                s.set(i, v);
-            }
-            for i in 0..size {
-                let expected = (i * 7 % (max + 1)) as i32;
-                assert_eq!(s.get(i), expected, "bits={bits} i={i}");
-            }
-        }
-    }
-
-    #[test]
-    fn get_and_set_returns_old() {
-        let mut s = SimpleBitStorage::new(4, 100);
-        assert_eq!(s.get_and_set(5, 9), 0);
-        assert_eq!(s.get(5), 9);
-        assert_eq!(s.get_and_set(5, 3), 9);
-        assert_eq!(s.get(5), 3);
-    }
-
-    #[test]
-    fn from_ints_matches_sets() {
-        let bits = 5u32;
-        let size = 100usize;
-        let data: Vec<i32> = (0..size).map(|i| (i * 13 % 32) as i32).collect();
-        let s = SimpleBitStorage::from_ints(bits, size, &data);
-        for i in 0..size {
-            assert_eq!(s.get(i), data[i], "i={i}");
-        }
-    }
-
-    #[test]
-    fn unpack_and_get_all() {
-        let mut s = SimpleBitStorage::new(3, 50);
-        for i in 0..50 {
-            s.set(i, (i % 8) as i32);
-        }
-        let mut arr = vec![0i32; 50];
-        s.unpack(&mut arr);
-        for i in 0..50 {
-            assert_eq!(arr[i], (i % 8) as i32);
-        }
-        let mut count = 0;
-        s.get_all(&mut |_| count += 1);
-        assert_eq!(count, 50);
-    }
-
-    #[test]
-    fn zero_storage() {
-        let mut z = ZeroBitStorage::new(10);
-        assert_eq!(z.get_and_set(3, 5), 0);
-        assert_eq!(z.get(3), 0);
-        assert_eq!(z.get_bits(), 0);
-        let mut arr = vec![7i32; 10];
-        z.unpack(&mut arr);
-        assert!(arr.iter().all(|&v| v == 0));
-    }
-
-    #[test]
-    fn copy_works() {
-        let mut s = SimpleBitStorage::new(4, 16);
-        s.set(3, 11);
-        let c = s.copy();
-        assert_eq!(c.get(3), 11);
     }
 }

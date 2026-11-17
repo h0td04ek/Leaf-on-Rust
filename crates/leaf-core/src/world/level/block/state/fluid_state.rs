@@ -47,6 +47,12 @@ impl FluidState {
     pub fn is_empty(&self) -> bool {
         self.fluid.id == Identifier::minecraft("empty")
     }
+
+    /// `is(FluidTags.WATER)` — жидкость является водой
+    /// (включая текущую воду; `bubble_column` — нет).
+    pub fn is_water(&self) -> bool {
+        self.fluid.id == Identifier::minecraft("water")
+    }
 }
 
 impl PartialEq for Fluid {
@@ -70,5 +76,19 @@ impl Eq for FluidState {}
 impl std::fmt::Debug for FluidState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FluidState").field("fluid", &self.fluid.id).field("values", &self.values).finish()
+    }
+}
+
+impl std::hash::Hash for Fluid {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.is_source.hash(state);
+    }
+}
+
+impl std::hash::Hash for FluidState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.fluid.hash(state);
+        self.values.hash(state);
     }
 }

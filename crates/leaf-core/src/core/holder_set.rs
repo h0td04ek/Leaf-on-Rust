@@ -35,6 +35,15 @@ impl<T> HolderSet<T> {
         }
     }
 
+    /// `get(index)` — элемент по индексу.
+    /// Для `Named` резолвится через реестр тегов (до его порта — None).
+    pub fn get(&self, index: usize) -> Option<&Holder<T>> {
+        match self {
+            HolderSet::Direct(v) => v.get(index),
+            HolderSet::Named(_) => None,
+        }
+    }
+
     /// `size`.
     pub fn size(&self) -> usize {
         match self {

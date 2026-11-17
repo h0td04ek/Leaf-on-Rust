@@ -102,6 +102,12 @@ pub fn sqrt_f64(value: f64) -> f64 {
     value.sqrt()
 }
 
+/// `Mth.lengthSquared`-стиль: `sqrt(x*x+y*y+z*z)`.
+pub fn length_3d_f64(x: f64, y: f64, z: f64) -> f64 {
+    (x * x + y * y + z * z).sqrt()
+}
+
+
 pub fn abs_f32(value: f32) -> f32 {
     value.abs()
 }

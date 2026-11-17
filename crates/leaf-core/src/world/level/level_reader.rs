@@ -42,4 +42,25 @@ pub trait LevelReader {
     fn height(&self) -> i32 {
         384
     }
+
+    /// `getSeaLevel`.
+    fn sea_level(&self) -> i32 {
+        self.min_build_height() + 63
+    }
+
+    /// `isInsideBuildHeight(y)`.
+    fn is_inside_build_height(&self, y: i32) -> bool {
+        y >= self.min_build_height() && y < self.min_build_height() + self.height()
+    }
+
+    /// `getBrightness(LightLayer, pos)` — до порта lighting
+    /// возвращает максимум (как в fully-lit мире).
+    fn get_brightness(&self, _layer: crate::world::level::light_layer::LightLayer, _pos: BlockPos) -> i32 {
+        15
+    }
+
+    /// `isWaterAt(pos)` — `getFluidState(pos).is(Fluids.WATER)`.
+    fn is_water_at(&self, pos: BlockPos) -> bool {
+        self.get_fluid_state(pos).map(|f| f.is_water()).unwrap_or(false)
+    }
 }

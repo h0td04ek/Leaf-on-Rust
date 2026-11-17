@@ -17,11 +17,11 @@ pub fn to_block(value: i32) -> i32 {
     value << BITS
 }
 
-pub fn from_section(value: i32) -> i32 {
+pub const fn from_section(value: i32) -> i32 {
     value << SECTION_TO_QUARTS_BITS
 }
 
-pub fn to_section(value: i32) -> i32 {
+pub const fn to_section(value: i32) -> i32 {
     value >> SECTION_TO_QUARTS_BITS
 }
 

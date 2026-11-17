@@ -5,7 +5,7 @@
 //! `xoroshiro::XoroshiroRandomSource`. FasterRandomSource (Leaf opt-in,
 //! JDK RandomGeneratorFactory) — TODO, по умолчанию FastRNG выключен.
 
-use crate::random::positional::PositionalRandomFactory;
+pub use crate::random::positional::PositionalRandomFactory;
 
 pub trait RandomSource {
     fn set_seed(&mut self, seed: i64);

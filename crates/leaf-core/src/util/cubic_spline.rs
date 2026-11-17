@@ -9,14 +9,14 @@ use crate::util::bounded_float_function::{BoundedFloatFn, BoundedFloatFunction};
 use crate::util::mth;
 
 /// `CubicSpline<C, I>` — кубический сплайн: apply(C)->float + границы.
-pub trait CubicSpline<C> {
+pub trait CubicSpline<C>: Send + Sync {
     fn apply(&self, value: C) -> f32;
     fn min_value(&self) -> f32;
     fn max_value(&self) -> f32;
     /// `parityString` — отладочное представление.
     fn parity_string(&self) -> String;
     /// `mapAll(visitor)` — применить visitor к координате и рекурсивно к значениям.
-    fn map_all(&self, visitor: &dyn Fn(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>>;
+    fn map_all(&self, visitor: &mut dyn FnMut(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>>;
 }
 
 /// `CubicSpline.constant(value)` — константный сплайн.
@@ -48,7 +48,7 @@ impl<C> CubicSpline<C> for ConstantSpline {
     fn parity_string(&self) -> String {
         format!("k={:.3}", self.value)
     }
-    fn map_all(&self, _visitor: &dyn Fn(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>> {
+    fn map_all(&self, _visitor: &mut dyn FnMut(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>> {
         Box::new(self.clone())
     }
 }
@@ -250,7 +250,7 @@ impl<C: Clone + 'static> CubicSpline<C> for Multipoint<C> {
         )
     }
 
-    fn map_all(&self, visitor: &dyn Fn(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>> {
+    fn map_all(&self, visitor: &mut dyn FnMut(&BoundedFloatFn<C>) -> BoundedFloatFn<C>) -> Box<dyn CubicSpline<C>> {
         Multipoint::create(
             visitor(&self.coordinate),
             &self.locations,

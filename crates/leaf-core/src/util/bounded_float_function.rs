@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 /// `BoundedFloatFunction<C>` — функция C → float с границами min/max.
 pub trait BoundedFloatFunction<C> {
+    /// `asAny` — для downcast к конкретным реализациям (Spline.Coordinate).
+    fn as_any(&self) -> &dyn std::any::Any;
     fn apply(&self, value: C) -> f32;
     fn min_value(&self) -> f32;
     fn max_value(&self) -> f32;
@@ -17,6 +19,9 @@ pub type BoundedFloatFn<C> = Arc<dyn BoundedFloatFunction<C> + Send + Sync>;
 pub struct FloatIdentity;
 
 impl BoundedFloatFunction<f32> for FloatIdentity {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn apply(&self, value: f32) -> f32 {
         value
     }
@@ -41,7 +46,10 @@ struct UnlimitedFloatFunction<F> {
     operation: F,
 }
 
-impl<F: Fn(f32) -> f32> BoundedFloatFunction<f32> for UnlimitedFloatFunction<F> {
+impl<F: Fn(f32) -> f32 + 'static> BoundedFloatFunction<f32> for UnlimitedFloatFunction<F> {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn apply(&self, value: f32) -> f32 {
         (self.operation)(value)
     }
@@ -68,7 +76,10 @@ struct BoundedClosure<F> {
     max: f32,
 }
 
-impl<F: Fn(f32) -> f32> BoundedFloatFunction<f32> for BoundedClosure<F> {
+impl<F: Fn(f32) -> f32 + 'static> BoundedFloatFunction<f32> for BoundedClosure<F> {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn apply(&self, value: f32) -> f32 {
         (self.apply)(value)
     }
@@ -103,6 +114,9 @@ struct Comap<C, C2, F> {
 impl<C: Clone + Send + Sync + 'static, C2: Send + Sync + 'static, F: Fn(&C2) -> C + Send + Sync + 'static>
     BoundedFloatFunction<C2> for Comap<C, C2, F>
 {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn apply(&self, value: C2) -> f32 {
         self.inner.apply((self.mapper)(&value))
     }

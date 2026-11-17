@@ -22,6 +22,9 @@ pub struct BlockState {
     pub definition: Arc<StateDefinition>,
     /// Значения свойств этого состояния.
     pub values: StateHolder,
+    /// `fluidState` — кэшированное состояние жидкости блока
+    /// (`BlockStateBase.fluidState`).
+    pub fluid_state: super::fluid_state::FluidState,
 }
 
 impl BlockState {
@@ -31,7 +34,41 @@ impl BlockState {
             .state_definition()
             .expect("block without state_definition")
             .clone();
-        Self { block, definition, values }
+        let fluid_state = super::fluid_state::FluidState::empty();
+        Self { block, definition, values, fluid_state }
+    }
+
+    /// `withFluidState` — установить кэш fluid state (вызывается
+    /// при построении `StateDefinition`/`BlockBehaviour`).
+    pub fn with_fluid_state(mut self, fluid_state: super::fluid_state::FluidState) -> Self {
+        self.fluid_state = fluid_state;
+        self
+    }
+
+    /// `getFluidState`.
+    pub fn get_fluid_state(&self) -> super::fluid_state::FluidState {
+        self.fluid_state.clone()
+    }
+
+    /// `getBlock() instanceof LiquidBlock`.
+    pub fn is_liquid_block(&self) -> bool {
+        self.block.properties.liquid
+    }
+
+    /// `blocksMotion` — блок препятствует движению (`Material.blocksMotion`).
+    /// До порта VoxelShape/материалов — по флагу `has_collision`.
+    pub fn blocks_motion(&self) -> bool {
+        self.block.properties.has_collision
+    }
+
+    /// `canSurvive(level, pos)` — делегирует в Block.
+    pub fn can_survive(&self, level: &dyn crate::world::level::level_reader::LevelReader, pos: crate::core::block_pos::BlockPos) -> bool {
+        self.block.can_survive(self, level, pos)
+    }
+
+    /// `isAir`.
+    pub fn is_air(&self) -> bool {
+        self.block.properties.is_air
     }
 
     /// `getBlock`.
@@ -97,5 +134,12 @@ impl std::fmt::Debug for BlockState {
             .field("block", &self.block.id)
             .field("values", &self.values)
             .finish()
+    }
+}
+
+impl std::hash::Hash for BlockState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.block.id.hash(state);
+        self.values.hash(state);
     }
 }

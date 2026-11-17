@@ -14,3 +14,5 @@ pub use state_holder::StateHolder;
 pub use state_definition::StateDefinition;
 pub use block_state::BlockState;
 pub use fluid_state::FluidState;
+pub mod block_state_registry;
+pub use block_state_registry::{block_state_by_id, block_state_count, block_state_id_map, register_block_states};

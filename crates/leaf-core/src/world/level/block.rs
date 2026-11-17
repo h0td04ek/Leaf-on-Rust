@@ -47,6 +47,8 @@ pub struct BlockProperties {
     pub destroy_time: Option<f32>,
     /// `explosionResistance`.
     pub explosion_resistance: Option<f32>,
+    /// `liquid` — блок-жидкость (`LiquidBlock` в Java).
+    pub liquid: bool,
 }
 
 /// Глобальный реестр блоков (`BuiltInRegistries.BLOCK`) —
@@ -81,6 +83,12 @@ pub fn block_by_identifier(id: &crate::resources::identifier::Identifier) -> Opt
 }
 
 impl Block {
+    /// `canSurvive` — базовая реализация `BlockBehaviour.canSurvive`
+    /// (true; переопределяется конкретными блоками при их порте).
+    pub fn can_survive(&self, _state: &state::BlockState, _level: &dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos) -> bool {
+        true
+    }
+
     /// `new`.
     pub fn new(id: crate::resources::identifier::Identifier) -> Self {
         Self {
@@ -116,6 +124,7 @@ impl Block {
             block: std::sync::Arc::new(self.clone()),
             definition: def.clone(),
             values,
+            fluid_state: crate::world::level::block::state::fluid_state::FluidState::empty(),
         })
     }
 
@@ -127,6 +136,12 @@ impl PartialEq for Block {
     }
 }
 impl Eq for Block {}
+
+impl std::hash::Hash for Block {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 impl std::fmt::Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

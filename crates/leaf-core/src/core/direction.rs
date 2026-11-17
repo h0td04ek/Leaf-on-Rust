@@ -555,3 +555,67 @@ impl std::fmt::Display for Direction {
         f.write_str(self.get_name())
     }
 }
+
+/// `net.minecraft.core.Direction8` — 8 горизонтальных направлений
+/// (4 основных + 4 диагональных).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Direction8 {
+    /// `NORTH`.
+    North,
+    /// `NORTH_EAST`.
+    NorthEast,
+    /// `EAST`.
+    East,
+    /// `SOUTH_EAST`.
+    SouthEast,
+    /// `SOUTH`.
+    South,
+    /// `SOUTH_WEST`.
+    SouthWest,
+    /// `WEST`.
+    West,
+    /// `NORTH_WEST`.
+    NorthWest,
+}
+
+impl Direction8 {
+    /// Все значения в порядке объявления.
+    pub const VALUES: [Direction8; 8] = [
+        Direction8::North,
+        Direction8::NorthEast,
+        Direction8::East,
+        Direction8::SouthEast,
+        Direction8::South,
+        Direction8::SouthWest,
+        Direction8::West,
+        Direction8::NorthWest,
+    ];
+
+    fn directions(&self) -> &'static [Direction] {
+        match self {
+            Direction8::North => &[Direction::NORTH],
+            Direction8::NorthEast => &[Direction::NORTH, Direction::EAST],
+            Direction8::East => &[Direction::EAST],
+            Direction8::SouthEast => &[Direction::SOUTH, Direction::EAST],
+            Direction8::South => &[Direction::SOUTH],
+            Direction8::SouthWest => &[Direction::SOUTH, Direction::WEST],
+            Direction8::West => &[Direction::WEST],
+            Direction8::NorthWest => &[Direction::NORTH, Direction::WEST],
+        }
+    }
+
+    /// `getDirections`.
+    pub fn get_directions(&self) -> &'static [Direction] {
+        self.directions()
+    }
+
+    /// `getStepX` — сумма stepX составляющих направлений.
+    pub fn get_step_x(&self) -> i32 {
+        self.directions().iter().map(|d| d.get_step_x()).sum()
+    }
+
+    /// `getStepZ`.
+    pub fn get_step_z(&self) -> i32 {
+        self.directions().iter().map(|d| d.get_step_z()).sum()
+    }
+}

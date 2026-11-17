@@ -13,6 +13,8 @@ pub mod damagesource;
 pub mod gametest;
 pub mod inventory;
 pub mod stats;
+pub mod attribute;
+pub mod entity;
 
 pub mod difficulty;
 pub mod interaction_hand;
