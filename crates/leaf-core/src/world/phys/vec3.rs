@@ -182,3 +182,31 @@ impl Vec3 {
         crate::joml::Vector3f::new(self.x as f32, self.y as f32, self.z as f32)
     }
 }
+
+// ---------------------------------------------------------------- статические фабрики Vec3i
+
+use crate::core::vec3i::Vec3i;
+
+pub fn at_lower_corner_of(to_copy: &Vec3i) -> Vec3 {
+    Vec3::new(to_copy.x as f64, to_copy.y as f64, to_copy.z as f64)
+}
+
+pub fn at_lower_corner_with_offset(to_copy: &Vec3i, offset_x: f64, offset_y: f64, offset_z: f64) -> Vec3 {
+    Vec3::new(
+        to_copy.x as f64 + offset_x,
+        to_copy.y as f64 + offset_y,
+        to_copy.z as f64 + offset_z,
+    )
+}
+
+pub fn at_center_of(to_copy: &Vec3i) -> Vec3 {
+    at_lower_corner_with_offset(to_copy, 0.5, 0.5, 0.5)
+}
+
+pub fn at_bottom_center_of(to_copy: &Vec3i) -> Vec3 {
+    at_lower_corner_with_offset(to_copy, 0.5, 0.0, 0.5)
+}
+
+pub fn up_from_bottom_center_of(to_copy: &Vec3i, vertical_offset: f64) -> Vec3 {
+    at_lower_corner_with_offset(to_copy, 0.5, vertical_offset, 0.5)
+}

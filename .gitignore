@@ -55,3 +55,7 @@ java-25-on-rust/
 public/
 scripts/
 CONTRIBUTING.md
+
+libraries/
+versions/
+splice_baa.py

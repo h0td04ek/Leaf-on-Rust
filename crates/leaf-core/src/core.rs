@@ -1,6 +1,12 @@
 //! Перенос `net.minecraft.core` — базовые core-типы (Vec3i, Direction, ...).
 
+pub mod block_pos;
 pub mod direction;
+pub mod global_pos;
+pub mod quart_pos;
+pub mod registry;
+pub mod section_pos;
+pub mod shared_constants;
 pub mod vec3i;
 
 pub use direction::{Axis, AxisDirection, Direction, Plane};

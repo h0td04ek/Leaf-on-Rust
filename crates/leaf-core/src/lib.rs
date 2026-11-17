@@ -10,9 +10,11 @@
 //! подключаться к JVM через JNI или заменять Java-классы.
 
 pub mod core;
+pub mod crash_report;
 pub mod joml;
 pub mod nbt;
 pub mod random;
+pub mod reported_exception;
 pub mod server;
 pub mod util;
 pub mod world;
@@ -20,6 +22,8 @@ pub mod level;
 pub mod entity;
 pub mod player;
 pub mod chunk;
+pub mod locale;
 pub mod network;
+pub mod resources;
 pub mod command;
 pub mod plugin;
