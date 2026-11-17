@@ -44,6 +44,7 @@ impl ClientboundContainerSetDataPacket {
                 let container_id = buf.read_container_id();
                 let id = buf.read_short() as i32;
                 let value = buf.read_short() as i32;
+
                 ClientboundContainerSetDataPacket::new(container_id, id, value)
             },
         )

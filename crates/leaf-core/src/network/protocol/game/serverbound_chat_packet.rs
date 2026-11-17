@@ -50,6 +50,7 @@ impl ServerboundChatPacket {
                 let salt = buf.read_long();
                 let signature = buf.read_nullable(|b| MessageSignature::read(b));
                 let last_seen_messages = LastSeenMessagesUpdate::read(buf);
+
                 ServerboundChatPacket::new(message, time_stamp, salt, signature, last_seen_messages)
             },
         )

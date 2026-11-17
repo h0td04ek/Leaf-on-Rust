@@ -253,12 +253,26 @@ fn hover_event_to_json(event: &HoverEvent) -> Value {
 /// `components` — snapshot NBT → SNBT-строка (DataComponentPatch — позже).
 fn item_stack_to_json(stack: &crate::world::item::ItemStack) -> Value {
     let mut obj = Map::new();
-    obj.insert("id".to_string(), Value::String(stack.item.to_string()));
+    if let Some(id) = stack.item_identifier() {
+        obj.insert("id".to_string(), Value::String(id.to_string()));
+    }
     if stack.count != 1 {
         obj.insert("count".to_string(), json!(stack.count));
     }
-    if let Some(components) = &stack.components {
-        obj.insert("components".to_string(), Value::String(snbt::compound_to_string(components)));
+    // components: SNBT-строка patch'а (persistent-кодеки
+    // DataComponentType портируются отдельно — до них пишем
+    // отладочное представление записей patch).
+    let patch = stack.components.as_patch();
+    if !patch.is_empty() {
+        let mut tag = crate::nbt::CompoundTag::new();
+        for (type_id, value) in patch.entries() {
+            let v = match value {
+                crate::core::component::ComponentPatchValue::Set(v) => v.value_debug(),
+                crate::core::component::ComponentPatchValue::Removed => "<removed>".to_string(),
+            };
+            tag.put(type_id.to_string(), crate::nbt::Tag::String(v));
+        }
+        obj.insert("components".to_string(), Value::String(snbt::compound_to_string(&tag)));
     }
     Value::Object(obj)
 }
@@ -610,11 +624,13 @@ fn read_hover_event_json(v: &Value) -> Result<HoverEvent, String> {
                 .and_then(|c| c.as_str())
                 .and_then(|s| snbt_parse::parse(s).ok())
                 .and_then(|t| t.as_compound().cloned());
-            Ok(HoverEvent::ShowItem(crate::world::item::ItemStack {
-                item: id,
+            // components из SNBT пока не разворачиваются в typed patch
+            // (persistent-кодеки — отдельный этап); храним только item+count.
+            let _ = components;
+            Ok(HoverEvent::ShowItem(crate::world::item::ItemStack::new(
+                crate::core::holder::Holder::Direct(crate::world::item::item::Item::new(id)),
                 count,
-                components,
-            }))
+            )))
         }
         "show_entity" => {
             let contents = obj
@@ -660,7 +676,7 @@ use crate::network::codec::stream_codec::StreamCodec;
 /// (`ByteBufCodecs.fromCodecTrusted(CODEC)`) — компонент как NBT tag
 /// (JSON-представление кодека, конвертированное через NbtOps).
 pub fn component_stream_codec() -> impl StreamCodec<crate::network::friendly_byte_buf::FriendlyByteBuf, Component> {
-    crate::network::codec::stream_codec::FnCodec::new(
+    crate::network::codec::stream_codec::sync_fn(
         |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, c: &Component| {
             let json = component_to_json(c);
             let tag = crate::nbt::json::tag_from_json(&json).expect("component nbt encode");
@@ -676,7 +692,7 @@ pub fn component_stream_codec() -> impl StreamCodec<crate::network::friendly_byt
 
 /// `OPTIONAL_STREAM_CODEC` — Option<Component>.
 pub fn optional_component_stream_codec() -> impl StreamCodec<crate::network::friendly_byte_buf::FriendlyByteBuf, Option<Component>> {
-    crate::network::codec::stream_codec::FnCodec::new(
+    crate::network::codec::stream_codec::sync_fn(
         |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, v: &Option<Component>| {
             buf.write_bool(v.is_some());
             if let Some(c) = v {

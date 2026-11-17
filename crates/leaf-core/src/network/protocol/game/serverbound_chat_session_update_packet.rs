@@ -29,6 +29,7 @@ impl ServerboundChatSessionUpdatePacket {
             |buf: &mut FriendlyByteBuf, p: &ServerboundChatSessionUpdatePacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
                 let chat_session = RemoteChatSessionData::read(buf).expect("invalid chat session");
+
                 ServerboundChatSessionUpdatePacket::new(chat_session)
             },
         )

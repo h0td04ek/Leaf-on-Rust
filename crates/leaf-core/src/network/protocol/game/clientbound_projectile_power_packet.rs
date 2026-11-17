@@ -37,6 +37,7 @@ impl ClientboundProjectilePowerPacket {
             |buf: &mut FriendlyByteBuf| {
                 let id = buf.read_var_int();
                 let acceleration_power = buf.read_double();
+
                 ClientboundProjectilePowerPacket::new(id, acceleration_power)
             },
         )

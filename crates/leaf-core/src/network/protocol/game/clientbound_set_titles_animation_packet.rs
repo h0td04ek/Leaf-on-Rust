@@ -44,6 +44,7 @@ impl ClientboundSetTitlesAnimationPacket {
                 let fade_in = buf.read_int();
                 let stay = buf.read_int();
                 let fade_out = buf.read_int();
+
                 ClientboundSetTitlesAnimationPacket::new(fade_in, stay, fade_out)
             },
         )

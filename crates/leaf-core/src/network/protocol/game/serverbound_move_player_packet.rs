@@ -259,6 +259,7 @@ impl MovePlayerRotPacket {
                 let y_rot = buf.read_float();
                 let x_rot = buf.read_float();
                 let flags = buf.read_unsigned_byte();
+
                 MovePlayerRotPacket::new(
                     y_rot,
                     x_rot,
@@ -306,6 +307,7 @@ impl MovePlayerStatusOnlyPacket {
             |buf: &mut FriendlyByteBuf, p: &MovePlayerStatusOnlyPacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
                 let flags = buf.read_unsigned_byte();
+
                 MovePlayerStatusOnlyPacket::new(
                     unpack_on_ground(flags),
                     unpack_horizontal_collision(flags),

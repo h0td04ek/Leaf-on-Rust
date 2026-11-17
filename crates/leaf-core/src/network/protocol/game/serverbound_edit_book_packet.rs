@@ -58,6 +58,7 @@ impl ServerboundEditBookPacket {
                 let title = buf
                     .read_optional(|b| b.read_utf_n(MAX_TITLE_LENGTH))
                     .and_then(|r| r.ok());
+
                 ServerboundEditBookPacket::new(slot, pages, title)
             },
         )

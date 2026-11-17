@@ -53,6 +53,7 @@ impl ClientboundLevelEventPacket {
                 let pos = buf.read_block_pos();
                 let data = buf.read_int();
                 let global_event = buf.read_bool();
+
                 ClientboundLevelEventPacket::new(event_type, pos, data, global_event)
             },
         )

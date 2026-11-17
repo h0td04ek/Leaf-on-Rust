@@ -36,6 +36,7 @@ impl ServerboundPaddleBoatPacket {
             |buf: &mut FriendlyByteBuf| {
                 let left = buf.read_bool();
                 let right = buf.read_bool();
+
                 ServerboundPaddleBoatPacket::new(left, right)
             },
         )

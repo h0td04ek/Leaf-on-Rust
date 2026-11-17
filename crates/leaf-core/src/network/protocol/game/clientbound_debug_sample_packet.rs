@@ -28,6 +28,7 @@ impl ClientboundDebugSamplePacket {
                 let sample = buf.read_long_array();
                 let ordinal = buf.read_var_int();
                 let debug_sample_type = RemoteDebugSampleType::by_id(ordinal);
+
                 ClientboundDebugSamplePacket::new(sample, debug_sample_type)
             },
         )

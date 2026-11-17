@@ -30,6 +30,7 @@ impl ClientboundDisguisedChatPacket {
             |buf: &mut FriendlyByteBuf| {
                 let message = component_stream_codec().decode(buf);
                 let chat_type = ChatTypeBound::stream_codec().decode(buf);
+
                 ClientboundDisguisedChatPacket::new(message, chat_type)
             },
         )

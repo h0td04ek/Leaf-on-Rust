@@ -28,6 +28,7 @@ impl ClientboundSystemChatPacket {
             |buf: &mut FriendlyByteBuf| {
                 let content = component_json::component_stream_codec().decode(buf);
                 let overlay = buf.read_bool();
+
                 ClientboundSystemChatPacket::new(content, overlay)
             },
         )

@@ -40,3 +40,22 @@ impl Brightness {
         Self::new(Self::block(packed_brightness), Self::sky(packed_brightness))
     }
 }
+
+/// `Unit.STREAM_CODEC` — `StreamCodec.unit(INSTANCE)` (ничего не пишет).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnitCodec;
+
+impl crate::network::codec::stream_codec::StreamCodec<
+    crate::network::friendly_byte_buf::FriendlyByteBuf,
+    Unit,
+> for UnitCodec {
+    fn encode(&self, _buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, _value: &Unit) {}
+    fn decode(&self, _buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf) -> Unit {
+        Unit
+    }
+}
+
+/// Фабрика `Unit.STREAM_CODEC`.
+pub fn stream_codec() -> UnitCodec {
+    UnitCodec
+}

@@ -416,7 +416,7 @@ pub const LP_VEC3: LpVec3Codec = LpVec3Codec;
 /// `collection(factory, codec)`
 pub fn collection<T, C, F>(
     factory: F,
-    codec: impl StreamCodec<FriendlyByteBuf, T> + 'static,
+    codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static,
 ) -> CollectionCodec<T, C, F>
 where
     F: Fn(usize) -> C + 'static,
@@ -428,7 +428,7 @@ where
 
 pub struct CollectionCodec<T, C, F> {
     factory: F,
-    codec: Box<dyn StreamCodec<FriendlyByteBuf, T>>,
+    codec: Box<dyn StreamCodec<FriendlyByteBuf, T> + Send + Sync>,
     _t: std::marker::PhantomData<fn() -> (T, C)>,
 }
 
@@ -457,17 +457,17 @@ where
 }
 
 /// `list(codec)` / `list(maxSize, codec)`
-pub fn list<T: 'static>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> CollectionCodec<T, Vec<T>, fn(usize) -> Vec<T>> {
+pub fn list<T: 'static>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static) -> CollectionCodec<T, Vec<T>, fn(usize) -> Vec<T>> {
     collection(Vec::with_capacity, codec)
 }
 
 /// `optional(codec)`
-pub fn optional<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> OptionalCodec<T> {
+pub fn optional<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static) -> OptionalCodec<T> {
     OptionalCodec { codec: Box::new(codec) }
 }
 
 pub struct OptionalCodec<T> {
-    codec: Box<dyn StreamCodec<FriendlyByteBuf, T>>,
+    codec: Box<dyn StreamCodec<FriendlyByteBuf, T> + Send + Sync>,
 }
 
 impl<T: Clone> StreamCodec<FriendlyByteBuf, Option<T>> for OptionalCodec<T> {
@@ -493,15 +493,15 @@ impl<T: Clone> StreamCodec<FriendlyByteBuf, Option<T>> for OptionalCodec<T> {
 
 /// `either(left, right)`
 pub fn either<L, R>(
-    left: impl StreamCodec<FriendlyByteBuf, L> + 'static,
-    right: impl StreamCodec<FriendlyByteBuf, R> + 'static,
+    left: impl StreamCodec<FriendlyByteBuf, L> + Send + Sync + 'static,
+    right: impl StreamCodec<FriendlyByteBuf, R> + Send + Sync + 'static,
 ) -> EitherCodec<L, R> {
     EitherCodec { left: Box::new(left), right: Box::new(right) }
 }
 
 pub struct EitherCodec<L, R> {
-    left: Box<dyn StreamCodec<FriendlyByteBuf, L>>,
-    right: Box<dyn StreamCodec<FriendlyByteBuf, R>>,
+    left: Box<dyn StreamCodec<FriendlyByteBuf, L> + Send + Sync>,
+    right: Box<dyn StreamCodec<FriendlyByteBuf, R> + Send + Sync>,
 }
 
 impl<L, R> StreamCodec<FriendlyByteBuf, crate::util::either::Either<L, R>> for EitherCodec<L, R> {
@@ -555,12 +555,12 @@ impl<T> StreamCodec<FriendlyByteBuf, T> for IdMapperCodec<T> {
 
 /// `trackDepth(codec)` — подсчёт глубины NBT-like структур.
 /// Упрощённо: пропускает (глубина контролируется NbtAccounter внутри NBT).
-pub fn track_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> impl StreamCodec<FriendlyByteBuf, T> {
+pub fn track_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static) -> impl StreamCodec<FriendlyByteBuf, T> {
     codec
 }
 
 /// `increaseDepth` — аналогично.
-pub fn increase_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> impl StreamCodec<FriendlyByteBuf, T> {
+pub fn increase_depth<T>(codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static) -> impl StreamCodec<FriendlyByteBuf, T> {
     codec
 }
 

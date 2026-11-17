@@ -6,22 +6,31 @@ use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::network::protocol::packet::{packet_codec, Packet, PacketTypePtr};
 
 /// `ClientboundSetCameraPacket`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClientboundSetCameraPacket {
-    /// `cameraId` — entity id новой камеры.
+    /// `cameraId`.
     pub camera_id: i32,
 }
 
 impl ClientboundSetCameraPacket {
+    /// `ClientboundSetCameraPacket::new`.
     pub fn new(camera_id: i32) -> Self {
         Self { camera_id }
+    }
+    /// `cameraId` getter.
+    pub fn get_camera_id(&self) -> i32 {
+        self.camera_id
     }
 
     /// `STREAM_CODEC`.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, ClientboundSetCameraPacket> {
         packet_codec(
             |buf: &mut FriendlyByteBuf, p: &ClientboundSetCameraPacket| p.write_packet(buf),
-            |buf: &mut FriendlyByteBuf| ClientboundSetCameraPacket::new(buf.read_var_int()),
+            |buf: &mut FriendlyByteBuf| {
+                let camera_id = buf.read_var_int();
+
+                ClientboundSetCameraPacket::new(camera_id)
+            },
         )
     }
 }

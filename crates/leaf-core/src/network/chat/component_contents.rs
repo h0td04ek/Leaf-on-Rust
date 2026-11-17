@@ -11,9 +11,8 @@ use crate::network::chat::formatted_text::FormattedText;
 use crate::network::chat::style::Style;
 use crate::resources::identifier::Identifier;
 use crate::util::either::Either;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 // ------------------------------------------------------------ SelectorPattern
 
@@ -131,7 +130,7 @@ pub struct TranslatableContents {
     pub fallback: Option<String>,
     pub args: Vec<TranslatableArg>,
     /// Кэш декомпозиции: (поколение языка, части).
-    decomposed: Arc<RefCell<Option<(u64, Vec<FormattedText>)>>>,
+    decomposed: Arc<Mutex<Option<(u64, Vec<FormattedText>)>>>,
 }
 
 impl TranslatableContents {
@@ -141,7 +140,7 @@ impl TranslatableContents {
             key: key.into(),
             fallback,
             args,
-            decomposed: Arc::new(RefCell::new(None)),
+            decomposed: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -154,7 +153,7 @@ impl TranslatableContents {
     fn decompose(&self) -> Vec<FormattedText> {
         let generation = language_generation();
         {
-            let cache = self.decomposed.borrow();
+            let cache = self.decomposed.lock().unwrap();
             if let Some((gen, parts)) = cache.as_ref() {
                 if *gen == generation {
                     return parts.clone();
@@ -171,7 +170,7 @@ impl TranslatableContents {
             Ok(decomposed) => parts = decomposed,
             Err(_) => parts.push(FormattedText::of(template)),
         }
-        *self.decomposed.borrow_mut() = Some((generation, parts.clone()));
+        *self.decomposed.lock().unwrap() = Some((generation, parts.clone()));
         parts
     }
 

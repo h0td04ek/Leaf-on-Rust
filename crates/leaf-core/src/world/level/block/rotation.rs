@@ -3,6 +3,8 @@
 //! нужен для blockstate-трансформаций, здесь не используется.
 
 use crate::core::direction::{Axis, Direction};
+use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::random::RandomSource;
 use crate::util;
 
@@ -101,5 +103,20 @@ impl Rotation {
     /// `getShuffled`
     pub fn get_shuffled(random: &mut dyn RandomSource) -> Vec<Rotation> {
         util::shuffled_copy(&Self::VALUES, random)
+    }
+
+    /// `byIndex` — `ByIdMap.continuous(..., WRAP)`.
+    pub fn by_index(index: i32) -> Rotation {
+        Self::VALUES[index.rem_euclid(4) as usize]
+    }
+
+    /// `STREAM_CODEC` — `ByteBufCodecs.idMapper(BY_ID, getIndex)` (VarInt index).
+    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, Rotation> {
+        FnCodec::new(
+            |buf: &mut FriendlyByteBuf, v: &Rotation| {
+                buf.write_var_int(v.get_index() as i32);
+            },
+            |buf: &mut FriendlyByteBuf| Rotation::by_index(buf.read_var_int()),
+        )
     }
 }

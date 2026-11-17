@@ -38,6 +38,7 @@ impl ServerboundMoveVehiclePacket {
                 let y_rot = buf.read_float();
                 let x_rot = buf.read_float();
                 let on_ground = buf.read_bool();
+
                 ServerboundMoveVehiclePacket::new(position, y_rot, x_rot, on_ground)
             },
         )

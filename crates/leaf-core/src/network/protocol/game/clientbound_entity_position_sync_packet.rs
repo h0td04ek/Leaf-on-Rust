@@ -31,6 +31,7 @@ impl ClientboundEntityPositionSyncPacket {
                 let id = buf.read_var_int();
                 let values = PositionMoveRotation::read(buf);
                 let on_ground = buf.read_bool();
+
                 ClientboundEntityPositionSyncPacket::new(id, values, on_ground)
             },
         )

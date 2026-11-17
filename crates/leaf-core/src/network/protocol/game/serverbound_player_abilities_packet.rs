@@ -31,6 +31,7 @@ impl ServerboundPlayerAbilitiesPacket {
             |buf: &mut FriendlyByteBuf, p: &ServerboundPlayerAbilitiesPacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
                 let flags = buf.read_byte() as i32;
+
                 ServerboundPlayerAbilitiesPacket::new(flags & FLAG_FLYING != 0)
             },
         )

@@ -34,6 +34,7 @@ impl ClientboundServerDataPacket {
                 let icon_bytes = buf
                     .read_optional(|b| b.read_byte_array())
                     .and_then(|r| r.ok());
+
                 ClientboundServerDataPacket::new(motd, icon_bytes)
             },
         )

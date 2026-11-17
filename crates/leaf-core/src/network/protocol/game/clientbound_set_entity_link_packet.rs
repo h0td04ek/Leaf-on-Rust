@@ -37,6 +37,7 @@ impl ClientboundSetEntityLinkPacket {
             |buf: &mut FriendlyByteBuf| {
                 let source_id = buf.read_int();
                 let dest_id = buf.read_int();
+
                 ClientboundSetEntityLinkPacket::new(source_id, dest_id)
             },
         )

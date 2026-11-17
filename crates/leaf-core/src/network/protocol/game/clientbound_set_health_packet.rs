@@ -44,6 +44,7 @@ impl ClientboundSetHealthPacket {
                 let health = buf.read_float();
                 let food = buf.read_var_int();
                 let saturation = buf.read_float();
+
                 ClientboundSetHealthPacket::new(health, food, saturation)
             },
         )

@@ -7,42 +7,38 @@ use crate::network::protocol::packet::{packet_codec, Packet, PacketTypePtr};
 use crate::resources::identifier::Identifier;
 use crate::sounds::sound_source::SoundSource;
 
-const HAS_SOURCE: i32 = 1;
-const HAS_SOUND: i32 = 2;
-
 /// `ClientboundStopSoundPacket`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClientboundStopSoundPacket {
-    /// `name` — `None` = все звуки источника.
+    /// `name`.
     pub name: Option<Identifier>,
-    /// `source` — `None` = все источники.
+    /// `source`.
     pub source: Option<SoundSource>,
 }
 
 impl ClientboundStopSoundPacket {
-    /// `new ClientboundStopSoundPacket(name, source)`.
+    /// `ClientboundStopSoundPacket::new`.
     pub fn new(name: Option<Identifier>, source: Option<SoundSource>) -> Self {
         Self { name, source }
     }
+    /// `getName`.
+    pub fn get_name(&self) -> Option<&Identifier> { self.name.as_ref() }
+    /// `getSource`.
+    pub fn get_source(&self) -> Option<SoundSource> { self.source }
 
     /// `STREAM_CODEC`.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, ClientboundStopSoundPacket> {
         packet_codec(
             |buf: &mut FriendlyByteBuf, p: &ClientboundStopSoundPacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
-                let flags = buf.read_byte() as i32;
-                let source = if flags & HAS_SOURCE != 0 {
-                    Some(SoundSource::by_id(buf.read_var_int()))
+                let flags = buf.read_byte() as u8;
+                let source = if flags & 1 != 0 { Some(SoundSource::by_id(buf.read_var_int())) } else { None };
+                let name = if flags & 2 != 0 {
+                    Some(buf.read_identifier().expect("invalid identifier"))
                 } else {
                     None
                 };
-                let name = if flags & HAS_SOUND != 0 {
-                    Some(buf.read_identifier().expect("invalid sound name"))
-                } else {
-                    None
-                };
-                ClientboundStopSoundPacket::new(name, source)
-            },
+                ClientboundStopSoundPacket::new(name, source)            },
         )
     }
 }
@@ -55,19 +51,13 @@ impl Packet for ClientboundStopSoundPacket {
         GamePacketTypes::clientbound_stop_sound::<Self>().erase()
     }
     fn write_packet(&self, buf: &mut FriendlyByteBuf) {
-        let mut flags: i32 = 0;
-        if self.source.is_some() {
-            flags |= HAS_SOURCE;
-        }
-        if self.name.is_some() {
-            flags |= HAS_SOUND;
-        }
-        buf.write_byte(flags);
-        if let Some(source) = self.source {
+        let flags = (if self.source.is_some() { 1u8 } else { 0 })
+            | (if self.name.is_some() { 2u8 } else { 0 });
+        buf.write_byte(flags as i32);
+        if let Some(source) = &self.source {
             buf.write_var_int(source.ordinal());
         }
         if let Some(name) = &self.name {
             buf.write_identifier(name).expect("invalid identifier");
-        }
-    }
+        }    }
 }

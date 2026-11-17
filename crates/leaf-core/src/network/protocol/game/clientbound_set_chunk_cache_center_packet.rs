@@ -6,25 +6,24 @@ use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::network::protocol::packet::{packet_codec, Packet, PacketTypePtr};
 
 /// `ClientboundSetChunkCacheCenterPacket`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClientboundSetChunkCacheCenterPacket {
-    /// `x` — chunk x центра.
+    /// `x`.
     pub x: i32,
-    /// `z` — chunk z центра.
+    /// `z`.
     pub z: i32,
 }
 
 impl ClientboundSetChunkCacheCenterPacket {
+    /// `ClientboundSetChunkCacheCenterPacket::new`.
     pub fn new(x: i32, z: i32) -> Self {
         Self { x, z }
     }
-
-    /// `getX`.
+    /// `x` getter.
     pub fn get_x(&self) -> i32 {
         self.x
     }
-
-    /// `getZ`.
+    /// `z` getter.
     pub fn get_z(&self) -> i32 {
         self.z
     }
@@ -36,6 +35,7 @@ impl ClientboundSetChunkCacheCenterPacket {
             |buf: &mut FriendlyByteBuf| {
                 let x = buf.read_var_int();
                 let z = buf.read_var_int();
+
                 ClientboundSetChunkCacheCenterPacket::new(x, z)
             },
         )

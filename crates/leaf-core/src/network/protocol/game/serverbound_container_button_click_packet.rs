@@ -36,6 +36,7 @@ impl ServerboundContainerButtonClickPacket {
             |buf: &mut FriendlyByteBuf| {
                 let container_id = buf.read_container_id();
                 let button_id = buf.read_var_int();
+
                 ServerboundContainerButtonClickPacket::new(container_id, button_id)
             },
         )

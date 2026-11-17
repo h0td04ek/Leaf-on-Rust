@@ -42,6 +42,7 @@ impl ServerboundCommandSuggestionPacket {
                 let command = buf
                     .read_utf_n(MAX_COMMAND_LENGTH_READ)
                     .expect("invalid command");
+
                 ServerboundCommandSuggestionPacket::new(id, command)
             },
         )

@@ -47,6 +47,7 @@ impl ServerboundChatCommandSignedPacket {
                 let salt = buf.read_long();
                 let argument_signatures = ArgumentSignatures::read(buf);
                 let last_seen_messages = LastSeenMessagesUpdate::read(buf);
+
                 ServerboundChatCommandSignedPacket::new(
                     command,
                     time_stamp,

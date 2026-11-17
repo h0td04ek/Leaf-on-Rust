@@ -61,7 +61,7 @@ pub struct EntityTooltipInfo {
     pub uuid: Uuid,
     pub name: Option<Box<Component>>,
     /// Кэш строк tooltip (как `linesCache` в Java).
-    lines_cache: std::cell::RefCell<Option<Vec<Component>>>,
+    lines_cache: std::sync::Arc<std::sync::Mutex<Option<Vec<Component>>>>,
 }
 
 impl EntityTooltipInfo {
@@ -70,13 +70,13 @@ impl EntityTooltipInfo {
             entity_type,
             uuid,
             name: name.map(Box::new),
-            lines_cache: std::cell::RefCell::new(None),
+            lines_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
     /// `getTooltipLines` — имя, тип, uuid.
     pub fn get_tooltip_lines(&self) -> Vec<Component> {
-        if let Some(lines) = self.lines_cache.borrow().as_ref() {
+        if let Some(lines) = self.lines_cache.lock().unwrap().as_ref() {
             return lines.clone();
         }
         let mut lines = Vec::new();
@@ -90,7 +90,7 @@ impl EntityTooltipInfo {
             )],
         ));
         lines.push(Component::literal(&self.uuid.to_string()));
-        *self.lines_cache.borrow_mut() = Some(lines.clone());
+        *self.lines_cache.lock().unwrap() = Some(lines.clone());
         lines
     }
 }

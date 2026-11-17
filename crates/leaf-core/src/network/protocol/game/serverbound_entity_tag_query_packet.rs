@@ -36,6 +36,7 @@ impl ServerboundEntityTagQueryPacket {
             |buf: &mut FriendlyByteBuf| {
                 let transaction_id = buf.read_var_int();
                 let entity_id = buf.read_var_int();
+
                 ServerboundEntityTagQueryPacket::new(transaction_id, entity_id)
             },
         )

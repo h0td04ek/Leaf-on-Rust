@@ -30,6 +30,7 @@ impl ClientboundMoveVehiclePacket {
                 let position = Vec3::stream_codec().decode(buf);
                 let y_rot = buf.read_float();
                 let x_rot = buf.read_float();
+
                 ClientboundMoveVehiclePacket::new(position, y_rot, x_rot)
             },
         )

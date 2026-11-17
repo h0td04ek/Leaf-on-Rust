@@ -1,4 +1,5 @@
 //! Перенос `entity` из net.minecraft.server / net.minecraft.world.
+pub mod ai;
 pub mod humanoid_arm;
 pub mod player;
 pub mod position_move_rotation;

@@ -40,6 +40,7 @@ impl ClientboundTagQueryPacket {
             |buf: &mut FriendlyByteBuf| {
                 let transaction_id = buf.read_var_int();
                 let tag = buf.read_nbt().ok().flatten();
+
                 ClientboundTagQueryPacket::new(transaction_id, tag)
             },
         )

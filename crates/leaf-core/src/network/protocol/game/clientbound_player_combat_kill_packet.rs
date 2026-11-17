@@ -28,6 +28,7 @@ impl ClientboundPlayerCombatKillPacket {
             |buf: &mut FriendlyByteBuf| {
                 let player_id = buf.read_var_int();
                 let message = component_json::component_stream_codec().decode(buf);
+
                 ClientboundPlayerCombatKillPacket::new(player_id, message)
             },
         )

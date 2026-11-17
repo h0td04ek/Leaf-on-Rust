@@ -32,6 +32,7 @@ impl ClientboundRotateHeadPacket {
             |buf: &mut FriendlyByteBuf| {
                 let entity_id = buf.read_var_int();
                 let y_head_rot = buf.read_byte();
+
                 ClientboundRotateHeadPacket::new(entity_id, y_head_rot)
             },
         )

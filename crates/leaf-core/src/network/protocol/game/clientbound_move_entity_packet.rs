@@ -132,6 +132,7 @@ impl PosPacket {
                 let ya = buf.read_short();
                 let za = buf.read_short();
                 let on_ground = buf.read_bool();
+
                 PosPacket::new(entity_id, xa, ya, za, on_ground)
             },
         )
@@ -191,6 +192,7 @@ impl PosRotPacket {
                 let y_rot = buf.read_byte();
                 let x_rot = buf.read_byte();
                 let on_ground = buf.read_bool();
+
                 PosRotPacket::new(entity_id, xa, ya, za, y_rot, x_rot, on_ground)
             },
         )
@@ -239,6 +241,7 @@ impl RotPacket {
                 let y_rot = buf.read_byte();
                 let x_rot = buf.read_byte();
                 let on_ground = buf.read_bool();
+
                 RotPacket::new(entity_id, y_rot, x_rot, on_ground)
             },
         )

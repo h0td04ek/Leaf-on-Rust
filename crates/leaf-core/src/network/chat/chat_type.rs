@@ -8,7 +8,7 @@ use crate::network::chat::component::Component;
 use crate::network::chat::component_json::{
     component_stream_codec, optional_component_stream_codec,
 };
-use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::{Identifier, ResourceKey};
 
@@ -29,7 +29,7 @@ impl ChatType {
 
     /// `DIRECT_STREAM_CODEC`.
     pub fn direct_stream_codec() -> impl StreamCodec<FriendlyByteBuf, ChatType> {
-        FnCodec::new(
+        sync_fn(
             |buf: &mut FriendlyByteBuf, t: &ChatType| {
                 ChatTypeDecoration::stream_codec().encode(buf, &t.chat);
                 ChatTypeDecoration::stream_codec().encode(buf, &t.narration);
@@ -102,7 +102,7 @@ impl ChatTypeBound {
 
     /// `STREAM_CODEC` — holder + TRUSTED component + optional TRUSTED component.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, ChatTypeBound> {
-        FnCodec::new(
+        sync_fn(
             |buf: &mut FriendlyByteBuf, b: &ChatTypeBound| {
                 let holder_codec = HolderStreamCodec::new(ChatType::direct_stream_codec());
                 holder_codec.encode(buf, &b.chat_type);

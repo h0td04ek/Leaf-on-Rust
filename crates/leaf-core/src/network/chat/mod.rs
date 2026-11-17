@@ -13,6 +13,7 @@ pub mod font_description;
 pub mod formatted_text;
 pub mod hover_event;
 pub mod message_signature;
+pub mod numbers;
 pub mod style;
 pub mod text_color;
 

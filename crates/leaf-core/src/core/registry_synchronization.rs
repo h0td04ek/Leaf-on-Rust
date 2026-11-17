@@ -3,7 +3,7 @@
 
 use crate::nbt::tag::Tag;
 use crate::network::codec::byte_buf_codecs;
-use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
+use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 
@@ -26,7 +26,7 @@ impl PackedRegistryEntry {
     /// (bool + NBT-тег без End-маркера при отсутствии).
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, PackedRegistryEntry> {
         let tag_codec = byte_buf_codecs::TAG;
-        FnCodec::new(
+        sync_fn(
             move |buf: &mut FriendlyByteBuf, e: &PackedRegistryEntry| {
                 buf.write_identifier(&e.id).expect("invalid identifier");
                 match &e.data {

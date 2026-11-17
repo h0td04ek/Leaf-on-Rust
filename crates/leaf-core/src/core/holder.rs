@@ -14,7 +14,7 @@ use crate::network::friendly_byte_buf::FriendlyByteBuf;
 pub const DIRECT_HOLDER_ID: i32 = 0;
 
 /// `Holder<T>` — `Direct` (inline-значение) или `Reference` (id в реестре).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Holder<T> {
     /// `Holder.direct(value)`.
     Direct(T),
@@ -70,12 +70,14 @@ impl<T> Holder<T> {
 
 /// `ByteBufCodecs.holder(registryKey, codec)` — StreamCodec для `Holder<T>`.
 pub struct HolderStreamCodec<T> {
-    value_codec: Box<dyn StreamCodec<FriendlyByteBuf, T>>,
+    value_codec: Box<dyn StreamCodec<FriendlyByteBuf, T> + Send + Sync>,
 }
 
 impl<T> HolderStreamCodec<T> {
     /// Создать кодек holder'а с кодеком direct-значения.
-    pub fn new(value_codec: impl StreamCodec<FriendlyByteBuf, T> + 'static) -> Self {
+    pub fn new(
+        value_codec: impl StreamCodec<FriendlyByteBuf, T> + Send + Sync + 'static,
+    ) -> Self {
         Self { value_codec: Box::new(value_codec) }
     }
 }

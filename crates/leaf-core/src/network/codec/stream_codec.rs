@@ -75,6 +75,42 @@ impl<B, T> StreamCodec<B, T> for FnCodec<B, T> {
     }
 }
 
+/// Send+Sync вариант `FnCodec` — для кодеков, хранящихся в реестрах
+/// и разделяемых между потоками (data components, Holder-кодеки).
+pub struct SyncFnCodec<B, T> {
+    enc: std::sync::Mutex<Box<dyn FnMut(&mut B, &T) + Send>>,
+    dec: std::sync::Mutex<Box<dyn FnMut(&mut B) -> T + Send>>,
+}
+
+impl<B, T> SyncFnCodec<B, T> {
+    pub fn new(
+        enc: impl FnMut(&mut B, &T) + Send + 'static,
+        dec: impl FnMut(&mut B) -> T + Send + 'static,
+    ) -> Self {
+        Self {
+            enc: std::sync::Mutex::new(Box::new(enc)),
+            dec: std::sync::Mutex::new(Box::new(dec)),
+        }
+    }
+}
+
+impl<B, T> StreamCodec<B, T> for SyncFnCodec<B, T> {
+    fn encode(&self, buf: &mut B, value: &T) {
+        (self.enc.lock().unwrap())(buf, value);
+    }
+    fn decode(&self, buf: &mut B) -> T {
+        (self.dec.lock().unwrap())(buf)
+    }
+}
+
+/// Конструктор `SyncFnCodec`.
+pub fn sync_fn<B, T>(
+    enc: impl FnMut(&mut B, &T) + Send + 'static,
+    dec: impl FnMut(&mut B) -> T + Send + 'static,
+) -> SyncFnCodec<B, T> {
+    SyncFnCodec::new(enc, dec)
+}
+
 /// `StreamCodec.unit(value)` — пишет/читает ничего, возвращает константу.
 pub fn unit<T: Clone + 'static>(value: T) -> FnCodec<FriendlyByteBuf, T> {
     FnCodec::new(

@@ -50,8 +50,8 @@ impl KnownPack {
         crate::network::friendly_byte_buf::FriendlyByteBuf,
         KnownPack,
     > {
-        use crate::network::codec::stream_codec::FnCodec;
-        FnCodec::new(
+        use crate::network::codec::stream_codec::sync_fn;
+        sync_fn(
             |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, p: &KnownPack| {
                 buf.write_utf(&p.namespace).expect("namespace too long");
                 buf.write_utf(&p.id).expect("id too long");

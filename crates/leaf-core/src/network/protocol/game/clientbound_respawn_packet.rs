@@ -40,6 +40,7 @@ impl ClientboundRespawnPacket {
             |buf: &mut FriendlyByteBuf| {
                 let info = CommonPlayerSpawnInfo::read(buf);
                 let data_to_keep = buf.read_byte();
+
                 ClientboundRespawnPacket::new(info, data_to_keep)
             },
         )

@@ -45,6 +45,7 @@ impl ClientboundTakeItemEntityPacket {
                 let item_id = buf.read_var_int();
                 let player_id = buf.read_var_int();
                 let amount = buf.read_var_int();
+
                 ClientboundTakeItemEntityPacket::new(item_id, player_id, amount)
             },
         )

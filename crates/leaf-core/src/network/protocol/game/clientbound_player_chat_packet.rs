@@ -74,6 +74,7 @@ impl ClientboundPlayerChatPacket {
                 let unsigned_content = optional_component_stream_codec().decode(buf);
                 let filter_mask = FilterMask::read(buf);
                 let chat_type = ChatTypeBound::stream_codec().decode(buf);
+
                 ClientboundPlayerChatPacket::new(
                     global_index,
                     sender,

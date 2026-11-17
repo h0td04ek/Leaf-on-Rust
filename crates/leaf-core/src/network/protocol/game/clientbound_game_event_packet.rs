@@ -96,6 +96,7 @@ impl ClientboundGameEventPacket {
             |buf: &mut FriendlyByteBuf| {
                 let event = GameEventType::by_id(buf.read_unsigned_byte() as u8);
                 let param = buf.read_float();
+
                 ClientboundGameEventPacket::new(event, param)
             },
         )

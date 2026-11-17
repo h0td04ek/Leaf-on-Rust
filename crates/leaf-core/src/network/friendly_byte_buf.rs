@@ -998,7 +998,7 @@ impl FriendlyByteBuf {
     }
 
     pub fn read_quaternion(&mut self) -> crate::joml::Quaternionf {
-        crate::joml::Quaternionf::new(
+        crate::joml::Quaternionf::from_xyzw(
             self.source.read_f32_bits(),
             self.source.read_f32_bits(),
             self.source.read_f32_bits(),

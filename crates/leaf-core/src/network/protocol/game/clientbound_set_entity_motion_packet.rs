@@ -38,6 +38,7 @@ impl ClientboundSetEntityMotionPacket {
             |buf: &mut FriendlyByteBuf| {
                 let id = buf.read_var_int();
                 let movement = buf.read_lp_vec3();
+
                 ClientboundSetEntityMotionPacket::new(id, movement)
             },
         )

@@ -28,6 +28,7 @@ impl ClientboundTabListPacket {
             |buf: &mut FriendlyByteBuf| {
                 let header = component_json::component_stream_codec().decode(buf);
                 let footer = component_json::component_stream_codec().decode(buf);
+
                 ClientboundTabListPacket::new(header, footer)
             },
         )

@@ -48,6 +48,7 @@ impl ClientboundSetExperiencePacket {
                 let experience_progress = buf.read_float();
                 let experience_level = buf.read_var_int();
                 let total_experience = buf.read_var_int();
+
                 ClientboundSetExperiencePacket::new(experience_progress, total_experience, experience_level)
             },
         )

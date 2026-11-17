@@ -64,6 +64,7 @@ impl ClientboundInitializeBorderPacket {
                 let new_absolute_max_size = buf.read_var_int();
                 let warning_blocks = buf.read_var_int();
                 let warning_time = buf.read_var_int();
+
                 ClientboundInitializeBorderPacket::new(
                     new_center_x,
                     new_center_z,

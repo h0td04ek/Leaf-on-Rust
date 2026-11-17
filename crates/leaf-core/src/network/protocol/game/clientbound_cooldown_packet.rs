@@ -27,6 +27,7 @@ impl ClientboundCooldownPacket {
             |buf: &mut FriendlyByteBuf| {
                 let cooldown_group = buf.read_identifier().expect("invalid cooldown group");
                 let duration = buf.read_var_int();
+
                 ClientboundCooldownPacket::new(cooldown_group, duration)
             },
         )

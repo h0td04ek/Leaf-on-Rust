@@ -37,6 +37,7 @@ impl ClientboundSetPassengersPacket {
             |buf: &mut FriendlyByteBuf| {
                 let vehicle = buf.read_var_int();
                 let passengers = buf.read_var_int_array();
+
                 ClientboundSetPassengersPacket::new(vehicle, passengers)
             },
         )

@@ -27,6 +27,7 @@ impl ClientboundChangeDifficultyPacket {
             |buf: &mut FriendlyByteBuf| {
                 let difficulty = Difficulty::stream_codec().decode(buf);
                 let locked = buf.read_bool();
+
                 ClientboundChangeDifficultyPacket::new(difficulty, locked)
             },
         )

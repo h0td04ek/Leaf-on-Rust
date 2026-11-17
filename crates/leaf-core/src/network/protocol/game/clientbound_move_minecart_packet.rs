@@ -28,6 +28,7 @@ impl ClientboundMoveMinecartPacket {
             |buf: &mut FriendlyByteBuf| {
                 let entity_id = buf.read_var_int();
                 let lerp_steps = buf.read_list(|b| MinecartStep::read(b));
+
                 ClientboundMoveMinecartPacket::new(entity_id, lerp_steps)
             },
         )

@@ -48,6 +48,7 @@ impl ClientboundAnimatePacket {
             |buf: &mut FriendlyByteBuf| {
                 let id = buf.read_var_int();
                 let action = buf.read_unsigned_byte();
+
                 ClientboundAnimatePacket::new(id, action)
             },
         )

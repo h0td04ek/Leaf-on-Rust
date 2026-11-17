@@ -29,6 +29,7 @@ impl ClientboundSetTimePacket {
                 let game_time = buf.read_long();
                 let day_time = buf.read_long();
                 let tick_day_time = buf.read_bool();
+
                 ClientboundSetTimePacket::new(game_time, day_time, tick_day_time)
             },
         )

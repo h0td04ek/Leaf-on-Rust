@@ -66,6 +66,7 @@ impl ClientboundCustomChatCompletionsPacket {
             |buf: &mut FriendlyByteBuf| {
                 let action = CustomChatCompletionsAction::by_id(buf.read_var_int());
                 let entries = buf.read_collection(|_| Vec::new(), |b| b.read_utf().expect("invalid entry"));
+
                 ClientboundCustomChatCompletionsPacket::new(action, entries)
             },
         )

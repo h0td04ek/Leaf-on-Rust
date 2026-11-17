@@ -53,6 +53,7 @@ impl ServerboundUseItemPacket {
                 let sequence = buf.read_var_int();
                 let y_rot = buf.read_float();
                 let x_rot = buf.read_float();
+
                 ServerboundUseItemPacket::new(hand, sequence, y_rot, x_rot)
             },
         )

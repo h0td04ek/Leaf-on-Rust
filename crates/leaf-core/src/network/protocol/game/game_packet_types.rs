@@ -345,6 +345,10 @@ impl GamePacketTypes {
     pub fn clientbound_set_border_warning_delay<P: Packet>() -> PacketType<P> {
         PacketType::new(PacketFlow::CLIENTBOUND, id("set_border_warning_delay"))
     }
+    /// `CLIENTBOUND_SET_BORDER_WARNING_DISTANCE`.
+    pub fn clientbound_set_border_warning_distance<P: Packet>() -> PacketType<P> {
+        PacketType::new(PacketFlow::CLIENTBOUND, id("set_border_warning_distance"))
+    }
     /// `CLIENTBOUND_SET_CAMERA`.
     pub fn clientbound_set_camera<P: Packet>() -> PacketType<P> {
         PacketType::new(PacketFlow::CLIENTBOUND, id("set_camera"))
@@ -588,6 +592,10 @@ impl GamePacketTypes {
     /// `SERVERBOUND_JIGSAW_GENERATE`.
     pub fn serverbound_jigsaw_generate<P: Packet>() -> PacketType<P> {
         PacketType::new(PacketFlow::SERVERBOUND, id("jigsaw_generate"))
+    }
+    /// `SERVERBOUND_TEST_INSTANCE_BLOCK_ACTION`.
+    pub fn serverbound_test_instance_block_action<P: Packet>() -> PacketType<P> {
+        PacketType::new(PacketFlow::SERVERBOUND, id("test_instance_block_action"))
     }
     /// `SERVERBOUND_LOCK_DIFFICULTY`.
     pub fn serverbound_lock_difficulty<P: Packet>() -> PacketType<P> {
