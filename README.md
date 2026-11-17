@@ -57,20 +57,20 @@ crates/leaf-core/src/
 │                   valueproviders, random, directories, value providers...
 ├── network/        🌐 Netty-стек: codec, connection, protocols
 │   ├── codec/      💬 ByteBuf codecs, id_dispatch_codec, stream codec
-│   ├── protocol/   📜 handshake, status, ping, cookie, login,
-│   │               configuration, game — пакеты 1.21.11
-│   └── chat/       💬 Компоненты чата, JSON-сериализация
+│   ├── protocol/   📜 handshake ✅, status ✅, ping ✅, cookie ✅,
+│   │               common ✅, login, configuration, game — пакеты 1.21.11
+│   └── chat/       💬 Компоненты чата, стили, JSON-сериализация
 ├── core/           🧱 Базовые типы: BlockPos, SectionPos, QuartPos,
-│                   GlobalPos, Vec3i, Direction, Registry
-├── world/          🌍 Level, chunk, entity/item, phys
+│                   GlobalPos, Vec3i, Direction, Registry, SharedConstants
+├── world/          🌍 Level, chunk, item
+├── entity/         🧟 HumanoidArm, ChatVisibility, ...
+├── player/         🧍 Игроки
 ├── level/          🗺️  Серверный уровень
-├── entity.rs        🧟 Сущности
-├── player.rs        🧍 Игроки
+├── server/         🖥️  ClientInformation, ParticleStatus, dialog
 ├── chunk.rs         🧱 Чанки
 ├── command.rs       ⌨️  Система команд
-├── server.rs        🖥️  Серверный entry point
 ├── locale/          🌐 Локализация / lang
-├── resources/       📂 Resource packs, datapacks
+├── resources/       📂 Identifier, ResourceKey
 ├── crash_report.rs  💥 Отчёты о падениях
 └── plugin.rs        🔌 Plugin API-слой
 ```
@@ -137,20 +137,21 @@ cargo test -p leaf-core
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-17. **~22k строк Rust** в `crates/leaf-core`.
+Актуально на 2026-11-17. **~35k строк Rust** в `crates/leaf-core`, 63 теста зелёные.
 
 ### ✅ Работает и проверено тестами
 
 | Подсистема | Что сделано |
 |---|---|
-| **NBT** | Полный binary IO: все теги, MUTF-8, Compound/List, SNBT-вывод, accounter — round-trip идентичен Java |
-| **RNG** | Legacy/Single/ThreadLocalRandom/Xoroshiro — **bit-exact** против `java.util.Random` (автоматический тест) |
-| **util/mth** | Seed-функции, математика уровня `net.minecraft.util.Mth` |
-| **core/** | `BlockPos`, `SectionPos`, `QuartPos`, `GlobalPos`, `Vec3i`, `Direction` — портed со всеми граничными случаями |
-| **network/codec** | ByteBuf-codec'и, `id_dispatch_codec`, stream codec, исключения кодирования |
-| **network/protocol** | Структуры пакетов всех фаз 1.21.11: handshake, status, ping, cookie, login, configuration, game |
-| **network/chat** | Компоненты чата, сериализация, стили |
-| **util/** | ~54 модуля: easing, bit_storage, valueproviders, debugchart, memory_reserve и др. |
+| **NBT** | Binary IO: все теги, MUTF-8, Compound/List, **SNBT-парсер** (`TagParser`), accounter — round-trip идентичен Java |
+| **RNG** | Legacy/Single/ThreadLocalRandom/Xoroshiro — **bit-exact** против `java.util.Random` |
+| **util/** | ~60 модулей: `mth`, bit_storage, easing, valueproviders, weighted random, debugchart, directories и др. |
+| **core/** | `BlockPos`, `SectionPos`, `QuartPos`, `GlobalPos`, `Vec3i`, `Direction`, `Registry`, `SharedConstants`/`WorldVersion` |
+| **network/codec** | ByteBuf-codec'и, `id_dispatch_codec`, stream codec, bundle codec'и |
+| **network/protocol** | Инфраструктура (ProtocolInfoBuilder, codec dispatch, bundler) + пакеты: **handshake, status, ping, cookie, common** (keepalive, disconnect, resource pack, cookies, transfer, custom payload, update tags, server links, client information) |
+| **network/chat** | Компоненты + стили + click/hover events + **JSON-сериализация** (`ComponentSerialization.CODEC`-аналог), `CommonComponents`, `ComponentUtils` |
+| **resources/** | `Identifier`, `ResourceKey` |
+| **entity/server enums** | `HumanoidArm`, `ChatVisibility`, `ParticleStatus`, `ClientInformation` |
 | **leaf-runner** | Авто-поиск JVM/modules/jar, `-jar` и `--cp` dev-режимы |
 
 ### 🟡 В работе
@@ -158,14 +159,15 @@ cargo test -p leaf-core
 | Подсистема | Состояние |
 |---|---|
 | **Запуск сервера** | JVM исполняет Java (~0.8s bootstrap), сервер доходит до `PaperBootstrap`, дальше `FileNotFoundException` в natives — баг jvm25-rust |
+| **network/protocol** | Осталось: `login`, `configuration`, `game` (~11.6k строк Java), `server.dialog` для show_dialog, cipher/encryption |
 | **world/level** | Чанки, level, phys — в портировании |
-| **Сетевой цикл** | Кодеки и пакеты готовы; полный Connection→Pipeline ещё собирается |
 | **entity/player/command** | Заготовки модулей |
+| **registries** | `core::registry` зачаточный; нужны `Holder`/`HolderSet` для login/configuration/game |
 
 ### 🔴 Осталось
 
-1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть из ~77 нативов java.base не реализована в jvm25-rust.
-2. **Packet → ProtocolInfo wiring** — привязка пакетов к protocol info builder.
+1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть нативов java.base не реализована в jvm25-rust.
+2. **Протоколы login/configuration/game** — регистрация пакетов в ProtocolInfo.
 3. **World/level** — генерация чанков, lighting, entities.
 4. **Plugin API** — Bukkit/Paper события и менеджеры.
 5. **Полный прогон** — `nogui` сервер должен дойти до "Done".
