@@ -104,6 +104,42 @@ impl<E: Clone> WeightedList<E> {
         }
     }
 
+    /// `streamCodec` — список `(weight, value)` пар.
+    /// Java: `WeightedList.streamCodec(elementCodec)`.
+    pub fn stream_codec<E2, C>(
+        element_codec: C,
+    ) -> impl crate::network::codec::stream_codec::StreamCodec<
+        crate::network::friendly_byte_buf::FriendlyByteBuf, WeightedList<E2>,
+    > + Send + Sync + 'static
+    where
+        E2: Clone + Send + Sync + 'static,
+        C: crate::network::codec::stream_codec::StreamCodec<
+            crate::network::friendly_byte_buf::FriendlyByteBuf, E2,
+        > + Send + Sync + 'static,
+    {
+        let codec = std::sync::Arc::new(element_codec);
+        let codec2 = codec.clone();
+        crate::network::codec::stream_codec::sync_fn(
+            move |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, list: &WeightedList<E2>| {
+                buf.write_var_int(list.items.len() as i32);
+                for w in &list.items {
+                    buf.write_var_int(w.weight());
+                    codec.encode(buf, w.value());
+                }
+            },
+            move |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| {
+                let n = buf.read_var_int();
+                let mut items = Vec::with_capacity(n.max(0) as usize);
+                for _ in 0..n {
+                    let weight = buf.read_var_int();
+                    let value = codec2.decode(buf);
+                    items.push(Weighted::new(value, weight));
+                }
+                WeightedList::of_list(items)
+            },
+        )
+    }
+
     /// `unwrap()` — исходный список Weighted.
     pub fn unwrap(&self) -> &[Weighted<E>] {
         &self.items

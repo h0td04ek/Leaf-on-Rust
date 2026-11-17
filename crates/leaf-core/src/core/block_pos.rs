@@ -562,6 +562,20 @@ impl BlockPos {
         }
         i
     }
+
+    /// `BlockPos.STREAM_CODEC` — `FriendlyByteBuf.readBlockPos`/`writeBlockPos`.
+    pub fn stream_codec() -> impl crate::network::codec::stream_codec::StreamCodec<
+        crate::network::friendly_byte_buf::FriendlyByteBuf, BlockPos,
+    > + Send + Sync + 'static {
+        crate::network::codec::stream_codec::sync_fn(
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf, pos: &BlockPos| {
+                buf.write_block_pos(pos);
+            },
+            |buf: &mut crate::network::friendly_byte_buf::FriendlyByteBuf| {
+                buf.read_block_pos()
+            },
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -13,6 +13,17 @@ use super::clientbound_container_close_packet::ClientboundContainerClosePacket;
 use super::clientbound_cooldown_packet::ClientboundCooldownPacket;
 use super::clientbound_debug_sample_packet::ClientboundDebugSamplePacket;
 use super::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
+use super::clientbound_set_cursor_item_packet::ClientboundSetCursorItemPacket;
+use super::clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket;
+use super::clientbound_set_equipment_packet::ClientboundSetEquipmentPacket;
+use super::clientbound_test_instance_block_status::ClientboundTestInstanceBlockStatus;
+use super::clientbound_level_particles_packet::ClientboundLevelParticlesPacket;
+use super::clientbound_explode_packet::ClientboundExplodePacket;
+use super::clientbound_add_entity_packet::ClientboundAddEntityPacket;
+use super::clientbound_container_set_content_packet::ClientboundContainerSetContentPacket;
+use super::clientbound_container_set_slot_packet::ClientboundContainerSetSlotPacket;
+use super::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
+use super::clientbound_login_packet::ClientboundLoginPacket;
 
 /// `ClientGamePacketListener`.
 pub trait ClientGamePacketListener:
@@ -31,4 +42,15 @@ pub trait ClientGamePacketListener:
     fn handle_item_cooldown(&mut self, _packet: &ClientboundCooldownPacket) {}
     fn handle_debug_sample(&mut self, _packet: &ClientboundDebugSamplePacket) {}
     fn handle_forget_level_chunk(&mut self, _packet: &ClientboundForgetLevelChunkPacket) {}
+    fn handle_set_cursor_item(&mut self, _packet: &ClientboundSetCursorItemPacket) {}
+    fn handle_set_player_inventory(&mut self, _packet: &ClientboundSetPlayerInventoryPacket) {}
+    fn handle_set_equipment(&mut self, _packet: &ClientboundSetEquipmentPacket) {}
+    fn handle_test_instance_block_status(&mut self, _packet: &ClientboundTestInstanceBlockStatus) {}
+    fn handle_level_particles(&mut self, _packet: &ClientboundLevelParticlesPacket) {}
+    fn handle_explosion(&mut self, _packet: &ClientboundExplodePacket) {}
+    fn handle_add_entity(&mut self, _packet: &ClientboundAddEntityPacket) {}
+    fn handle_container_content(&mut self, _packet: &ClientboundContainerSetContentPacket) {}
+    fn handle_container_set_slot(&mut self, _packet: &ClientboundContainerSetSlotPacket) {}
+    fn handle_block_entity_data(&mut self, _packet: &ClientboundBlockEntityDataPacket) {}
+    fn handle_login(&mut self, _packet: &ClientboundLoginPacket) {}
 }
