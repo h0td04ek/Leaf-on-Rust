@@ -10,4 +10,6 @@ pub use entity::Entity;
 pub use entity_type::EntityType;
 pub use pose::Pose;
 pub mod living_entity;
+pub mod item_entity;
+pub mod experience_orb;
 pub use living_entity::LivingEntity;

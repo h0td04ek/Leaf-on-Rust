@@ -6,6 +6,7 @@
 
 pub mod block_tags;
 pub mod damage_type_tags;
+pub mod entity_type_tags;
 pub mod tag_key;
 
 pub use block_tags::BlockTags;

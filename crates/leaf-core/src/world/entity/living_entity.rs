@@ -109,6 +109,12 @@ pub struct LivingEntity {
     pub auto_spin_attack_dmg: f32,
     /// `xpReward`.
     pub xp_reward: i32,
+    /// `wasExperienceConsumed` — опыт уже получен.
+    pub was_experience_consumed: bool,
+    /// `pose` — текущая поза.
+    pub pose: crate::world::entity::pose::Pose,
+    /// `isSleeping` — сущность спит.
+    pub is_sleeping: bool,
     /// Текущий health.
     pub health: f32,
 }
@@ -179,6 +185,9 @@ impl LivingEntity {
             auto_spin_attack_ticks: 0,
             auto_spin_attack_dmg: 0.0,
             xp_reward: 0,
+            was_experience_consumed: false,
+            pose: crate::world::entity::pose::Pose::Standing,
+            is_sleeping: false,
             health,
         }
     }
@@ -281,7 +290,11 @@ impl LivingEntity {
         }
         if self.hurt_time > 0 { self.hurt_time -= 1; }
         if self.hurt_duration > 0 { self.hurt_duration -= 1; }
-        if self.death_time > 0 { self.death_time += 1; }
+        if self.dead {
+            self.tick_death();
+        } else if self.death_time > 0 {
+            self.death_time += 1;
+        }
         if self.no_action_time > 0 { self.no_action_time -= 1; }
         if self.attack_strength_ticker > 0 { self.attack_strength_ticker -= 1; }
         if self.item_swap_ticker > 0 { self.item_swap_ticker -= 1; }
@@ -295,12 +308,51 @@ impl LivingEntity {
         self.y_head_rot_o = self.y_head_rot;
     }
 
-    /// `die(source)`.
+    /// `tickDeath()` — инкремент deathTime; на 20 тиках —
+    /// `EntityEvent.POOF` (60) + `remove(KILLED)`.
+    pub fn tick_death(&mut self) {
+        self.death_time += 1;
+        if self.death_time >= 20 && !self.entity.is_removed() {
+            if let Some(level) = self.entity.level.clone() {
+                // EntityEvent.POOF = 60
+                level.broadcast_entity_event(self.entity.id, 60);
+            }
+            self.remove_living(crate::world::entity::entity::RemovalReason::Killed);
+        }
+    }
+
+    /// `die(source)` — полная цепочка `LivingEntity.die` (1.21.11):
+    /// kill credit, stop sleeping/using, dead-флаг, combat recheck,
+    /// `killedEntity`-проверка, `dropAllDeathLoot`, `createWitherRose`,
+    /// broadcast `EntityEvent.DEATH`, pose DYING.
     pub fn die(&mut self, source: DamageSource) {
-        if !self.is_dead_or_dying() {
+        if !self.entity.is_removed() && !self.dead {
+            let causing_entity = source.get_causing_entity().cloned();
+            if let Some(mut kill_credit) = self.get_kill_credit() {
+                let killed = self.entity.clone();
+                kill_credit.award_kill_score(&killed, &source);
+            }
+            if self.is_sleeping {
+                self.stop_sleeping();
+            }
+            self.stop_using_item();
             self.dead = true;
+            self.combat_tracker.recheck_status();
+            if let Some(level) = self.entity.level.clone() {
+                let killed_ok = match &causing_entity {
+                    None => true,
+                    Some(e) => e.killed_entity(level.as_ref(), &self.entity, &source),
+                };
+                if killed_ok {
+                    self.entity.game_event(&crate::world::level::gameevent::game_event::entity_die());
+                    self.drop_all_death_loot(&level, &source);
+                    self.create_wither_rose();
+                }
+                // EntityEvent.DEATH = 3
+                level.broadcast_entity_event(self.entity.id, 3);
+            }
+            self.set_pose(crate::world::entity::pose::Pose::Dying);
             self.death_time = 0;
-            Self::on_killed(&mut self.entity, source);
         }
     }
 
@@ -406,6 +458,15 @@ impl LivingEntity {
         if flag2 {
             self.last_damage_source = Some(source.clone());
             self.last_damage_stamp = self.entity.tick_count as i64;
+            // `mobEffectInstance.onMobHurt` для всех активных эффектов
+            let effects: Vec<MobEffectInstance> =
+                self.active_effects.values().cloned().collect();
+            let level = self.entity.level.clone();
+            let level_ref: Option<&dyn crate::world::level::level_reader::LevelReader> =
+                level.as_deref();
+            for inst in &effects {
+                inst.on_mob_hurt(level_ref, self, &source, amount);
+            }
         }
         flag2
     }
@@ -699,15 +760,17 @@ impl LivingEntity {
         }
         let amount = self.get_damage_after_armor_absorb(damage_source, amount);
         let amount = self.get_damage_after_magic_absorb(damage_source, amount);
-        let absorbed = self.get_absorption_amount();
-        let health_damage = (amount - absorbed).max(0.0);
-        self.set_absorption_amount(absorbed - (amount - health_damage));
-        if health_damage != 0.0 {
+        // Vanilla: absorbed = min(absorption, amount); healthDamage = amount - absorbedAbsorbed
+        let absorption = self.get_absorption_amount();
+        let absorbed = absorption.min(amount);
+        self.set_absorption_amount(absorption - absorbed);
+        let health_damage = amount - absorbed;
+        if health_damage > 0.0 {
             self.combat_tracker
                 .record_damage(damage_source.clone(), health_damage);
             self.set_health(self.get_health() - health_damage);
-            self.set_absorption_amount(
-                self.get_absorption_amount() - health_damage,
+            self.entity.game_event(
+                &crate::world::level::gameevent::game_event::entity_damage(),
             );
         }
     }
@@ -728,7 +791,30 @@ impl LivingEntity {
 
     /// `entityTypeIsFreezeHurtsExtra` — `FREEZE_HURTS_EXTRA_TYPES` тег.
     fn entity_type_is_freeze_hurts_extra(&self) -> bool {
-        false
+        self.entity
+            .entity_type
+            .value()
+            .map(|t| {
+                crate::tags::entity_type_tags::entity_type_is(
+                    t,
+                    crate::tags::entity_type_tags::keys::freeze_hurts_extra_types(),
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    /// `isInvertedHealAndHarm()` — `INVERTED_HEALING_AND_HARM` тег.
+    pub fn is_inverted_heal_and_harm(&self) -> bool {
+        self.entity
+            .entity_type
+            .value()
+            .map(|t| {
+                crate::tags::entity_type_tags::entity_type_is(
+                    t,
+                    crate::tags::entity_type_tags::keys::inverted_healing_and_harm(),
+                )
+            })
+            .unwrap_or(false)
     }
 
     /// `randomTeleport(diameter)` — случайный телепорт в радиусе.
@@ -787,9 +873,27 @@ impl LivingEntity {
         self.attributes.get_value(&attribute_ids::armor()).floor() as i32
     }
 
-    /// `getArmorCoverPercentage()` — доля покрытой брони экипировкой.
+    /// `getArmorCoverPercentage()` — доля надетых humanoid-armor
+    /// слотов от всех armor-слотов (`i1 / i`).
     pub fn get_armor_cover_percentage(&mut self) -> f32 {
-        0.0
+        let mut i = 0i32;
+        let mut i1 = 0i32;
+        for slot in crate::entity::equipment_slot::EquipmentSlot::VALUES {
+            if slot.get_type()
+                == crate::entity::equipment_slot::EquipmentSlotType::HumanoidArmor
+            {
+                let stack = self.get_item_by_slot(slot);
+                if !stack.is_empty() {
+                    i1 += 1;
+                }
+                i += 1;
+            }
+        }
+        if i > 0 {
+            i1 as f32 / i as f32
+        } else {
+            0.0
+        }
     }
 
 
@@ -801,8 +905,212 @@ impl LivingEntity {
             .and_then(|e| e.source.get_causing_entity().cloned())
     }
 
-    /// `dropAllDeathLoot`.
-    pub fn drop_all_death_loot(&mut self, _source: &DamageSource, _destroyed_by_player: bool) {}
+    /// `dropAllDeathLoot(level, damageSource)` — полная цепочка:
+    /// `shouldDropLoot` → `dropFromLootTable` + `dropCustomDeathLoot`,
+    /// затем `dropEquipment` + `dropExperience`.
+    pub fn drop_all_death_loot(
+        &mut self,
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        source: &DamageSource,
+    ) {
+        let recently_hit = self.last_hurt_by_player_memory_time > 0;
+        if self.should_drop_loot(level.as_ref()) {
+            self.drop_from_loot_table(level.as_ref(), source, recently_hit);
+            self.drop_custom_death_loot(level.as_ref(), source, recently_hit);
+        }
+        self.drop_equipment(level.as_ref());
+        self.drop_experience_rewards(level, source.get_causing_entity());
+    }
+
+    /// `shouldDropLoot(level)` — база `true` (Mob/Player уточняют).
+    pub fn should_drop_loot(
+        &self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+    ) -> bool {
+        !self.entity.is_spectator() && !self.dead
+    }
+
+    /// `dropEquipment(level)` — база пустая (Mob переопределяет:
+    /// дроп экипировки по шансам/лут-таблице).
+    pub fn drop_equipment(
+        &mut self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+    ) {
+    }
+
+    /// `dropCustomDeathLoot(level, source, recentlyHit)` — база пустая.
+    pub fn drop_custom_death_loot(
+        &mut self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _source: &DamageSource,
+        _recently_hit: bool,
+    ) {
+    }
+
+    /// `dropDeathLoot(level, source)` — Paper-хук, база пустая.
+    pub fn drop_death_loot(
+        &mut self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _source: &DamageSource,
+    ) {
+    }
+
+    /// `getLootTable()` — `Optional<ResourceKey<LootTable>>`;
+    /// база пустая (Mob возвращает свой loot table).
+    pub fn get_loot_table(
+        &self,
+    ) -> Option<crate::resources::identifier::Identifier> {
+        None
+    }
+
+    /// `getLootTableSeed()`.
+    pub fn get_loot_table_seed(&self) -> i64 {
+        0
+    }
+
+    /// `dropFromLootTable(level, source, playerKill)` —
+    /// резолвит `getLootTable` и делегирует в overload.
+    pub fn drop_from_loot_table(
+        &mut self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        source: &DamageSource,
+        player_kill: bool,
+    ) {
+        if let Some(table) = self.get_loot_table() {
+            self.drop_from_loot_table_key(level, source, player_kill, &table);
+        }
+    }
+
+    /// `dropFromLootTable(level, source, playerKill, lootTable)` —
+    /// строит `LootParams` (THIS_ENTITY/ORIGIN/DAMAGE_SOURCE/
+    /// ATTACKING_ENTITY/DIRECT_ATTACKING_ENTITY/LAST_DAMAGE_PLAYER)
+    /// и спавнит результаты через `spawnAtLocation`.
+    pub fn drop_from_loot_table_key(
+        &mut self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        source: &DamageSource,
+        _player_kill: bool,
+        table: &crate::resources::identifier::Identifier,
+    ) {
+        use crate::world::level::storage::loot::loot_context::LootParams;
+        use crate::world::level::storage::loot::parameters::loot_context_params as params;
+        let this_entity = self.entity.clone();
+        let mut loot_params = LootParams::new()
+            .with_parameter(params::this_entity(), this_entity)
+            .with_parameter(params::origin(), self.entity.pos)
+            .with_parameter(params::damage_source(), source.clone());
+        if let Some(attacker) = source.get_causing_entity() {
+            loot_params = loot_params.with_parameter(params::attacking_entity(), attacker.clone());
+        }
+        if let Some(direct) = source.get_direct_entity() {
+            loot_params = loot_params.with_parameter(params::direct_attacking_entity(), direct.clone());
+        }
+        let items = level.generate_loot(table, &loot_params);
+        for stack in items {
+            if !stack.is_empty() {
+                self.entity.spawn_at_location(stack);
+            }
+        }
+    }
+
+    /// `dropFromLootTable(..., dropConsumer)` — вариант с consumer'ом.
+    pub fn drop_from_loot_table_with(
+        &mut self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        source: &DamageSource,
+        player_kill: bool,
+        table: &crate::resources::identifier::Identifier,
+        mut drop_consumer: impl FnMut(&mut Self, crate::world::item::item_stack::ItemStack),
+    ) {
+        use crate::world::level::storage::loot::loot_context::LootParams;
+        use crate::world::level::storage::loot::parameters::loot_context_params as params;
+        let this_entity = self.entity.clone();
+        let mut loot_params = LootParams::new()
+            .with_parameter(params::this_entity(), this_entity)
+            .with_parameter(params::origin(), self.entity.pos)
+            .with_parameter(params::damage_source(), source.clone());
+        if let Some(attacker) = source.get_causing_entity() {
+            loot_params = loot_params.with_parameter(params::attacking_entity(), attacker.clone());
+        }
+        if let Some(direct) = source.get_direct_entity() {
+            loot_params = loot_params.with_parameter(params::direct_attacking_entity(), direct.clone());
+        }
+        let _ = player_kill;
+        let items = level.generate_loot(table, &loot_params);
+        for stack in items {
+            if !stack.is_empty() {
+                drop_consumer(self, stack);
+            }
+        }
+    }
+
+    /// `dropExperience(level, entity)` — `ExperienceOrb.award`
+    /// с проверками `wasExperienceConsumed`/`isAlwaysExperienceDropper`/
+    /// `MOB_DROPS` game rule.
+    pub fn drop_experience_rewards(
+        &mut self,
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        entity: Option<&Entity>,
+    ) {
+        let _ = entity;
+        if !self.was_experience_consumed
+            && (self.is_always_experience_dropper()
+                || (self.last_hurt_by_player_memory_time > 0
+                    && self.should_drop_experience()
+                    && level.mob_drops()))
+        {
+            let reward = self.get_experience_reward_for(level.as_ref(), entity);
+            crate::world::entity::experience_orb::ExperienceOrb::award(
+                Some(level),
+                self.entity.pos,
+                reward,
+            );
+        }
+    }
+
+    /// `isAlwaysExperienceDropper()` — база false (Player переопределяет).
+    pub fn is_always_experience_dropper(&self) -> bool {
+        false
+    }
+
+    /// `getExperienceReward(level, entity)` — `xpReward`
+    /// (+ Looting/прогрессии добавятся с enchantment-эффектами).
+    pub fn get_experience_reward_for(
+        &self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _entity: Option<&Entity>,
+    ) -> i32 {
+        self.xp_reward
+    }
+
+    /// `createWitherRose(entitySource)` — только для WitherBoss;
+    /// базовая проверка по entity-type id `wither_boss`.
+    pub fn create_wither_rose(&mut self) {
+        if let Some(level) = self.entity.level.clone() {
+            // WitherBoss не портирован — проверяем тип убийцы через
+            // kill credit (entity_type id == wither_boss).
+            let is_wither = self
+                .get_kill_credit()
+                .and_then(|e| e.entity_type.value().map(|t| t.id.clone()))
+                .map(|id| id.get_path() == "wither_boss")
+                .unwrap_or(false);
+            if !is_wither || !level.mob_griefing() {
+                return;
+            }
+            // WitherRose block не портирован — дропаем ItemEntity с
+            // предметом wither_rose (vanilla fallback при невозможности
+            // установить блок).
+            let item_id = Identifier::with_default_namespace("wither_rose").unwrap();
+            if let Some(item) = crate::world::item::item::item_by_identifier(&item_id) {
+                let stack = ItemStack::new(Holder::Direct(item.as_ref().clone()), 1);
+                self.entity.spawn_at_location(stack);
+            }
+        }
+    }
+
+    /// `awardKillScore(killedEntity, source)` — база no-op
+    /// (Player начисляет очки убийства).
+    pub fn award_kill_score(&mut self, _killed_entity: &Entity, _source: &DamageSource) {}
 
     /// `getExperienceReward()`.
     pub fn get_experience_reward(&self) -> i32 {
@@ -814,19 +1122,178 @@ impl LivingEntity {
         self.swinging_arm
     }
 
-    /// `addEffect(instance)`.
-    pub fn add_effect(&mut self, instance: MobEffectInstance) {
+    /// `addEffect(instance)` → `addEffect(instance, None)` —
+    /// полная цепочка `LivingEntity.addEffect` (1.21.11).
+    /// Возвращает `true` если эффект изменил состояние.
+    pub fn add_effect(&mut self, instance: MobEffectInstance) -> bool {
+        self.add_effect_with_source(instance, None)
+    }
+
+    /// `addEffect(instance, entity)`.
+    pub fn add_effect_with_source(
+        &mut self,
+        instance: MobEffectInstance,
+        _source: Option<&Entity>,
+    ) -> bool {
+        if !self.can_be_affected(&instance) {
+            return false;
+        }
         let key = Self::effect_key(&instance);
-        self.active_effects.insert(key, instance);
+        let existing = self.active_effects.get(&key).cloned();
+        let mut flag = false;
+        match existing {
+            None => {
+                self.active_effects.insert(key, instance.clone());
+                self.on_effect_added(&instance);
+                flag = true;
+                instance.on_effect_added(self);
+            }
+            Some(mut prev) => {
+                if prev.update(&instance) {
+                    self.on_effect_updated(&prev, true);
+                    flag = true;
+                    self.active_effects.insert(key, prev);
+                }
+            }
+        }
+        instance.on_effect_started(self);
+        flag
+    }
+
+    /// `canBeAffected(effectInstance)` — entity-type теги
+    /// IMMUNE_TO_INFESTED / IMMUNE_TO_OOZING / IGNORES_POISON_AND_REGEN.
+    pub fn can_be_affected(&self, effect_instance: &MobEffectInstance) -> bool {
+        use crate::tags::entity_type_tags::{entity_type_is, keys};
+        let entity_type = match self.entity.entity_type.value() {
+            Some(t) => t,
+            None => return true,
+        };
+        if entity_type_is(entity_type, keys::immune_to_infested())
+            && effect_instance.is(&mob_effects::infested())
+        {
+            return false;
+        }
+        if entity_type_is(entity_type, keys::immune_to_oozing())
+            && effect_instance.is(&mob_effects::oozing())
+        {
+            return false;
+        }
+        if entity_type_is(entity_type, keys::ignores_poison_and_regen())
+            && (effect_instance.is(&mob_effects::regeneration())
+                || effect_instance.is(&mob_effects::poison()))
+        {
+            return false;
+        }
+        true
+    }
+
+    /// `forceAddEffect(effectInstance, entity)` — обход update-логики.
+    pub fn force_add_effect(&mut self, instance: MobEffectInstance) {
+        if !self.can_be_affected(&instance) {
+            return;
+        }
+        let key = Self::effect_key(&instance);
+        let prev = self.active_effects.insert(key, instance.clone());
+        match prev {
+            None => {
+                self.on_effect_added(&instance);
+            }
+            Some(_) => {
+                self.on_effect_updated(&instance, true);
+            }
+        }
+    }
+
+    /// `onEffectAdded(effectInstance)` — атрибутные модификаторы
+    /// + effectsDirty (sendEffectToPassengers — до порта пакетов).
+    fn on_effect_added(&mut self, effect_instance: &MobEffectInstance) {
         self.effects_dirty = true;
+        effect_instance.add_attribute_modifiers(&mut self.attributes);
+    }
+
+    /// `onEffectUpdated(effectInstance, forced)` — при forced
+    /// пересоздаются атрибутные модификаторы.
+    fn on_effect_updated(&mut self, effect_instance: &MobEffectInstance, forced: bool) {
+        self.effects_dirty = true;
+        if forced {
+            if let Some(e) = effect_instance.effect.value() {
+                e.remove_attribute_modifiers(&mut self.attributes);
+                e.add_attribute_modifiers(&mut self.attributes, effect_instance.amplifier());
+            }
+        }
+    }
+
+    /// `onEffectsRemoved(effects)` — снятие модификаторов,
+    /// `stopUsingItem`, effectsDirty.
+    /// (В ванили `onMobRemoved` вызывается отдельно через
+    /// `triggerOnDeathMobEffects` при удалении сущности.)
+    fn on_effects_removed(&mut self, effects: &[MobEffectInstance]) {
+        self.effects_dirty = true;
+        for inst in effects {
+            inst.remove_attribute_modifiers(&mut self.attributes);
+        }
+        self.stop_using_item();
+    }
+
+    /// `triggerOnDeathMobEffects(level, removalReason)` —
+    /// `onMobRemoved` для всех активных эффектов + очистка.
+    /// Вызывается из `remove(KILLED|DISCARDED)` на сервере.
+    pub fn trigger_on_death_mob_effects(
+        &mut self,
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        reason: crate::world::entity::entity::RemovalReason,
+    ) {
+        let level_ref: Option<&dyn crate::world::level::level_reader::LevelReader> =
+            Some(level.as_ref());
+        let effects: Vec<MobEffectInstance> =
+            self.active_effects.values().cloned().collect();
+        for inst in &effects {
+            // inst.on_mob_removed требует &mut self — вызываем через клон
+            // с последующим применением к self нельзя (borrow); делаем
+            // через временный приём: эффект не зависит от полей LivingEntity
+            // кроме тех, что доступны через entity — передаём self.
+            let mut inst2 = inst.clone();
+            inst2.on_mob_removed(level_ref, self, reason);
+        }
+        self.active_effects.clear();
+    }
+
+    /// `remove(reason)` — override: death mob effects при
+    /// KILLED/DISCARDED + `super.remove`.
+    pub fn remove_living(&mut self, reason: crate::world::entity::entity::RemovalReason) {
+        if matches!(
+            reason,
+            crate::world::entity::entity::RemovalReason::Killed
+                | crate::world::entity::entity::RemovalReason::Discarded
+        ) {
+            if let Some(level) = self.entity.level.clone() {
+                self.trigger_on_death_mob_effects(&level, reason);
+            }
+        }
+        self.entity.remove(reason);
     }
 
     fn effect_key(instance: &MobEffectInstance) -> u64 {
-        instance.effect.value().map(|e| {
+        Self::holder_key(&instance.effect)
+    }
+
+    /// хэш registry-ключа holder'а эффекта (как `Holder.hashCode`
+    /// по underlying id — у нас детерминированный хэш Identifier).
+    fn holder_key(effect: &Holder<crate::world::effect::mob_effect::MobEffect>) -> u64 {
+        let id = effect
+            .value()
+            .map(|e| e.id.clone())
+            .or_else(|| {
+                effect
+                    .key()
+                    .map(|k| k.id().clone())
+            });
+        id.map(|id| {
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&e.id, &mut h);
+            std::hash::Hash::hash(&id, &mut h);
             std::hash::Hasher::finish(&h)
-        }).unwrap_or(0)
+        })
+        .unwrap_or(0)
     }
 
     /// `hasEffect(effect)`.
@@ -1016,12 +1483,39 @@ impl LivingEntity {
     }
 
     /// `hasPose(pose)`.
-    pub fn has_pose(&self, _pose: crate::world::entity::pose::Pose) -> bool {
-        false
+    pub fn has_pose(&self, pose: crate::world::entity::pose::Pose) -> bool {
+        self.pose == pose
     }
 
     /// `setPose(pose)`.
-    pub fn set_pose(&mut self, _pose: crate::world::entity::pose::Pose) {}
+    pub fn set_pose(&mut self, pose: crate::world::entity::pose::Pose) {
+        self.pose = pose;
+    }
+
+    /// `stopUsingItem()` — сброс use-item состояния.
+    pub fn stop_using_item(&mut self) {
+        if self.is_using_item() {
+            self.use_item = crate::world::item::item_stack::ItemStack::empty();
+            self.use_item_remaining = 0;
+        }
+    }
+
+    /// `isSleeping()`.
+    pub fn is_sleeping_entity(&self) -> bool {
+        self.is_sleeping
+    }
+
+    /// `stopSleeping()`.
+    pub fn stop_sleeping(&mut self) {
+        self.is_sleeping = false;
+    }
+
+    /// `hasCustomName()`.
+    pub fn has_custom_name(&self) -> bool {
+        self.entity.custom_name.is_some()
+    }
+
+    /// `getKillCredit()` уже реализован; `awardKillScore` выше.
 
     /// `getItemInHand(hand)`.
     pub fn get_item_in_hand(&self, hand: HumanoidArm) -> &ItemStack {
@@ -1054,18 +1548,28 @@ impl LivingEntity {
         Vec::new()
     }
 
-    /// `removeAllEffects()`.
+    /// `removeAllEffects()` — удаление всех + `onEffectsRemoved`.
     pub fn remove_all_effects(&mut self) -> Vec<MobEffectInstance> {
-        self.active_effects.drain().map(|(_, v)| v).collect()
+        let effects: Vec<MobEffectInstance> =
+            self.active_effects.drain().map(|(_, v)| v).collect();
+        self.on_effects_removed(&effects);
+        effects
     }
 
-    /// `removeEffect(effect)`.
+    /// `removeEffectNoUpdate(effect)` — удаление без onEffectsRemoved.
+    pub fn remove_effect_no_update(
+        &mut self,
+        effect: &Holder<crate::world::effect::mob_effect::MobEffect>,
+    ) -> Option<MobEffectInstance> {
+        let key = Self::holder_key(effect);
+        self.active_effects.remove(&key)
+    }
+
+    /// `removeEffect(effect)` — удаление + `onEffectsRemoved`.
     pub fn remove_effect(&mut self, effect: &Holder<crate::world::effect::mob_effect::MobEffect>) -> bool {
-        if let Some(e) = effect.value() {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&e.id, &mut h);
-            let key = std::hash::Hasher::finish(&h);
-            return self.active_effects.remove(&key).is_some();
+        if let Some(inst) = self.remove_effect_no_update(effect) {
+            self.on_effects_removed(&[inst]);
+            return true;
         }
         false
     }
@@ -1104,26 +1608,43 @@ impl LivingEntity {
             for item in list {
                 if let Tag::Compound(c) = item {
                     if let Some(inst) = MobEffectInstance::from_nbt(c) {
-                        self.add_effect(inst);
+                        let _ = self.add_effect(inst);
                     }
                 }
             }
         }
     }
 
-    /// `tickEffects()`.
+    /// `tickEffects()` — серверный цикл `MobEffectInstance.tickServer`
+    /// (урон/хил/истечение) + `onEffectsRemoved` для снятых эффектов
+    /// + `onEffectUpdated` каждые 600 тиков длительности.
     pub fn tick_effects(&mut self) {
-        let mut expired = Vec::new();
-        for (key, inst) in self.active_effects.iter_mut() {
-            inst.tick();
-            if inst.is_expired() {
-                expired.push(*key);
+        let mut effects = std::mem::take(&mut self.active_effects);
+        let level = self.entity.level.clone();
+        let level_ref: Option<&dyn crate::world::level::level_reader::LevelReader> =
+            level.as_deref();
+        let mut removed: Vec<MobEffectInstance> = Vec::new();
+        let mut to_remove: Vec<u64> = Vec::new();
+        for (key, inst) in effects.iter_mut() {
+            let mut updated = false;
+            let alive = inst.tick_server(level_ref, self, &mut || updated = true);
+            if !alive {
+                to_remove.push(*key);
+                removed.push(inst.clone());
+            } else if inst.duration() % 600 == 0 {
+                self.on_effect_updated(inst, false);
+            }
+            if updated {
+                self.effects_dirty = true;
             }
         }
-        for key in expired {
-            self.active_effects.remove(&key);
+        for key in to_remove {
+            effects.remove(&key);
         }
-        self.effects_dirty = true;
+        self.active_effects = effects;
+        if !removed.is_empty() {
+            self.on_effects_removed(&removed);
+        }
     }
 
     /// `causeFallDamage(fallDistance, multiplier, source)`.
@@ -1172,21 +1693,18 @@ impl LivingEntity {
         false
     }
 
+    /// `causeFoodExhaustion(amount)` — база no-op
+    /// (Player переопределяет через FoodData).
+    pub fn cause_food_exhaustion(&mut self, _amount: f32) {}
+
+    /// `eat`-saturation ветка SaturationMobEffect — база no-op
+    /// (Player: `getFoodData().eat(foodLevel, 1.0F)`).
+    pub fn eat_saturation(&mut self, _food_level: i32) {}
+
     /// `isAffectedByPotions()`.
     pub fn is_affected_by_potions(&self) -> bool {
         true
     }
-
-    /// `canBeAffected(effect)`.
-    pub fn can_be_affected(&self, _effect: &Holder<crate::world::effect::mob_effect::MobEffect>) -> bool {
-        true
-    }
-
-    /// `onEffectAdded`.
-    pub fn on_effect_added(&mut self, _effect: &MobEffectInstance, _source: Option<&Entity>) {}
-
-    /// `onEffectUpdated`.
-    pub fn on_effect_updated(&mut self, _effect: &MobEffectInstance, _old_amplifier: i32, _source: Option<&Entity>) {}
 
     /// `onEffectRemoved`.
     pub fn on_effect_removed(&mut self, _effect: &MobEffectInstance) {}
@@ -1891,7 +2409,7 @@ impl LivingEntity {
 
     /// `addEffect` variant.
     pub fn add_effect_instance(&mut self, instance: MobEffectInstance) {
-        self.add_effect(instance);
+        let _ = self.add_effect(instance);
     }
 
     /// `hasEffect` variant.
@@ -1976,7 +2494,7 @@ impl LivingEntity {
 
     /// `addEffect` final.
     pub fn add_effect_final(&mut self, instance: MobEffectInstance) {
-        self.add_effect(instance);
+        let _ = self.add_effect(instance);
     }
 
     /// `hasEffect` final.
@@ -2072,6 +2590,9 @@ impl Clone for LivingEntity {
             auto_spin_attack_ticks: self.auto_spin_attack_ticks,
             auto_spin_attack_dmg: self.auto_spin_attack_dmg,
             xp_reward: self.xp_reward,
+            was_experience_consumed: self.was_experience_consumed,
+            pose: self.pose,
+            is_sleeping: self.is_sleeping,
             health: self.health,
         }
     }

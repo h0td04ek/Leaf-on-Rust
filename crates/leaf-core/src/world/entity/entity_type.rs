@@ -288,3 +288,61 @@ impl std::fmt::Debug for EntityType {
         f.debug_tuple("EntityType").field(&self.id).finish()
     }
 }
+
+/// Хелпер для типов без боевых характеристик (item, xp orb и т.п.).
+#[allow(clippy::too_many_arguments)]
+fn misc_entity_type(
+    id: &str,
+    width: f32,
+    height: f32,
+    eye_height: f32,
+    client_tracking_range: i32,
+    update_interval: i32,
+) -> EntityType {
+    EntityType::new(
+        Identifier::with_default_namespace(id).unwrap(),
+        MobCategory::Misc,
+        width,
+        height,
+        eye_height,
+        0.0, // max_health — не-живые сущности
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        None,
+        0,
+        true,  // fire_immune — предметы/сферы не горят
+        true,  // can_spawn_far_from_player
+        false, // can_breathe_underwater
+        client_tracking_range,
+        update_interval,
+        update_interval,
+        Vec::new(),
+    )
+}
+
+/// `EntityType.ITEM` — `sized(0.25, 0.25).eyeHeight(0.2125)`.
+pub fn item_entity_type() -> EntityType {
+    misc_entity_type("item", 0.25, 0.25, 0.2125, 6, 20)
+}
+
+/// `EntityType.EXPERIENCE_ORB` — `sized(0.5, 0.5).eyeHeight(0.425)`.
+pub fn experience_orb_entity_type() -> EntityType {
+    misc_entity_type("experience_orb", 0.5, 0.5, 0.425, 6, 20)
+}
+
+/// `EntityType.SLIME` — `sized(0.52, 0.52).eyeHeight(0.442)`.
+pub fn slime_entity_type() -> EntityType {
+    misc_entity_type("slime", 0.52, 0.52, 0.442, 10, 10)
+}
+
+/// `EntityType.SILVERFISH` — `sized(0.4, 0.3).eyeHeight(0.255)`.
+pub fn silverfish_entity_type() -> EntityType {
+    misc_entity_type("silverfish", 0.4, 0.3, 0.255, 8, 5)
+}

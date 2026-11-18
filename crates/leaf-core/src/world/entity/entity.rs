@@ -478,7 +478,69 @@ impl Entity {
     }
 
     /// `isAliveAndWell()`.
-    pub fn is_alive_and_well(&self) -> bool {
+        /// `spawnAtLocation(stack)` — создание `ItemEntity` в позиции
+    /// сущности и `addFreshEntity` в уровень (vanilla `Entity`).
+    /// Возвращает созданную сущность-drope (аналог `ItemEntity`).
+    pub fn spawn_at_location(
+        &mut self,
+        stack: crate::world::item::item_stack::ItemStack,
+    ) -> Option<crate::world::entity::item_entity::ItemEntity> {
+        self.spawn_at_location_with_offset(stack, 0.0)
+    }
+
+    /// `spawnAtLocation(stack, yOffset)`.
+    pub fn spawn_at_location_with_offset(
+        &mut self,
+        stack: crate::world::item::item_stack::ItemStack,
+        y_offset: f64,
+    ) -> Option<crate::world::entity::item_entity::ItemEntity> {
+        if stack.is_empty() {
+            return None;
+        }
+        let level = self.level.clone()?;
+        let mut item_entity = crate::world::entity::item_entity::ItemEntity::new(
+            Some(level.clone()),
+            self.pos.x,
+            self.pos.y + y_offset,
+            self.pos.z,
+            stack,
+        );
+        item_entity.set_default_pick_up_delay();
+        level.add_fresh_item_entity(item_entity.clone());
+        Some(item_entity)
+    }
+
+    /// `killedEntity(level, killedEntity, damageSource)` — база
+    /// возвращает `true` (Player переопределяет для kill credit).
+    pub fn killed_entity(
+        &self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _killed_entity: &crate::world::entity::entity::Entity,
+        _damage_source: &crate::world::damagesource::damage_source::DamageSource,
+    ) -> bool {
+        true
+    }
+
+    /// `awardKillScore(killedEntity, damageSource)` — база no-op
+    /// (диспатч kill-credit; `LivingEntity`/`Player` уточняют).
+    pub fn award_kill_score(
+        &mut self,
+        _killed_entity: &crate::world::entity::entity::Entity,
+        _damage_source: &crate::world::damagesource::damage_source::DamageSource,
+    ) {
+    }
+
+    /// `gameEvent(event, pos)` — делегат в `LevelReader.game_event`.
+    pub fn game_event(
+        &mut self,
+        event: &crate::world::level::gameevent::game_event::GameEvent,
+    ) {
+        if let Some(level) = self.level.clone() {
+            level.game_event(event, crate::core::block_pos::BlockPos::containing_vec3(&self.pos));
+        }
+    }
+
+pub fn is_alive_and_well(&self) -> bool {
         self.is_alive() && !self.is_removed()
     }
 
