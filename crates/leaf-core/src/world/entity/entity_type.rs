@@ -346,3 +346,25 @@ pub fn slime_entity_type() -> EntityType {
 pub fn silverfish_entity_type() -> EntityType {
     misc_entity_type("silverfish", 0.4, 0.3, 0.255, 8, 5)
 }
+
+/// id entity-type'а holder'а (`Direct`/`Key` резолвятся;
+/// `Reference` без контекста реестра — `None`).
+pub fn holder_type_id(holder: &crate::core::holder::Holder<EntityType>) -> Option<crate::resources::identifier::Identifier> {
+    use crate::core::holder::Holder;
+    match holder {
+        Holder::Direct(t) => Some(t.id.clone()),
+        Holder::Key(k) => Some(k.identifier.clone()),
+        Holder::Reference(_) => None,
+    }
+}
+
+/// `MobCategory` entity-type'а holder'а (только `Direct`).
+pub fn holder_type_category(
+    holder: &crate::core::holder::Holder<EntityType>,
+) -> Option<crate::world::entity::mob_category::MobCategory> {
+    use crate::core::holder::Holder;
+    match holder {
+        Holder::Direct(t) => Some(t.category),
+        _ => None,
+    }
+}

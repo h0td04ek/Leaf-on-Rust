@@ -590,7 +590,7 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isSpectator()`.
     pub fn is_spectator(&self) -> bool { false }
 
-    /// `isCreative()`.
+    /// `isCreative()` — creative-режим (Player; default false).
     pub fn is_creative(&self) -> bool { false }
 
     /// `isCrouching()`.

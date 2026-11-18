@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod entity;
+pub mod entity_reference;
 pub mod entity_type;
 pub mod mob_category;
 pub mod pose;

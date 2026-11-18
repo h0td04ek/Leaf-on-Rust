@@ -594,3 +594,63 @@ impl MobPathing for Mob {
         self.living.position()
     }
 }
+
+impl Mob {
+    /// `canAttack(target)` — делегирует `LivingEntity.canAttack`.
+    pub fn can_attack(&self, target: &LivingEntity) -> bool {
+        self.living.can_attack(target)
+    }
+
+    /// `getSensing().hasLineOfSight(entity)` — Sensing требует
+    /// `&mut self`, а `has_line_of_sight` берёт `&dyn MobPathing`:
+    /// делаем `mem::take`/`put-back` чтобы не конфликтовать с
+    /// заимствованием `mob`.
+    pub fn has_line_of_sight(&mut self, target: &crate::world::entity::entity::Entity) -> bool {
+        let mut sensing = std::mem::take(&mut self.sensing);
+        let result = sensing.has_line_of_sight(self, target);
+        self.sensing = sensing;
+        result
+    }
+
+    /// `TamableAnimal.getOwner()`-эквивалент — UUID владельца
+    /// для приручаемых мобов (TamableAnimal ещё не портирован;
+    /// наследники переопределят). `None` = не приручён.
+    pub fn tamable_owner_uuid(&self) -> Option<crate::util::uuid::Uuid> {
+        None
+    }
+
+    /// `TamableAnimal.isTame()`.
+    pub fn tamable_is_tame(&self) -> bool {
+        false
+    }
+
+    /// `TamableAnimal.isOrderedToSit()`.
+    pub fn tamable_is_ordered_to_sit(&self) -> bool {
+        false
+    }
+
+    /// `TamableAnimal.getOwner()` — LivingEntity-владелец
+    /// (резолвится наследником из owner-ссылки).
+    pub fn tamable_owner(&self) -> Option<LivingEntity> {
+        None
+    }
+
+    /// `TamableAnimal.wantsToAttack(attacker, owner)`.
+    pub fn wants_to_attack(
+        &self,
+        _attacker: Option<&LivingEntity>,
+        _owner: &LivingEntity,
+    ) -> bool {
+        false
+    }
+
+    /// `Raider.hasActiveRaid()`.
+    pub fn has_active_raid(&self) -> bool {
+        false
+    }
+
+    /// `NeutralMob.forgetCurrentTargetAndRefreshUniversalAnger()`.
+    pub fn forget_current_target_and_refresh_universal_anger(&mut self) {
+        self.target = None;
+    }
+}

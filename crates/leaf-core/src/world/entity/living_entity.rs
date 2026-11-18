@@ -21,6 +21,7 @@ use crate::entity::ai::attributes::default_attributes;
 use crate::world::damagesource::combat_rules::CombatRules;
 use crate::world::effect::mob_effects;
 use crate::world::entity::entity::Entity;
+use crate::world::entity::entity_reference::EntityReference;
 use crate::world::entity::entity_type::EntityType;
 use crate::world::item::component::blocks_attacks::BlocksAttacks;
 use crate::world::item::equipment::equippable::Equippable;
@@ -88,6 +89,12 @@ pub struct LivingEntity {
     pub effects_dirty: bool,
     /// `lastHurtByMobTimestamp`.
     pub last_hurt_by_mob_timestamp: i32,
+    /// `lastHurtByMob` — EntityReference на атаковавшую LivingEntity.
+    pub last_hurt_by_mob: Option<crate::world::entity::entity_reference::EntityReference>,
+    /// `lastHurtByPlayer` — EntityReference на игрока.
+    pub last_hurt_by_player: Option<crate::world::entity::entity_reference::EntityReference>,
+    /// `lastHurtMob` — последняя сущность, причинившая урон (любая).
+    pub last_hurt_mob: Option<Entity>,
     /// `speed`.
     pub speed: f32,
     /// `noJumpDelay`.
@@ -173,6 +180,9 @@ impl LivingEntity {
             zza: 0.0,
             effects_dirty: true,
             last_hurt_by_mob_timestamp: 0,
+            last_hurt_by_mob: None,
+            last_hurt_by_player: None,
+            last_hurt_mob: None,
             speed: 0.0,
             no_jump_delay: 0,
             absorption_amount: 0.0,
@@ -1363,8 +1373,9 @@ impl LivingEntity {
     }
 
     /// `canBeSeenAsEnemy()`.
+    /// `canBeSeenAsEnemy()` — `!isInvulnerable() && canBeSeenByAnyone()`.
     pub fn can_be_seen_as_enemy(&self) -> bool {
-        !self.is_dead_or_dying()
+        !self.entity.invulnerable && self.can_be_seen_by_anyone()
     }
 
     /// `isFallFlying()`.
@@ -1586,6 +1597,13 @@ impl LivingEntity {
         tag.put("AbsorptionAmount", Tag::Float(self.absorption_amount));
         tag.put("HurtTime", Tag::Int(self.hurt_time));
         tag.put("HurtByTimestamp", Tag::Int(self.last_hurt_by_mob_timestamp));
+        if let Some(r) = &self.last_hurt_by_player {
+            r.store(tag, "last_hurt_by_player");
+            tag.put("last_hurt_by_player_memory_time", Tag::Int(self.last_hurt_by_player_memory_time));
+        }
+        if let Some(r) = &self.last_hurt_by_mob {
+            r.store(tag, "last_hurt_by_mob");
+        }
         tag.put("DeathTime", Tag::Int(self.death_time));
         tag.put("NoActionTime", Tag::Int(self.no_action_time));
         tag.put("FallFlying", Tag::Byte(if self.fall_fly_ticks > 0 { 1 } else { 0 }));
@@ -1608,6 +1626,10 @@ impl LivingEntity {
         if let Some(Tag::Float(a)) = tag.get("AbsorptionAmount") { self.absorption_amount = *a; }
         if let Some(Tag::Int(ht)) = tag.get("HurtTime") { self.hurt_time = *ht; }
         if let Some(Tag::Int(dt)) = tag.get("DeathTime") { self.death_time = *dt; }
+        if let Some(Tag::Int(ht)) = tag.get("HurtByTimestamp") { self.last_hurt_by_mob_timestamp = *ht; }
+        self.last_hurt_by_player = crate::world::entity::entity_reference::EntityReference::read(tag, "last_hurt_by_player");
+        if let Some(Tag::Int(mt)) = tag.get("last_hurt_by_player_memory_time") { self.last_hurt_by_player_memory_time = *mt; }
+        self.last_hurt_by_mob = crate::world::entity::entity_reference::EntityReference::read(tag, "last_hurt_by_mob");
         if let Some(Tag::Int(na)) = tag.get("NoActionTime") { self.no_action_time = *na; }
         if let Some(Tag::Byte(ff)) = tag.get("FallFlying") { self.fall_fly_ticks = if *ff != 0 { 1 } else { 0 }; }
         if let Some(Tag::List(list)) = tag.get("ActiveEffects") {
@@ -1743,9 +1765,22 @@ impl LivingEntity {
         true
     }
 
-    /// `isAlliedTo(entity)`.
-    pub fn is_allied_to(&self, _entity: &Entity) -> bool {
-        false
+    /// `Villager.getPlayerReputation(player)` — репутация у
+    /// игрока (DefendVillageTargetGoal). Default: 0.
+    pub fn player_reputation(&self, _player: &LivingEntity) -> i32 {
+        0
+    }
+
+    /// `isAlliedTo(entity)` — сравнение по Team (null team → false;
+    /// та же команда → allied). UUID-самоссылка — тоже allied.
+    pub fn is_allied_to(&self, entity: &Entity) -> bool {
+        if self.entity.uuid == entity.uuid {
+            return true;
+        }
+        match (self.get_team(), entity.get_team()) {
+            (Some(t), Some(o)) => t.name == o.name,
+            _ => false,
+        }
     }
 
     /// `getTeam()`.
@@ -1945,16 +1980,35 @@ impl LivingEntity {
     /// `setHurtDir`.
     pub fn set_hurt_dir(&mut self, _dir: f32) {}
 
-    /// `getLastHurtByPlayer`.
-    pub fn get_last_hurt_by_player(&self) -> Option<Entity> {
-        None
+    /// `getLastHurtByPlayer` — EntityReference-резолв → LivingEntity-view.
+    pub fn get_last_hurt_by_player(&self) -> Option<LivingEntity> {
+        crate::world::entity::entity_reference::EntityReference::get_living_entity(
+            self.last_hurt_by_player.as_ref(),
+            self.entity.level.as_ref(),
+        )
     }
 
-    /// `setLastHurtByPlayer`.
-    pub fn set_last_hurt_by_player(&mut self, _player: Option<Entity>) {}
+    /// `setLastHurtByPlayer(player, memoryTime)`.
+    pub fn set_last_hurt_by_player(&mut self, player: Option<Entity>, memory_time: i32) {
+        self.last_hurt_by_player = player.as_ref().map(EntityReference::of);
+        self.last_hurt_by_player_memory_time = memory_time;
+    }
 
-    /// `setLastHurtByMob`.
-    pub fn set_last_hurt_by_mob(&mut self, _mob: Option<Entity>) {}
+    /// `getLastHurtByMob` — EntityReference-резолв → LivingEntity.
+    pub fn get_last_hurt_by_mob(&self) -> Option<LivingEntity> {
+        crate::world::entity::entity_reference::EntityReference::get_living_entity(
+            self.last_hurt_by_mob.as_ref(),
+            self.entity.level.as_ref(),
+        )
+    }
+
+    /// `setLastHurtByMob(mob)`.
+    pub fn set_last_hurt_by_mob(&mut self, mob: Option<Entity>) {
+        self.last_hurt_by_mob = mob.as_ref().map(EntityReference::of);
+        if mob.is_some() {
+            self.last_hurt_by_mob_timestamp = self.entity.tick_count;
+        }
+    }
 
     /// `getLastHurtByMobTimestamp`.
     pub fn get_last_hurt_by_mob_timestamp(&self) -> i32 {
@@ -1968,11 +2022,13 @@ impl LivingEntity {
 
     /// `getLastHurtMob`.
     pub fn get_last_hurt_mob(&self) -> Option<Entity> {
-        None
+        self.last_hurt_mob.clone()
     }
 
     /// `setLastHurtMob`.
-    pub fn set_last_hurt_mob(&mut self, _mob: Option<Entity>) {}
+    pub fn set_last_hurt_mob(&mut self, mob: Option<Entity>) {
+        self.last_hurt_mob = mob;
+    }
 
     /// `getLastHurtMobTimestamp`.
     pub fn get_last_hurt_mob_timestamp(&self) -> i32 {
@@ -2635,6 +2691,9 @@ impl Clone for LivingEntity {
             zza: self.zza,
             effects_dirty: self.effects_dirty,
             last_hurt_by_mob_timestamp: self.last_hurt_by_mob_timestamp,
+            last_hurt_by_mob: self.last_hurt_by_mob.clone(),
+            last_hurt_by_player: self.last_hurt_by_player.clone(),
+            last_hurt_mob: self.last_hurt_mob.clone(),
             speed: self.speed,
             no_jump_delay: self.no_jump_delay,
             absorption_amount: self.absorption_amount,
@@ -2664,4 +2723,49 @@ fn rand_f64() -> f64 {
 
 fn rand_f32() -> f32 {
     rand::random::<f32>()
+}
+
+impl LivingEntity {
+    /// `LivingEntity`-обёртка над существующим `Entity` —
+    /// "view" для целей/предикатов, когда уровень хранит
+    /// сущности как `Entity` (target-mob из `EntityReference`,
+    /// `nearest_entity` и т.п.). Сохраняет позицию/флаги/
+    /// entity-type; combat-поля — дефолтные.
+    pub fn from_entity(entity: Entity) -> Self {
+        let mut le = Self::new(entity.entity_type.clone(), entity.level.clone());
+        le.entity = entity;
+        le
+    }
+
+    /// `canAttack(target)` — peaceful не даёт атаковать игроков;
+    /// цель должна быть видна как враг.
+    pub fn can_attack(&self, target: &LivingEntity) -> bool {
+        let is_player = crate::world::entity::entity_type::holder_type_id(
+            &target.entity.entity_type,
+        )
+        .map(|id| id == crate::resources::identifier::Identifier::minecraft("player"))
+        .unwrap_or(false);
+        let peaceful = self
+            .entity
+            .level
+            .as_ref()
+            .map(|l| l.difficulty() == crate::world::difficulty::Difficulty::Peaceful)
+            .unwrap_or(false);
+        (!is_player || !peaceful) && target.can_be_seen_as_enemy()
+    }
+
+    /// `canBeSeenByAnyone()` — не spectator и жив.
+    pub fn can_be_seen_by_anyone(&self) -> bool {
+        !self.is_spectator() && self.is_alive()
+    }
+
+    /// `getVisibilityPercent(observer)` — доля видимости цели
+    /// для наблюдателя (0..1); INVISIBILITY-эффект → blend factor.
+    pub fn get_visibility_percent(&self, _observer: &Entity) -> f64 {
+        let key = Self::holder_key(&crate::world::effect::mob_effects::invisibility());
+        match self.active_effects.get(&key) {
+            Some(inst) => inst.get_blend_factor(self, 0.0) as f64,
+            None => 1.0,
+        }
+    }
 }

@@ -286,6 +286,64 @@ pub trait LevelReader: Send + Sync {
         None
     }
 
+    /// `getNearestEntity` с фильтром по entity-type id —
+    /// `NearestAttackableTargetGoal.findTarget` non-player ветка.
+    /// Default: фильтрует `nearest_entity` (реализации с полным
+    /// spatial query должны переопределять).
+    fn nearest_entity_of_type(
+        &self,
+        pos: crate::world::phys::vec3::Vec3,
+        range: f64,
+        type_id: &Identifier,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        self.nearest_entity(pos, range).filter(|e| {
+            crate::world::entity::entity_type::holder_type_id(&e.entity_type)
+                .map(|id| &id == type_id)
+                .unwrap_or(false)
+        })
+    }
+
+    /// `getEntity(uuid)` / `getEntityInAnyDimension` — резолв
+    /// сущности по UUID (EntityReference). Default: нет сущностей.
+    fn entity_by_uuid(
+        &self,
+        _uuid: crate::util::uuid::Uuid,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+
+    /// `getDifficulty()` — сложность уровня (TargetingConditions,
+    /// LivingEntity::canAttack). Default: Normal.
+    fn difficulty(&self) -> crate::world::difficulty::Difficulty {
+        crate::world::difficulty::Difficulty::Normal
+    }
+
+    /// `getGameRules().get(GameRules.UNIVERSAL_ANGER)` —
+    /// universal anger для HurtByTargetGoal. Default: false.
+    fn universal_anger(&self) -> bool {
+        false
+    }
+
+    /// `getEntitiesOfClass(Mob, aabb, NO_SPECTATORS)` —
+    /// итерация по мобам в AABB для `HurtByTargetGoal.alertOthers`.
+    /// Default: нет мобов (ServerLevel переопределит).
+    fn for_each_mob_in_box(
+        &self,
+        _aabb: &crate::world::phys::aabb::Aabb,
+        _f: &mut dyn FnMut(&mut crate::world::entity::mob::Mob),
+    ) {
+    }
+
+    /// `getEntitiesOfClass(Entity, aabb)` / `getNearbyEntities` —
+    /// снимок сущностей в AABB (DefendVillageTargetGoal и др.).
+    /// Default: пусто.
+    fn entities_in_box(
+        &self,
+        _aabb: &crate::world::phys::aabb::Aabb,
+    ) -> Vec<crate::world::entity::entity::Entity> {
+        Vec::new()
+    }
+
     // `CollisionGetter.getWorldBorder`-стиль проверек не нужен —
     // `isOutsideBuildHeight` уже покрыт `min_build_height`/`height`.
 }
