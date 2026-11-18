@@ -362,3 +362,5 @@ pub mod vec_delta_codec;
 pub mod clientbound_update_advancements_packet;
 pub mod clientbound_commands_packet;
 pub mod clientbound_update_recipes_packet;
+pub mod clientbound_place_ghost_recipe_packet;
+pub mod clientbound_recipe_book_add_packet;
