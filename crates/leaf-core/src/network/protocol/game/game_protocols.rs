@@ -8,178 +8,197 @@ use crate::network::protocol::protocol_info_builder;
 use crate::network::protocol::unbound_protocol::SimpleUnboundProtocol;
 use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 
-use super::clientbound_add_entity_packet::ClientboundAddEntityPacket;
-use super::clientbound_animate_packet::ClientboundAnimatePacket;
-use super::clientbound_award_stats_packet::ClientboundAwardStatsPacket;
-use super::clientbound_block_changed_ack_packet::ClientboundBlockChangedAckPacket;
-use super::clientbound_block_destruction_packet::ClientboundBlockDestructionPacket;
-use super::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
-use super::clientbound_block_event_packet::ClientboundBlockEventPacket;
-use super::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
-use super::clientbound_boss_event_packet::ClientboundBossEventPacket;
-use super::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
-use super::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
-use super::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
-use super::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
-use super::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
-use super::clientbound_command_suggestions_packet::ClientboundCommandSuggestionsPacket;
-use super::clientbound_container_close_packet::ClientboundContainerClosePacket;
-use super::clientbound_container_set_content_packet::ClientboundContainerSetContentPacket;
-use super::clientbound_container_set_data_packet::ClientboundContainerSetDataPacket;
-use super::clientbound_container_set_slot_packet::ClientboundContainerSetSlotPacket;
-use super::clientbound_cooldown_packet::ClientboundCooldownPacket;
-use super::clientbound_custom_chat_completions_packet::ClientboundCustomChatCompletionsPacket;
-use super::clientbound_damage_event_packet::ClientboundDamageEventPacket;
-use super::clientbound_debug_block_value_packet::ClientboundDebugBlockValuePacket;
-use super::clientbound_debug_chunk_value_packet::ClientboundDebugChunkValuePacket;
-use super::clientbound_debug_entity_value_packet::ClientboundDebugEntityValuePacket;
-use super::clientbound_debug_event_packet::ClientboundDebugEventPacket;
-use super::clientbound_debug_sample_packet::ClientboundDebugSamplePacket;
-use super::clientbound_delete_chat_packet::ClientboundDeleteChatPacket;
-use super::clientbound_disguised_chat_packet::ClientboundDisguisedChatPacket;
-use super::clientbound_entity_event_packet::ClientboundEntityEventPacket;
-use super::clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket;
-use super::clientbound_explode_packet::ClientboundExplodePacket;
-use super::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
-use super::clientbound_game_event_packet::ClientboundGameEventPacket;
-use super::clientbound_game_test_highlight_pos_packet::ClientboundGameTestHighlightPosPacket;
-use super::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
-use super::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
-use super::clientbound_level_event_packet::ClientboundLevelEventPacket;
-use super::clientbound_level_particles_packet::ClientboundLevelParticlesPacket;
-use super::clientbound_light_update_packet::ClientboundLightUpdatePacket;
-use super::clientbound_login_packet::ClientboundLoginPacket;
-use super::clientbound_map_item_data_packet::ClientboundMapItemDataPacket;
-use super::clientbound_merchant_offers_packet::ClientboundMerchantOffersPacket;
-use super::clientbound_mount_screen_open_packet::ClientboundMountScreenOpenPacket;
-use super::clientbound_move_entity_packet::ClientboundMoveEntityPacket;
-use super::clientbound_move_minecart_packet::ClientboundMoveMinecartPacket;
-use super::clientbound_move_vehicle_packet::ClientboundMoveVehiclePacket;
-use super::clientbound_open_book_packet::ClientboundOpenBookPacket;
-use super::clientbound_open_screen_packet::ClientboundOpenScreenPacket;
-use super::clientbound_open_sign_editor_packet::ClientboundOpenSignEditorPacket;
-use super::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
-use super::clientbound_player_chat_packet::ClientboundPlayerChatPacket;
-use super::clientbound_player_combat_end_packet::ClientboundPlayerCombatEndPacket;
-use super::clientbound_player_combat_enter_packet::ClientboundPlayerCombatEnterPacket;
-use super::clientbound_player_combat_kill_packet::ClientboundPlayerCombatKillPacket;
-use super::clientbound_player_info_remove_packet::ClientboundPlayerInfoRemovePacket;
-use super::clientbound_player_info_update_packet::ClientboundPlayerInfoUpdatePacket;
-use super::clientbound_player_look_at_packet::ClientboundPlayerLookAtPacket;
-use super::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
-use super::clientbound_player_rotation_packet::ClientboundPlayerRotationPacket;
-use super::clientbound_projectile_power_packet::ClientboundProjectilePowerPacket;
-use super::clientbound_recipe_book_remove_packet::ClientboundRecipeBookRemovePacket;
-use super::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
-use super::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
-use super::clientbound_remove_mob_effect_packet::ClientboundRemoveMobEffectPacket;
-use super::clientbound_reset_score_packet::ClientboundResetScorePacket;
-use super::clientbound_respawn_packet::ClientboundRespawnPacket;
-use super::clientbound_rotate_head_packet::ClientboundRotateHeadPacket;
-use super::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
-use super::clientbound_select_advancements_tab_packet::ClientboundSelectAdvancementsTabPacket;
-use super::clientbound_server_data_packet::ClientboundServerDataPacket;
-use super::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
-use super::clientbound_set_border_center_packet::ClientboundSetBorderCenterPacket;
-use super::clientbound_set_border_lerp_size_packet::ClientboundSetBorderLerpSizePacket;
-use super::clientbound_set_border_size_packet::ClientboundSetBorderSizePacket;
-use super::clientbound_set_border_warning_delay_packet::ClientboundSetBorderWarningDelayPacket;
-use super::clientbound_set_border_warning_distance_packet::ClientboundSetBorderWarningDistancePacket;
-use super::clientbound_set_camera_packet::ClientboundSetCameraPacket;
-use super::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
-use super::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
-use super::clientbound_set_cursor_item_packet::ClientboundSetCursorItemPacket;
-use super::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
-use super::clientbound_set_display_objective_packet::ClientboundSetDisplayObjectivePacket;
-use super::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
-use super::clientbound_set_entity_link_packet::ClientboundSetEntityLinkPacket;
-use super::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
-use super::clientbound_set_equipment_packet::ClientboundSetEquipmentPacket;
-use super::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
-use super::clientbound_set_health_packet::ClientboundSetHealthPacket;
-use super::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
-use super::clientbound_set_objective_packet::ClientboundSetObjectivePacket;
-use super::clientbound_set_passengers_packet::ClientboundSetPassengersPacket;
-use super::clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket;
-use super::serverbound_move_player_packet::{MovePlayerPosPacket, MovePlayerPosRotPacket, MovePlayerRotPacket, MovePlayerStatusOnlyPacket};
-use super::clientbound_move_entity_packet::{PosPacket, PosRotPacket, RotPacket};
-use super::clientbound_set_player_team_packet::ClientboundSetPlayerTeamPacket;
-use super::clientbound_set_player_team_packet::TeamPacketAction;
-use super::clientbound_set_score_packet::ClientboundSetScorePacket;
-use super::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
-use super::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
-use super::clientbound_set_time_packet::ClientboundSetTimePacket;
-use super::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
-use super::clientbound_set_titles_animation_packet::ClientboundSetTitlesAnimationPacket;
-use super::clientbound_sound_entity_packet::ClientboundSoundEntityPacket;
-use super::clientbound_sound_packet::ClientboundSoundPacket;
-use super::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
-use super::clientbound_stop_sound_packet::ClientboundStopSoundPacket;
-use super::clientbound_system_chat_packet::ClientboundSystemChatPacket;
-use super::clientbound_tab_list_packet::ClientboundTabListPacket;
-use super::clientbound_tag_query_packet::ClientboundTagQueryPacket;
-use super::clientbound_take_item_entity_packet::ClientboundTakeItemEntityPacket;
-use super::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
-use super::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
-use super::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
-use super::clientbound_tracked_waypoint_packet::ClientboundTrackedWaypointPacket;
-use super::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
-use super::clientbound_update_mob_effect_packet::ClientboundUpdateMobEffectPacket;
-use super::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
-use super::serverbound_block_entity_tag_query_packet::ServerboundBlockEntityTagQueryPacket;
-use super::serverbound_change_difficulty_packet::ServerboundChangeDifficultyPacket;
-use super::serverbound_change_game_mode_packet::ServerboundChangeGameModePacket;
-use super::serverbound_chat_ack_packet::ServerboundChatAckPacket;
-use super::serverbound_chat_command_packet::ServerboundChatCommandPacket;
-use super::serverbound_chat_command_signed_packet::ServerboundChatCommandSignedPacket;
-use super::serverbound_chat_packet::ServerboundChatPacket;
-use super::serverbound_chat_session_update_packet::ServerboundChatSessionUpdatePacket;
-use super::serverbound_chunk_batch_received_packet::ServerboundChunkBatchReceivedPacket;
-use super::serverbound_client_command_packet::ServerboundClientCommandPacket;
-use super::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
-use super::serverbound_command_suggestion_packet::ServerboundCommandSuggestionPacket;
-use super::serverbound_configuration_acknowledged_packet::ServerboundConfigurationAcknowledgedPacket;
-use super::serverbound_container_button_click_packet::ServerboundContainerButtonClickPacket;
-use super::serverbound_container_click_packet::ServerboundContainerClickPacket;
-use super::serverbound_container_close_packet::ServerboundContainerClosePacket;
-use super::serverbound_container_slot_state_changed_packet::ServerboundContainerSlotStateChangedPacket;
-use super::serverbound_debug_subscription_request_packet::ServerboundDebugSubscriptionRequestPacket;
-use super::serverbound_edit_book_packet::ServerboundEditBookPacket;
-use super::serverbound_entity_tag_query_packet::ServerboundEntityTagQueryPacket;
-use super::serverbound_interact_packet::ServerboundInteractPacket;
-use super::serverbound_jigsaw_generate_packet::ServerboundJigsawGeneratePacket;
-use super::serverbound_lock_difficulty_packet::ServerboundLockDifficultyPacket;
-use super::serverbound_move_player_packet::ServerboundMovePlayerPacketKind;
-use super::serverbound_move_vehicle_packet::ServerboundMoveVehiclePacket;
-use super::serverbound_paddle_boat_packet::ServerboundPaddleBoatPacket;
-use super::serverbound_pick_item_from_block_packet::ServerboundPickItemFromBlockPacket;
-use super::serverbound_pick_item_from_entity_packet::ServerboundPickItemFromEntityPacket;
-use super::serverbound_place_recipe_packet::ServerboundPlaceRecipePacket;
-use super::serverbound_player_abilities_packet::ServerboundPlayerAbilitiesPacket;
-use super::serverbound_player_action_packet::ServerboundPlayerActionPacket;
-use super::serverbound_player_command_packet::ServerboundPlayerCommandPacket;
-use super::serverbound_player_input_packet::ServerboundPlayerInputPacket;
-use super::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
-use super::serverbound_recipe_book_change_settings_packet::ServerboundRecipeBookChangeSettingsPacket;
-use super::serverbound_recipe_book_seen_recipe_packet::ServerboundRecipeBookSeenRecipePacket;
-use super::serverbound_rename_item_packet::ServerboundRenameItemPacket;
-use super::serverbound_seen_advancements_packet::ServerboundSeenAdvancementsPacket;
-use super::serverbound_select_bundle_item_packet::ServerboundSelectBundleItemPacket;
-use super::serverbound_select_trade_packet::ServerboundSelectTradePacket;
-use super::serverbound_set_beacon_packet::ServerboundSetBeaconPacket;
-use super::serverbound_set_carried_item_packet::ServerboundSetCarriedItemPacket;
-use super::serverbound_set_command_block_packet::ServerboundSetCommandBlockPacket;
-use super::serverbound_set_command_minecart_packet::ServerboundSetCommandMinecartPacket;
-use super::serverbound_set_creative_mode_slot_packet::ServerboundSetCreativeModeSlotPacket;
-use super::serverbound_set_jigsaw_block_packet::ServerboundSetJigsawBlockPacket;
-use super::serverbound_set_structure_block_packet::ServerboundSetStructureBlockPacket;
-use super::serverbound_set_test_block_packet::ServerboundSetTestBlockPacket;
-use super::serverbound_sign_update_packet::ServerboundSignUpdatePacket;
-use super::serverbound_swing_packet::ServerboundSwingPacket;
-use super::serverbound_teleport_to_entity_packet::ServerboundTeleportToEntityPacket;
-use super::serverbound_test_instance_block_action_packet::ServerboundTestInstanceBlockActionPacket;
-use super::serverbound_use_item_on_packet::ServerboundUseItemOnPacket;
-use super::serverbound_use_item_packet::ServerboundUseItemPacket;
+use crate::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
+use crate::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
+use crate::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket;
+use crate::network::protocol::common::clientbound_keep_alive_packet::ClientboundKeepAlivePacket;
+use crate::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
+use crate::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket;
+use crate::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket;
+use crate::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket;
+use crate::network::protocol::common::clientbound_store_cookie_packet::ClientboundStoreCookiePacket;
+use crate::network::protocol::common::clientbound_transfer_packet::ClientboundTransferPacket;
+use crate::network::protocol::common::clientbound_update_tags_packet::ClientboundUpdateTagsPacket;
+use crate::network::protocol::common::custom_payload_packets::ClientboundCustomPayloadPacket;
+use crate::network::protocol::common::custom_payload_packets::ServerboundClientInformationPacket;
+use crate::network::protocol::common::custom_payload_packets::ServerboundCustomPayloadPacket;
+use crate::network::protocol::common::serverbound_keep_alive_packet::ServerboundKeepAlivePacket;
+use crate::network::protocol::common::serverbound_misc_packets::ServerboundCustomClickActionPacket;
+use crate::network::protocol::common::serverbound_misc_packets::ServerboundResourcePackPacket;
+use crate::network::protocol::common::serverbound_pong_packet::ServerboundPongPacket;
+use crate::network::protocol::cookie::clientbound_cookie_request_packet::ClientboundCookieRequestPacket;
+use crate::network::protocol::cookie::serverbound_cookie_response_packet::ServerboundCookieResponsePacket;
+use crate::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
+use crate::network::protocol::game::clientbound_animate_packet::ClientboundAnimatePacket;
+use crate::network::protocol::game::clientbound_award_stats_packet::ClientboundAwardStatsPacket;
+use crate::network::protocol::game::clientbound_block_changed_ack_packet::ClientboundBlockChangedAckPacket;
+use crate::network::protocol::game::clientbound_block_destruction_packet::ClientboundBlockDestructionPacket;
+use crate::network::protocol::game::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
+use crate::network::protocol::game::clientbound_block_event_packet::ClientboundBlockEventPacket;
+use crate::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
+use crate::network::protocol::game::clientbound_boss_event_packet::ClientboundBossEventPacket;
+use crate::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
+use crate::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
+use crate::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
+use crate::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
+use crate::network::protocol::game::clientbound_command_suggestions_packet::ClientboundCommandSuggestionsPacket;
+use crate::network::protocol::game::clientbound_container_close_packet::ClientboundContainerClosePacket;
+use crate::network::protocol::game::clientbound_container_set_content_packet::ClientboundContainerSetContentPacket;
+use crate::network::protocol::game::clientbound_container_set_data_packet::ClientboundContainerSetDataPacket;
+use crate::network::protocol::game::clientbound_container_set_slot_packet::ClientboundContainerSetSlotPacket;
+use crate::network::protocol::game::clientbound_cooldown_packet::ClientboundCooldownPacket;
+use crate::network::protocol::game::clientbound_custom_chat_completions_packet::ClientboundCustomChatCompletionsPacket;
+use crate::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
+use crate::network::protocol::game::clientbound_debug_block_value_packet::ClientboundDebugBlockValuePacket;
+use crate::network::protocol::game::clientbound_debug_chunk_value_packet::ClientboundDebugChunkValuePacket;
+use crate::network::protocol::game::clientbound_debug_entity_value_packet::ClientboundDebugEntityValuePacket;
+use crate::network::protocol::game::clientbound_debug_event_packet::ClientboundDebugEventPacket;
+use crate::network::protocol::game::clientbound_debug_sample_packet::ClientboundDebugSamplePacket;
+use crate::network::protocol::game::clientbound_delete_chat_packet::ClientboundDeleteChatPacket;
+use crate::network::protocol::game::clientbound_disguised_chat_packet::ClientboundDisguisedChatPacket;
+use crate::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
+use crate::network::protocol::game::clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket;
+use crate::network::protocol::game::clientbound_explode_packet::ClientboundExplodePacket;
+use crate::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
+use crate::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
+use crate::network::protocol::game::clientbound_game_test_highlight_pos_packet::ClientboundGameTestHighlightPosPacket;
+use crate::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
+use crate::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::network::protocol::game::clientbound_level_event_packet::ClientboundLevelEventPacket;
+use crate::network::protocol::game::clientbound_level_particles_packet::ClientboundLevelParticlesPacket;
+use crate::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
+use crate::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::network::protocol::game::clientbound_map_item_data_packet::ClientboundMapItemDataPacket;
+use crate::network::protocol::game::clientbound_merchant_offers_packet::ClientboundMerchantOffersPacket;
+use crate::network::protocol::game::clientbound_mount_screen_open_packet::ClientboundMountScreenOpenPacket;
+use crate::network::protocol::game::clientbound_move_entity_packet::{PosPacket, PosRotPacket, RotPacket};
+use crate::network::protocol::game::serverbound_move_player_packet::{MovePlayerPosPacket, MovePlayerPosRotPacket, MovePlayerRotPacket, MovePlayerStatusOnlyPacket};
+use crate::network::protocol::game::clientbound_move_minecart_packet::ClientboundMoveMinecartPacket;
+use crate::network::protocol::game::clientbound_move_vehicle_packet::ClientboundMoveVehiclePacket;
+use crate::network::protocol::game::clientbound_open_book_packet::ClientboundOpenBookPacket;
+use crate::network::protocol::game::clientbound_open_screen_packet::ClientboundOpenScreenPacket;
+use crate::network::protocol::game::clientbound_open_sign_editor_packet::ClientboundOpenSignEditorPacket;
+use crate::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
+use crate::network::protocol::game::clientbound_player_chat_packet::ClientboundPlayerChatPacket;
+use crate::network::protocol::game::clientbound_player_combat_end_packet::ClientboundPlayerCombatEndPacket;
+use crate::network::protocol::game::clientbound_player_combat_enter_packet::ClientboundPlayerCombatEnterPacket;
+use crate::network::protocol::game::clientbound_player_combat_kill_packet::ClientboundPlayerCombatKillPacket;
+use crate::network::protocol::game::clientbound_player_info_remove_packet::ClientboundPlayerInfoRemovePacket;
+use crate::network::protocol::game::clientbound_player_info_update_packet::ClientboundPlayerInfoUpdatePacket;
+use crate::network::protocol::game::clientbound_player_look_at_packet::ClientboundPlayerLookAtPacket;
+use crate::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::network::protocol::game::clientbound_player_rotation_packet::ClientboundPlayerRotationPacket;
+use crate::network::protocol::game::clientbound_projectile_power_packet::ClientboundProjectilePowerPacket;
+use crate::network::protocol::game::clientbound_recipe_book_remove_packet::ClientboundRecipeBookRemovePacket;
+use crate::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
+use crate::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
+use crate::network::protocol::game::clientbound_remove_mob_effect_packet::ClientboundRemoveMobEffectPacket;
+use crate::network::protocol::game::clientbound_reset_score_packet::ClientboundResetScorePacket;
+use crate::network::protocol::game::clientbound_respawn_packet::ClientboundRespawnPacket;
+use crate::network::protocol::game::clientbound_rotate_head_packet::ClientboundRotateHeadPacket;
+use crate::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use crate::network::protocol::game::clientbound_select_advancements_tab_packet::ClientboundSelectAdvancementsTabPacket;
+use crate::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
+use crate::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
+use crate::network::protocol::game::clientbound_set_border_center_packet::ClientboundSetBorderCenterPacket;
+use crate::network::protocol::game::clientbound_set_border_lerp_size_packet::ClientboundSetBorderLerpSizePacket;
+use crate::network::protocol::game::clientbound_set_border_size_packet::ClientboundSetBorderSizePacket;
+use crate::network::protocol::game::clientbound_set_border_warning_delay_packet::ClientboundSetBorderWarningDelayPacket;
+use crate::network::protocol::game::clientbound_set_border_warning_distance_packet::ClientboundSetBorderWarningDistancePacket;
+use crate::network::protocol::game::clientbound_set_camera_packet::ClientboundSetCameraPacket;
+use crate::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
+use crate::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::network::protocol::game::clientbound_set_cursor_item_packet::ClientboundSetCursorItemPacket;
+use crate::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
+use crate::network::protocol::game::clientbound_set_display_objective_packet::ClientboundSetDisplayObjectivePacket;
+use crate::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
+use crate::network::protocol::game::clientbound_set_entity_link_packet::ClientboundSetEntityLinkPacket;
+use crate::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
+use crate::network::protocol::game::clientbound_set_equipment_packet::ClientboundSetEquipmentPacket;
+use crate::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
+use crate::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
+use crate::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
+use crate::network::protocol::game::clientbound_set_objective_packet::ClientboundSetObjectivePacket;
+use crate::network::protocol::game::clientbound_set_passengers_packet::ClientboundSetPassengersPacket;
+use crate::network::protocol::game::clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket;
+use crate::network::protocol::game::clientbound_set_player_team_packet::ClientboundSetPlayerTeamPacket;
+use crate::network::protocol::game::clientbound_set_score_packet::ClientboundSetScorePacket;
+use crate::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
+use crate::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
+use crate::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
+use crate::network::protocol::game::clientbound_set_titles_animation_packet::ClientboundSetTitlesAnimationPacket;
+use crate::network::protocol::game::clientbound_sound_entity_packet::ClientboundSoundEntityPacket;
+use crate::network::protocol::game::clientbound_sound_packet::ClientboundSoundPacket;
+use crate::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::network::protocol::game::clientbound_stop_sound_packet::ClientboundStopSoundPacket;
+use crate::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
+use crate::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
+use crate::network::protocol::game::clientbound_tag_query_packet::ClientboundTagQueryPacket;
+use crate::network::protocol::game::clientbound_take_item_entity_packet::ClientboundTakeItemEntityPacket;
+use crate::network::protocol::game::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
+use crate::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
+use crate::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
+use crate::network::protocol::game::clientbound_tracked_waypoint_packet::ClientboundTrackedWaypointPacket;
+use crate::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
+use crate::network::protocol::game::clientbound_update_mob_effect_packet::ClientboundUpdateMobEffectPacket;
+use crate::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
+use crate::network::protocol::game::serverbound_block_entity_tag_query_packet::ServerboundBlockEntityTagQueryPacket;
+use crate::network::protocol::game::serverbound_change_difficulty_packet::ServerboundChangeDifficultyPacket;
+use crate::network::protocol::game::serverbound_change_game_mode_packet::ServerboundChangeGameModePacket;
+use crate::network::protocol::game::serverbound_chat_ack_packet::ServerboundChatAckPacket;
+use crate::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
+use crate::network::protocol::game::serverbound_chat_command_signed_packet::ServerboundChatCommandSignedPacket;
+use crate::network::protocol::game::serverbound_chat_packet::ServerboundChatPacket;
+use crate::network::protocol::game::serverbound_chat_session_update_packet::ServerboundChatSessionUpdatePacket;
+use crate::network::protocol::game::serverbound_chunk_batch_received_packet::ServerboundChunkBatchReceivedPacket;
+use crate::network::protocol::game::serverbound_client_command_packet::ServerboundClientCommandPacket;
+use crate::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
+use crate::network::protocol::game::serverbound_command_suggestion_packet::ServerboundCommandSuggestionPacket;
+use crate::network::protocol::game::serverbound_configuration_acknowledged_packet::ServerboundConfigurationAcknowledgedPacket;
+use crate::network::protocol::game::serverbound_container_button_click_packet::ServerboundContainerButtonClickPacket;
+use crate::network::protocol::game::serverbound_container_click_packet::ServerboundContainerClickPacket;
+use crate::network::protocol::game::serverbound_container_close_packet::ServerboundContainerClosePacket;
+use crate::network::protocol::game::serverbound_container_slot_state_changed_packet::ServerboundContainerSlotStateChangedPacket;
+use crate::network::protocol::game::serverbound_debug_subscription_request_packet::ServerboundDebugSubscriptionRequestPacket;
+use crate::network::protocol::game::serverbound_edit_book_packet::ServerboundEditBookPacket;
+use crate::network::protocol::game::serverbound_entity_tag_query_packet::ServerboundEntityTagQueryPacket;
+use crate::network::protocol::game::serverbound_interact_packet::ServerboundInteractPacket;
+use crate::network::protocol::game::serverbound_jigsaw_generate_packet::ServerboundJigsawGeneratePacket;
+use crate::network::protocol::game::serverbound_lock_difficulty_packet::ServerboundLockDifficultyPacket;
+use crate::network::protocol::game::serverbound_move_vehicle_packet::ServerboundMoveVehiclePacket;
+use crate::network::protocol::game::serverbound_paddle_boat_packet::ServerboundPaddleBoatPacket;
+use crate::network::protocol::game::serverbound_pick_item_from_block_packet::ServerboundPickItemFromBlockPacket;
+use crate::network::protocol::game::serverbound_pick_item_from_entity_packet::ServerboundPickItemFromEntityPacket;
+use crate::network::protocol::game::serverbound_place_recipe_packet::ServerboundPlaceRecipePacket;
+use crate::network::protocol::game::serverbound_player_abilities_packet::ServerboundPlayerAbilitiesPacket;
+use crate::network::protocol::game::serverbound_player_action_packet::ServerboundPlayerActionPacket;
+use crate::network::protocol::game::serverbound_player_command_packet::ServerboundPlayerCommandPacket;
+use crate::network::protocol::game::serverbound_player_input_packet::ServerboundPlayerInputPacket;
+use crate::network::protocol::game::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
+use crate::network::protocol::game::serverbound_recipe_book_change_settings_packet::ServerboundRecipeBookChangeSettingsPacket;
+use crate::network::protocol::game::serverbound_recipe_book_seen_recipe_packet::ServerboundRecipeBookSeenRecipePacket;
+use crate::network::protocol::game::serverbound_rename_item_packet::ServerboundRenameItemPacket;
+use crate::network::protocol::game::serverbound_seen_advancements_packet::ServerboundSeenAdvancementsPacket;
+use crate::network::protocol::game::serverbound_select_bundle_item_packet::ServerboundSelectBundleItemPacket;
+use crate::network::protocol::game::serverbound_select_trade_packet::ServerboundSelectTradePacket;
+use crate::network::protocol::game::serverbound_set_beacon_packet::ServerboundSetBeaconPacket;
+use crate::network::protocol::game::serverbound_set_carried_item_packet::ServerboundSetCarriedItemPacket;
+use crate::network::protocol::game::serverbound_set_command_block_packet::ServerboundSetCommandBlockPacket;
+use crate::network::protocol::game::serverbound_set_command_minecart_packet::ServerboundSetCommandMinecartPacket;
+use crate::network::protocol::game::serverbound_set_creative_mode_slot_packet::ServerboundSetCreativeModeSlotPacket;
+use crate::network::protocol::game::serverbound_set_jigsaw_block_packet::ServerboundSetJigsawBlockPacket;
+use crate::network::protocol::game::serverbound_set_structure_block_packet::ServerboundSetStructureBlockPacket;
+use crate::network::protocol::game::serverbound_set_test_block_packet::ServerboundSetTestBlockPacket;
+use crate::network::protocol::game::serverbound_sign_update_packet::ServerboundSignUpdatePacket;
+use crate::network::protocol::game::serverbound_swing_packet::ServerboundSwingPacket;
+use crate::network::protocol::game::serverbound_teleport_to_entity_packet::ServerboundTeleportToEntityPacket;
+use crate::network::protocol::game::serverbound_test_instance_block_action_packet::ServerboundTestInstanceBlockActionPacket;
+use crate::network::protocol::game::serverbound_use_item_on_packet::ServerboundUseItemOnPacket;
+use crate::network::protocol::game::serverbound_use_item_packet::ServerboundUseItemPacket;
+use crate::network::protocol::ping::clientbound_pong_response_packet::ClientboundPongResponsePacket;
+use crate::network::protocol::ping::serverbound_ping_request_packet::ServerboundPingRequestPacket;
 
 /// .
 pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
@@ -237,6 +256,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ServerboundClientTickEndPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::serverbound_client_information::<ServerboundClientInformationPacket>(),
+            ServerboundClientInformationPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::serverbound_command_suggestion::<ServerboundCommandSuggestionPacket>(),
             ServerboundCommandSuggestionPacket::stream_codec(),
         );
@@ -261,6 +284,14 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ServerboundContainerSlotStateChangedPacket::stream_codec(),
         );
         b.add_packet(
+            cookie_packet_types::serverbound_cookie_response::<ServerboundCookieResponsePacket>(),
+            ServerboundCookieResponsePacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::serverbound_custom_payload::<ServerboundCustomPayloadPacket>(),
+            ServerboundCustomPayloadPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::serverbound_debug_subscription_request::<ServerboundDebugSubscriptionRequestPacket>(),
             ServerboundDebugSubscriptionRequestPacket::stream_codec(),
         );
@@ -279,6 +310,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::serverbound_jigsaw_generate::<ServerboundJigsawGeneratePacket>(),
             ServerboundJigsawGeneratePacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::serverbound_keep_alive::<ServerboundKeepAlivePacket>(),
+            ServerboundKeepAlivePacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::serverbound_lock_difficulty::<ServerboundLockDifficultyPacket>(),
@@ -317,6 +352,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ServerboundPickItemFromEntityPacket::stream_codec(),
         );
         b.add_packet(
+            ping_packet_types::serverbound_ping_request::<ServerboundPingRequestPacket>(),
+            ServerboundPingRequestPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::serverbound_place_recipe::<ServerboundPlaceRecipePacket>(),
             ServerboundPlaceRecipePacket::stream_codec(),
         );
@@ -341,6 +380,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ServerboundPlayerLoadedPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::serverbound_pong::<ServerboundPongPacket>(),
+            ServerboundPongPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::serverbound_recipe_book_change_settings::<ServerboundRecipeBookChangeSettingsPacket>(),
             ServerboundRecipeBookChangeSettingsPacket::stream_codec(),
         );
@@ -351,6 +394,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::serverbound_rename_item::<ServerboundRenameItemPacket>(),
             ServerboundRenameItemPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::serverbound_resource_pack::<ServerboundResourcePackPacket>(),
+            ServerboundResourcePackPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::serverbound_seen_advancements::<ServerboundSeenAdvancementsPacket>(),
@@ -415,6 +462,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::serverbound_use_item::<ServerboundUseItemPacket>(),
             ServerboundUseItemPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::serverbound_custom_click_action::<ServerboundCustomClickActionPacket>(),
+            ServerboundCustomClickActionPacket::stream_codec(),
         );
     })
 }
@@ -499,12 +550,20 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundContainerSetSlotPacket::stream_codec(),
         );
         b.add_packet(
+            cookie_packet_types::clientbound_cookie_request::<ClientboundCookieRequestPacket>(),
+            ClientboundCookieRequestPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_cooldown::<ClientboundCooldownPacket>(),
             ClientboundCooldownPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_custom_chat_completions::<ClientboundCustomChatCompletionsPacket>(),
             ClientboundCustomChatCompletionsPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_custom_payload::<ClientboundCustomPayloadPacket>(),
+            ClientboundCustomPayloadPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_damage_event::<ClientboundDamageEventPacket>(),
@@ -533,6 +592,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_delete_chat::<ClientboundDeleteChatPacket>(),
             ClientboundDeleteChatPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_disconnect::<ClientboundDisconnectPacket>(),
+            ClientboundDisconnectPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_disguised_chat::<ClientboundDisguisedChatPacket>(),
@@ -573,6 +636,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_initialize_border::<ClientboundInitializeBorderPacket>(),
             ClientboundInitializeBorderPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_keep_alive::<ClientboundKeepAlivePacket>(),
+            ClientboundKeepAlivePacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_level_event::<ClientboundLevelEventPacket>(),
@@ -629,6 +696,14 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_open_sign_editor::<ClientboundOpenSignEditorPacket>(),
             ClientboundOpenSignEditorPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_ping::<ClientboundPingPacket>(),
+            ClientboundPingPacket::stream_codec(),
+        );
+        b.add_packet(
+            ping_packet_types::clientbound_pong_response::<ClientboundPongResponsePacket>(),
+            ClientboundPongResponsePacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_player_abilities::<ClientboundPlayerAbilitiesPacket>(),
@@ -689,6 +764,14 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_reset_score::<ClientboundResetScorePacket>(),
             ClientboundResetScorePacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_resource_pack_pop::<ClientboundResourcePackPopPacket>(),
+            ClientboundResourcePackPopPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_resource_pack_push::<ClientboundResourcePackPushPacket>(),
+            ClientboundResourcePackPushPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_respawn::<ClientboundRespawnPacket>(),
@@ -843,6 +926,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundStopSoundPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::clientbound_store_cookie::<ClientboundStoreCookiePacket>(),
+            ClientboundStoreCookiePacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_system_chat::<ClientboundSystemChatPacket>(),
             ClientboundSystemChatPacket::stream_codec(),
         );
@@ -871,6 +958,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundTickingStepPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::clientbound_transfer::<ClientboundTransferPacket>(),
+            ClientboundTransferPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_update_attributes::<ClientboundUpdateAttributesPacket>(),
             ClientboundUpdateAttributesPacket::stream_codec(),
         );
@@ -879,12 +970,28 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundUpdateMobEffectPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::clientbound_update_tags::<ClientboundUpdateTagsPacket>(),
+            ClientboundUpdateTagsPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_projectile_power::<ClientboundProjectilePowerPacket>(),
             ClientboundProjectilePowerPacket::stream_codec(),
         );
         b.add_packet(
+            common_types::clientbound_custom_report_details::<ClientboundCustomReportDetailsPacket>(),
+            ClientboundCustomReportDetailsPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_server_links::<ClientboundServerLinksPacket>(),
+            ClientboundServerLinksPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_waypoint::<ClientboundTrackedWaypointPacket>(),
             ClientboundTrackedWaypointPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_clear_dialog::<ClientboundClearDialogPacket>(),
+            ClientboundClearDialogPacket::stream_codec(),
         );
     })
 }
