@@ -28,6 +28,13 @@ pub struct BlockState {
 }
 
 impl BlockState {
+    /// `air()` — дефолтное состояние воздуха.
+    pub fn air() -> Self {
+        // Placeholder — requires Blocks registry
+        // For now, return a minimal air state
+        Self::new(Arc::new(crate::world::level::block::Block::new(crate::resources::identifier::Identifier::from_namespace_and_path("minecraft", "air").unwrap())), StateHolder::default())
+    }
+
     /// `BlockStateBase` конструктор.
     pub fn new(block: Arc<Block>, values: StateHolder) -> Self {
         let definition = block
@@ -48,6 +55,26 @@ impl BlockState {
     /// `getFluidState`.
     pub fn get_fluid_state(&self) -> super::fluid_state::FluidState {
         self.fluid_state.clone()
+    }
+
+    /// `getLightBlock` — блокировка света.
+    pub fn get_light_block(&self) -> i32 {
+        15 // Placeholder — requires block properties
+    }
+
+    /// `getLightEmission` — излучение света.
+    pub fn get_light_emission(&self) -> u8 {
+        0 // Placeholder — requires block properties
+    }
+
+    /// `useShapeForLightOcclusion` — использовать форму для окклюзии.
+    pub fn use_shape_for_light_occlusion(&self) -> bool {
+        false // Placeholder — requires block properties
+    }
+
+    /// `canOcclude` — может ли блокировать.
+    pub fn can_occlude(&self) -> bool {
+        true // Placeholder — requires block properties
     }
 
     /// `getBlock() instanceof LiquidBlock`.

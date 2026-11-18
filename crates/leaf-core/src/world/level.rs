@@ -59,6 +59,7 @@ impl RespawnData {
     }
 }
 pub mod chunk;
+pub mod chunk_source;
 pub mod biome;
 pub mod moon_phase;
 pub mod lighting;
