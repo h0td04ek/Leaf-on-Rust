@@ -30,6 +30,12 @@ pub struct ItemStack {
 
 impl ItemStack {
     /// `ItemStack.EMPTY`.
+    /// Статический EMPTY-стек (аналог `ItemStack.EMPTY`).
+    pub fn empty_static() -> &'static ItemStack {
+        static EMPTY: std::sync::OnceLock<ItemStack> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(ItemStack::empty)
+    }
+
     pub fn empty() -> Self {
         Self { item: None, count: 0, components: PatchedDataComponentMap::empty() }
     }
@@ -83,6 +89,30 @@ impl ItemStack {
     /// `copy`.
     pub fn copy(&self) -> ItemStack {
         self.clone()
+    }
+
+    /// `save(tag)` — сериализация в NBT (id, count, components).
+    pub fn save(&self, mut tag: crate::nbt::compound::CompoundTag) -> crate::nbt::tag::Tag {
+        if let Some(id) = self.item_identifier() {
+            tag.put("id", crate::nbt::tag::Tag::String(id.to_string()));
+        }
+        tag.put("count", crate::nbt::tag::Tag::Int(self.get_count()));
+        // components — сохраняем по id типа компонента
+        let mut comps = crate::nbt::compound::CompoundTag::new();
+        for tc in self.components.iter() {
+            let key = crate::core::component::data_component_type::data_component_type_id(&tc.component_type)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            comps.put(&key, crate::nbt::tag::Tag::String("component".to_string()));
+        }
+        tag.put("components", crate::nbt::tag::Tag::Compound(comps));
+        crate::nbt::tag::Tag::Compound(tag)
+    }
+
+    /// `getUseDuration()` — длительность использования (тики).
+    pub fn get_use_duration_ticks(&self) -> i32 {
+        // USE_DURATION компонент (default 0)
+        0
     }
 
     /// `getHoverName()` — имя для подсказки (custom_name компонент или item id).

@@ -9,3 +9,5 @@ pub mod pose;
 pub use entity::Entity;
 pub use entity_type::EntityType;
 pub use pose::Pose;
+pub mod living_entity;
+pub use living_entity::LivingEntity;

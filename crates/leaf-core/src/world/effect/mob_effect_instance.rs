@@ -103,6 +103,46 @@ impl MobEffectInstance {
         self.details.duration
     }
 
+    /// `tick()` — уменьшается ли длительность.
+    pub fn tick(&mut self) {
+        if self.details.duration > 0 {
+            self.details.duration -= 1;
+        }
+    }
+
+    /// `isExpired()`.
+    pub fn is_expired(&self) -> bool {
+        self.details.duration <= 0
+    }
+
+    /// `toNbt()` — сериализация в NBT.
+    pub fn to_nbt(&self) -> crate::nbt::tag::Tag {
+        let mut c = crate::nbt::compound::CompoundTag::new();
+        if let Some(id) = self.effect.key().map(|k| k.id().to_string()) {
+            c.put("Id", crate::nbt::tag::Tag::String(id));
+        }
+        c.put("Amplifier", crate::nbt::tag::Tag::Int(self.details.amplifier));
+        c.put("Duration", crate::nbt::tag::Tag::Int(self.details.duration));
+        crate::nbt::tag::Tag::Compound(c)
+    }
+
+    /// `fromNbt(tag)`.
+    pub fn from_nbt(tag: &crate::nbt::compound::CompoundTag) -> Option<Self> {
+        let id = tag.get_string("Id")?.to_string();
+        let amplifier = tag.get_int("Amplifier").unwrap_or(0);
+        let duration = tag.get_int("Duration").unwrap_or(0);
+        // Holder::Key по identifier — реестр резолвит позже
+        let ident = crate::resources::identifier::Identifier::parse(&id).ok()?;
+        let key = crate::resources::resource_key::ResourceKey::create_with_registry_name(
+            crate::core::registry::registries::mob_effect(),
+            ident,
+        );
+        Some(Self::new(
+            crate::core::holder::Holder::Key(key),
+            MobEffectDetails::new(amplifier, duration, false, false, false, None),
+        ))
+    }
+
     /// `STREAM_CODEC` — MobEffect holder + Details.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, MobEffectInstance> + Send + Sync + 'static {
         let effect_codec = crate::core::holder::holder_registry_stream_codec::<MobEffect>();
