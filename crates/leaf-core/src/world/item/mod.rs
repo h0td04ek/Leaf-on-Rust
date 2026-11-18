@@ -3,6 +3,7 @@
 pub mod either_holder;
 pub mod item;
 pub mod item_stack;
+pub mod trading;
 pub mod item_use_animation;
 pub mod component;
 pub mod consume_effects;

@@ -65,6 +65,15 @@ impl DataComponentExactPredicate {
         })
     }
 
+    /// `asPatch` — конвертация в `DataComponentPatch` (все компоненты set).
+    pub fn as_patch(&self) -> crate::core::component::data_component_patch::DataComponentPatch {
+        let mut builder = crate::core::component::data_component_patch::DataComponentPatch::builder();
+        for tc in &self.expected_components {
+            builder.set_boxed(tc.component_type.id.clone(), tc.value.clone());
+        }
+        builder.build()
+    }
+
     /// `alwaysMatches`.
     pub fn always_matches(&self) -> bool {
         self.expected_components.is_empty()

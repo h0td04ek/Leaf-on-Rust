@@ -9,6 +9,8 @@ pub mod connection_protocol;
 pub mod disconnection_details;
 pub mod encryption;
 pub mod friendly_byte_buf;
+pub mod hashed_patch_map;
+pub mod hashed_stack;
 pub mod lp_vec3;
 pub mod packet_processor;
 pub mod packet_send_listener;
