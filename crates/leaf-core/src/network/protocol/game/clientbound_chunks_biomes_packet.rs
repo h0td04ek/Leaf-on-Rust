@@ -2,11 +2,9 @@
 
 use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
-use crate::network::protocol::packet::{Packet, PacketTypePtr};
+use crate::network::protocol::packet::{Packet, PacketTypePtr, PacketListenerObj};
 use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::world::level::chunk_pos::ChunkPos;
-use crate::world::level::chunk::level_chunk::LevelChunk;
-use crate::world::level::chunk::level_chunk_section::LevelChunkSection;
 
 /// `ClientboundChunksBiomesPacket`.
 #[derive(Clone, Debug)]
@@ -25,42 +23,16 @@ pub struct ChunkBiomeData {
 }
 
 impl ChunkBiomeData {
-    /// `ChunkBiomeData(chunk)` — из `LevelChunk`.
-    pub fn from_chunk(chunk: &LevelChunk) -> Self {
-        let pos = chunk.get_pos();
-        let size = Self::calculate_chunk_size(chunk);
-        let mut buffer = vec![0u8; size];
-        let mut buf = FriendlyByteBuf::new(&mut buffer);
-        Self::extract_chunk_data(&mut buf, chunk);
-        Self { pos, buffer }
-    }
-
     /// `ChunkBiomeData(buffer)` — десериализация.
     pub fn read(buf: &mut FriendlyByteBuf) -> Self {
         let pos = buf.read_chunk_pos();
-        let buffer = buf.read_byte_array(2097152);
+        let buffer = buf.read_byte_array_n(2097152).unwrap_or_default();
         Self { pos, buffer }
     }
 
-    /// `calculateChunkSize`.
-    fn calculate_chunk_size(chunk: &LevelChunk) -> usize {
-        let mut i = 0usize;
-        for section in chunk.get_sections() {
-            i += section.biomes.get_serialized_size(section.biomes.global_map());
-        }
-        i
-    }
-
-    /// `extractChunkData` — запись биомов всех секций в буфер.
-    pub fn extract_chunk_data(buf: &mut FriendlyByteBuf, chunk: &LevelChunk) {
-        for section in chunk.get_sections() {
-            section.biomes.write(buf, section.biomes.global_map());
-        }
-    }
-
     /// `getReadBuffer`.
-    pub fn get_read_buffer(&self) -> FriendlyByteBuf<'static> {
-        FriendlyByteBuf::new_owned(self.buffer.clone())
+    pub fn get_read_buffer(&self) -> FriendlyByteBuf {
+        FriendlyByteBuf::from_bytes(&self.buffer)
     }
 
     /// `write` — запись `ChunkBiomeData`.
@@ -71,48 +43,35 @@ impl ChunkBiomeData {
 }
 
 impl ClientboundChunksBiomesPacket {
-    /// `forChunks`.
-    pub fn for_chunks(chunks: &[LevelChunk]) -> Self {
-        Self {
-            chunk_biome_data: chunks.iter().map(ChunkBiomeData::from_chunk).collect(),
-        }
-    }
+    /// `forChunks` — создаёт пакет из списка чанков.
+    /// Требует `LevelChunk` — будет добавлено после порта `world::level::chunk`.
+    //  будет добавлен после порта .
+    // pub fn for_chunks(chunks: &[LevelChunk]) -> Self { ... }
 
-    /// `new`.
-    pub fn new(chunk_biome_data: Vec<ChunkBiomeData>) -> Self {
-        Self { chunk_biome_data }
-    }
-
-    /// `STREAM_CODEC` — `Packet.codec(write, new)`.
-    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, ClientboundChunksBiomesPacket> + Send + Sync + 'static {
-        crate::network::codec::stream_codec::sync_fn(
-            |buf: &mut FriendlyByteBuf, pkt: &ClientboundChunksBiomesPacket| {
-                buf.write_var_int(pkt.chunk_biome_data.len() as i32);
-                for data in &pkt.chunk_biome_data {
-                    data.write(buf);
-                }
-            },
+    /// `STREAM_CODEC`.
+    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, ClientboundChunksBiomesPacket> {
+        crate::network::protocol::packet::packet_codec(
+            |buf: &mut FriendlyByteBuf, p: &ClientboundChunksBiomesPacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
-                let len = buf.read_var_int();
-                let mut data = Vec::new();
-                for _ in 0..len {
-                    data.push(ChunkBiomeData::read(buf));
-                }
-                Self::new(data)
+                let data = buf.read_collection(|n| Vec::with_capacity(n), |b| ChunkBiomeData::read(b));
+                ClientboundChunksBiomesPacket { chunk_biome_data: data }
             },
         )
     }
 }
 
 impl Packet for ClientboundChunksBiomesPacket {
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn packet_type(&self) -> PacketTypePtr {
         GamePacketTypes::clientbound_chunks_biomes::<Self>().erase()
     }
+
     fn write_packet(&self, buf: &mut FriendlyByteBuf) {
-        buf.write_var_int(self.chunk_biome_data.len() as i32);
-        for data in &self.chunk_biome_data {
-            data.write(buf);
-        }
+        buf.write_collection(&self.chunk_biome_data, |b, v| v.write(b));
     }
+
+    fn handle(&self, _handler: &mut dyn PacketListenerObj) {}
 }

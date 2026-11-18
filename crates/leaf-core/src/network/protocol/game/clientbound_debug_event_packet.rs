@@ -7,7 +7,7 @@ use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::util::debug::debug_subscription::Event;
 
 /// `ClientboundDebugEventPacket`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ClientboundDebugEventPacket {
     /// `event`.
     pub event: Event,

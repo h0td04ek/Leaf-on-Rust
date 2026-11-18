@@ -7,7 +7,7 @@ use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::util::debug::debug_subscription::Update;
 
 /// `ClientboundDebugEntityValuePacket`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ClientboundDebugEntityValuePacket {
     /// `entityId`.
     pub entity_id: i32,

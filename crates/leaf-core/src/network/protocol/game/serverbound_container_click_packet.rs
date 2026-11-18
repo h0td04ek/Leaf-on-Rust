@@ -50,7 +50,7 @@ impl ServerboundContainerClickPacket {
             |buf: &mut FriendlyByteBuf, slots: &HashMap<i16, HashedStack>| {
                 buf.write_var_int(slots.len() as i32);
                 for (slot, stack) in slots {
-                    buf.write_short(*slot);
+                    buf.write_short(*slot as i32);
                     HashedStack::stream_codec().encode(buf, stack);
                 }
             },
@@ -73,7 +73,7 @@ impl ServerboundContainerClickPacket {
             |buf: &mut FriendlyByteBuf, pkt: &ServerboundContainerClickPacket| {
                 buf.write_container_id(pkt.container_id);
                 buf.write_var_int(pkt.state_id);
-                buf.write_short(pkt.slot_num);
+                buf.write_short(pkt.slot_num as i32);
                 buf.write_byte(pkt.button_num as i32);
                 ClickType::stream_codec().encode(buf, &pkt.click_type);
                 Self::slots_stream_codec().encode(buf, &pkt.changed_slots);
@@ -101,7 +101,7 @@ impl Packet for ServerboundContainerClickPacket {
     fn write_packet(&self, buf: &mut FriendlyByteBuf) {
         buf.write_container_id(self.container_id);
         buf.write_var_int(self.state_id);
-        buf.write_short(self.slot_num);
+        buf.write_short(self.slot_num as i32);
         buf.write_byte(self.button_num as i32);
         ClickType::stream_codec().encode(buf, &self.click_type);
         Self::slots_stream_codec().encode(buf, &self.changed_slots);

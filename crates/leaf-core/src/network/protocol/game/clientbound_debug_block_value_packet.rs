@@ -8,7 +8,7 @@ use crate::core::block_pos::BlockPos;
 use crate::util::debug::debug_subscription::Update;
 
 /// `ClientboundDebugBlockValuePacket`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ClientboundDebugBlockValuePacket {
     /// `blockPos`.
     pub block_pos: BlockPos,

@@ -1,7 +1,7 @@
 //! `DebugEntityNameGenerator` — генератор debug-имён для entity.
 
 use crate::random::{RandomSource, legacy};
-use uuid::Uuid;
+use crate::util::uuid::Uuid;
 
 /// `DebugEntityNameGenerator`.
 pub struct DebugEntityNameGenerator;
@@ -13,7 +13,7 @@ impl DebugEntityNameGenerator {
         "Dark", "Oak", "Sly", "Bush", "Zen", "Bark", "Cry", "Slack",
         "Soup", "Grim", "Hook", "Dirt", "Mud", "Sad", "Hard", "Crook",
         "Sneak", "Stink", "Weird", "Fire", "Soot", "Soft", "Rough",
-        "Cling", "Scar",
+        "Cling",
     ];
 
     /// `NAMES_SECOND_PART`.
@@ -57,7 +57,7 @@ impl DebugEntityNameGenerator {
 
     /// `getRandom(uuid)` — `RandomSource.create(uuid.hashCode() >> 2)`.
     fn get_random(uuid: Uuid) -> Box<dyn RandomSource> {
-        let hash = uuid.as_u128() as i64;
+        let hash = uuid.most_significant_bits ^ uuid.least_significant_bits;
         legacy::create((hash >> 2) as u64 as i64)
     }
 }

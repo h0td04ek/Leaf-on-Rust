@@ -58,7 +58,7 @@ impl VecDeltaCodec {
 
     /// `delta` — `value - base`.
     pub fn delta(&self, value: &Vec3) -> Vec3 {
-        value.subtract(&self.base)
+        value.subtract_vec(&self.base)
     }
 
     /// `setBase`.

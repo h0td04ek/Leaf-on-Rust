@@ -8,7 +8,7 @@ use crate::world::level::chunk_pos::ChunkPos;
 use crate::util::debug::debug_subscription::Update;
 
 /// `ClientboundDebugChunkValuePacket`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ClientboundDebugChunkValuePacket {
     /// `chunkPos`.
     pub chunk_pos: ChunkPos,

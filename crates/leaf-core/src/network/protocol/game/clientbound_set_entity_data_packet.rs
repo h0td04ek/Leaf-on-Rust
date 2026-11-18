@@ -7,7 +7,7 @@ use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::network::syncher::synched_entity_data::DataValue;
 
 /// `ClientboundSetEntityDataPacket`.
-#[derive(Clone, Debug)]
+
 pub struct ClientboundSetEntityDataPacket {
     /// `id` — entity id.
     pub id: i32,
