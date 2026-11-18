@@ -11,17 +11,90 @@ use crate::network::codec::stream_codec::{FnCodec, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 
-/// `Attribute` — запись реестра `Registries.ATTRIBUTE`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// `Attribute.Sentiment`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Sentiment {
+    /// `POSITIVE`.
+    Positive,
+    /// `NEUTRAL`.
+    Neutral,
+    /// `NEGATIVE`.
+    Negative,
+}
+
+impl Sentiment {
+    /// `getStyle(isPositive)` — ChatFormatting-цвет.
+    pub fn get_style(&self, is_positive: bool) -> &'static str {
+        match self {
+            Sentiment::Positive => if is_positive { "blue" } else { "red" },
+            Sentiment::Neutral => "gray",
+            Sentiment::Negative => if is_positive { "red" } else { "blue" },
+        }
+    }
+}
+
+/// `Attribute` — тип атрибута (`net.minecraft.world.entity.ai.attributes.Attribute`).
+#[derive(Clone, Debug)]
 pub struct Attribute {
     /// Registry-ключ атрибута (`minecraft:generic.max_health` и т.п.).
     pub id: Identifier,
+    /// `defaultValue`.
+    pub default_value: f64,
+    /// `syncable` — синхронизируется с клиентом.
+    pub syncable: bool,
+    /// `descriptionId`.
+    pub description_id: String,
+    /// `sentiment`.
+    pub sentiment: Sentiment,
 }
 
 impl Attribute {
-    /// Конструктор по registry-ключу.
-    pub fn new(id: Identifier) -> Self {
-        Self { id }
+    /// `new(descriptionId, defaultValue)`.
+    pub fn new(id: Identifier, description_id: impl Into<String>, default_value: f64) -> Self {
+        Self {
+            id,
+            default_value,
+            syncable: false,
+            description_id: description_id.into(),
+            sentiment: Sentiment::Positive,
+        }
+    }
+
+    /// `getDefaultValue()`.
+    pub fn get_default_value(&self) -> f64 {
+        self.default_value
+    }
+
+    /// `isClientSyncable()`.
+    pub fn is_client_syncable(&self) -> bool {
+        self.syncable
+    }
+
+    /// `setSyncable(syncable)`.
+    pub fn set_syncable(&mut self, syncable: bool) -> &mut Self {
+        self.syncable = syncable;
+        self
+    }
+
+    /// `setSentiment(sentiment)`.
+    pub fn set_sentiment(&mut self, sentiment: Sentiment) -> &mut Self {
+        self.sentiment = sentiment;
+        self
+    }
+
+    /// `sanitizeValue(value)` — базовая: без изменений.
+    pub fn sanitize_value(&self, value: f64) -> f64 {
+        value
+    }
+
+    /// `getDescriptionId()`.
+    pub fn get_description_id(&self) -> &str {
+        &self.description_id
+    }
+
+    /// `getStyle(isPositive)`.
+    pub fn get_style(&self, is_positive: bool) -> &'static str {
+        self.sentiment.get_style(is_positive)
     }
 
     /// `Attribute.STREAM_CODEC` — holderRegistry: только VarInt id.
@@ -44,5 +117,17 @@ impl Attribute {
                 Holder::Reference(i - 1)
             },
         )
+    }
+}
+
+impl PartialEq for Attribute {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for Attribute {}
+impl std::hash::Hash for Attribute {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }

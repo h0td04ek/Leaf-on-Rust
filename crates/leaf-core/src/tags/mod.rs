@@ -5,9 +5,11 @@
 //! членство в именованных тегHolderSet'ах — false.
 
 pub mod block_tags;
+pub mod damage_type_tags;
 pub mod tag_key;
 
 pub use block_tags::BlockTags;
+pub use damage_type_tags as damage_type_tags_mod;
 pub use tag_key::TagKey;
 
 use crate::resources::identifier::Identifier;

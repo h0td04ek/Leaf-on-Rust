@@ -90,9 +90,12 @@ impl DamageSource {
         }
     }
 
-    /// `is(tag)` — проверка по тегу (упрощённо).
-    pub fn is_tag(&self, _tag: &crate::tags::tag_key::TagKey<DamageType>) -> bool {
-        false
+    /// `is(tag)` — проверка членства типа урона в теге.
+    pub fn is_tag(&self, tag: &crate::tags::tag_key::TagKey<DamageType>) -> bool {
+        self.ty
+            .value()
+            .map(|dt| crate::tags::damage_type_tags::is_in_tag(&dt.id, tag))
+            .unwrap_or(false)
     }
 
     /// `getLocalizedDeathMessage(entity)`.
@@ -117,16 +120,85 @@ impl DamageSource {
     /// `is(DamageTypeTags.IS_FALL)` — урон от падения.
     pub fn is_fall(&self) -> bool {
         self.ty.value().map(|dt| {
-            let p = dt.id.get_path();
-            matches!(p, "fall" | "fly_into_wall" | "ender_pearl" | "stalagmite"
-                | "falling_block" | "falling_anvil" | "falling_stalactite"
-                | "sweet_berry_bush" | "freeze" | "dragon_breath" | "generic")
+            crate::tags::damage_type_tags::checks::is_fall(&dt.id)
         }).unwrap_or(false)
     }
 
     /// `is(DamageTypeTags.ALWAYS_MOST_SIGNIFICANT_FALL)`.
     pub fn is_always_most_significant_fall(&self) -> bool {
-        self.ty.value().map(|dt| dt.id.get_path() == "generic").unwrap_or(false)
+        self.ty.value().map(|dt| {
+            crate::tags::damage_type_tags::checks::always_most_significant_fall(&dt.id)
+        }).unwrap_or(false)
+    }
+
+    /// `is(DamageTypeTags.IS_FIRE)`.
+    pub fn is_fire(&self) -> bool {
+        self.ty.value().map(|dt| crate::tags::damage_type_tags::checks::is_fire(&dt.id)).unwrap_or(false)
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_ARMOR)`.
+    pub fn bypasses_armor(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_armor())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_SHIELD)`.
+    pub fn bypasses_shield(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_shield())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_INVULNERABILITY)`.
+    pub fn bypasses_invulnerability(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_invulnerability())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_COOLDOWN)`.
+    pub fn bypasses_cooldown(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_cooldown())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_EFFECTS)`.
+    pub fn bypasses_effects(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_effects())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_RESISTANCE)`.
+    pub fn bypasses_resistance(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_resistance())
+    }
+
+    /// `is(DamageTypeTags.BYPASSES_ENCHANTMENTS)`.
+    pub fn bypasses_enchantments(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::bypasses_enchantments())
+    }
+
+    /// `is(DamageTypeTags.NO_KNOCKBACK)`.
+    pub fn no_knockback(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::no_knockback())
+    }
+
+    /// `is(DamageTypeTags.NO_IMPACT)`.
+    pub fn no_impact(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::no_impact())
+    }
+
+    /// `is(DamageTypeTags.IS_PROJECTILE)`.
+    pub fn is_projectile(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::is_projectile())
+    }
+
+    /// `is(DamageTypeTags.IS_EXPLOSION)`.
+    pub fn is_explosion(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::is_explosion())
+    }
+
+    /// `is(DamageTypeTags.IS_PLAYER_ATTACK)`.
+    pub fn is_player_attack(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::is_player_attack())
+    }
+
+    /// `is(DamageTypeTags.DAMAGES_HELMET)`.
+    pub fn damages_helmet(&self) -> bool {
+        self.is_tag(&crate::tags::damage_type_tags::keys::damages_helmet())
     }
 
     /// `copy()`.
