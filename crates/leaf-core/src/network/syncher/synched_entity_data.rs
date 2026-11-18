@@ -230,3 +230,15 @@ impl Builder {
         }
 }
 
+
+impl Clone for SynchedEntityData {
+    fn clone(&self) -> Self {
+        let items = self.items_by_id.iter().map(|item| DataItem {
+            accessor: item.accessor.clone(),
+            value: item.accessor.serializer.copy_value(item.value.as_ref()),
+            initial_value: item.accessor.serializer.copy_value(item.initial_value.as_ref()),
+            dirty: item.dirty,
+        }).collect();
+        Self { items_by_id: items, is_dirty: self.is_dirty }
+    }
+}

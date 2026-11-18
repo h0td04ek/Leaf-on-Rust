@@ -26,6 +26,94 @@ impl Fluid {
     pub fn new(id: Identifier, is_source: bool) -> Self {
         Self { id, state_definition: None, is_source }
     }
+
+    /// `getBucket()` — ведро жидкости (`None` для empty).
+    pub fn get_bucket(&self) -> Option<Identifier> {
+        if self.id == Identifier::minecraft("empty") {
+            None
+        } else {
+            Identifier::with_default_namespace(&format!("{}_bucket", self.id.get_path())).ok()
+        }
+    }
+
+    /// `isEmpty()`.
+    pub fn is_empty(&self) -> bool {
+        self.id == Identifier::minecraft("empty")
+    }
+
+    /// `isRandomlyTicking()`.
+    pub fn is_randomly_ticking(&self) -> bool {
+        false
+    }
+
+    /// `getTickDelay(level)` — задержка тика жидкости.
+    pub fn get_tick_delay(&self, _level: &dyn crate::world::level::level_reader::LevelReader) -> i32 {
+        5
+    }
+
+    /// `getFlow(level, pos, state)` — вектор течения.
+    pub fn get_flow(&self, _level: &dyn crate::world::level::level_height_accessor::LevelHeightAccessor, _pos: crate::core::block_pos::BlockPos, _state: &FluidState) -> crate::world::phys::vec3::Vec3 {
+        crate::world::phys::vec3::Vec3::ZERO
+    }
+
+    /// `getHeight(state, level, pos)` — высота поверхности.
+    pub fn get_height(&self, _state: &FluidState, _level: &dyn crate::world::level::level_height_accessor::LevelHeightAccessor, _pos: crate::core::block_pos::BlockPos) -> f32 {
+        if self.is_source { 1.0 } else { 0.875 }
+    }
+
+    /// `getOwnHeight(state)` — собственная высота (без level).
+    pub fn get_own_height(&self, _state: &FluidState) -> f32 {
+        if self.is_source { 1.0 } else { 0.875 }
+    }
+
+    /// `isSource(state)`.
+    pub fn is_source_state(&self, state: &FluidState) -> bool {
+        let _ = state;
+        self.is_source
+    }
+
+    /// `getAmount(state)`.
+    pub fn get_amount(&self, state: &FluidState) -> i32 {
+        let _ = state;
+        if self.is_source { 8 } else { 0 }
+    }
+
+    /// `canBeReplacedWith(state, level, pos, fluid, direction)`.
+    pub fn can_be_replaced_with(&self, _state: &FluidState, _level: &dyn crate::world::level::level_height_accessor::LevelHeightAccessor, _pos: crate::core::block_pos::BlockPos, _fluid: &Fluid, _direction: crate::core::direction::Direction) -> bool {
+        false
+    }
+
+    /// `getExplosionResistance()`.
+    pub fn get_explosion_resistance(&self) -> f32 {
+        if self.id == Identifier::minecraft("lava") { 100.0 } else { 100.0 }
+    }
+
+    /// `getShape(state, level, pos)` — форма (AABB).
+    pub fn get_shape(&self, _state: &FluidState, _level: &dyn crate::world::level::level_height_accessor::LevelHeightAccessor, _pos: crate::core::block_pos::BlockPos) -> Option<crate::world::phys::aabb::Aabb> {
+        None
+    }
+
+    /// `tick(level, pos, blockState, fluidState)`.
+    pub fn tick(&self, _level: &mut dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos, _block_state: &crate::world::level::block::state::block_state::BlockState, _fluid_state: &FluidState) {}
+
+    /// `randomTick(level, pos, fluidState, random)`.
+    pub fn random_tick(&self, _level: &mut dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos, _state: &FluidState, _random: &mut dyn crate::random::RandomSource) {}
+
+    /// `animateTick(level, pos, state, random)`.
+    pub fn animate_tick(&self, _level: &mut dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos, _state: &FluidState, _random: &mut dyn crate::random::RandomSource) {}
+
+    /// `entityInside(level, pos, entity, effectApplier)` — без эффекта по умолчанию.
+    pub fn entity_inside(&self, _level: &mut dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos, _entity: &mut crate::world::entity::entity::Entity) {}
+
+    /// `getDripParticle()`.
+    pub fn get_drip_particle(&self) -> Option<crate::core::particles::particle_options::ParticleOptions> {
+        None
+    }
+
+    /// `createLegacyBlock(state)` — блок-наследие (`None` для empty/базовых жидкостей).
+    pub fn create_legacy_block(&self, _state: &FluidState) -> Option<crate::world::level::block::state::block_state::BlockState> {
+        None
+    }
 }
 
 /// `FluidState` — состояние жидкости (уровень, falling и т.п.).
