@@ -73,6 +73,11 @@ impl Vec3 {
         self.dot(self.x, self.y, self.z)
     }
 
+    /// `lengthSqr()`.
+    pub fn length_sqr(&self) -> f64 {
+        self.x * self.x + self.y * self.y + self.z * self.z
+    }
+
     pub fn length(&self) -> f64 {
         mth::sqrt_f64(self.length_squared())
     }

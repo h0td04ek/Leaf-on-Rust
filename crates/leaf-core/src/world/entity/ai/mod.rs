@@ -1,3 +1,6 @@
 //! `net.minecraft.world.entity.ai` — AI сущностей.
 
-pub mod attributes;
+pub mod control;
+pub mod goal;
+pub mod navigation;
+pub mod sensing;

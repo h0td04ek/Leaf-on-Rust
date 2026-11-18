@@ -119,6 +119,12 @@ pub struct Entity {
     pub was_touching_water: bool,
     /// `wasEyeInWater` — глаз был в воде.
     pub was_eye_in_water: bool,
+    /// `noGravity` — без гравитации.
+    pub no_gravity: bool,
+    /// Признак «сущность — Mob» (в Java — `instanceof Mob`;
+    /// выставляется конструктором `Mob`, т.к. у нас композиция,
+    /// а не наследование).
+    pub is_mob: bool,
 }
 
 impl Entity {
@@ -165,6 +171,8 @@ impl Entity {
             fall_distance: 0.0,
             was_touching_water: false,
             was_eye_in_water: false,
+            no_gravity: false,
+            is_mob: false,
         }
     }
 
@@ -197,6 +205,19 @@ impl Entity {
     }
 
     /// `getX()`, `getY()`, `getZ()`.
+    /// `getBlockX/Y/Z`.
+    pub fn get_block_x(&self) -> i32 { crate::util::mth::floor(self.pos.x) as i32 }
+    pub fn get_block_y(&self) -> i32 { crate::util::mth::floor(self.pos.y) as i32 }
+    pub fn get_block_z(&self) -> i32 { crate::util::mth::floor(self.pos.z) as i32 }
+
+    /// `position()`.
+    pub fn position(&self) -> Vec3 { self.pos }
+
+    /// `blockPosition()`.
+    pub fn block_position(&self) -> BlockPos {
+        BlockPos::containing(self.pos.x, self.pos.y, self.pos.z)
+    }
+
     pub fn get_x(&self) -> f64 { self.pos.x }
     pub fn get_y(&self) -> f64 { self.pos.y }
     pub fn get_z(&self) -> f64 { self.pos.z }
@@ -294,6 +315,11 @@ impl Entity {
 
     /// `getEyeHeight()`.
     pub fn get_eye_height(&self) -> f32 { self.eye_height }
+
+    /// `getEyeY` — y + eyeHeight.
+    pub fn get_eye_y(&self) -> f64 {
+        self.pos.y + self.eye_height as f64
+    }
 
     /// `getEyePosition()`.
     pub fn get_eye_position(&self) -> Vec3 {
@@ -693,10 +719,10 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn set_silent(&mut self, _silent: bool) {}
 
     /// `isNoGravity()`.
-    pub fn is_no_gravity(&self) -> bool { false }
+    pub fn is_no_gravity(&self) -> bool { self.no_gravity }
 
     /// `setNoGravity(noGravity)`.
-    pub fn set_no_gravity(&mut self, _no_gravity: bool) {}
+    pub fn set_no_gravity(&mut self, no_gravity: bool) { self.no_gravity = no_gravity; }
 
     /// `isOnFire()`.
     pub fn is_on_fire(&self) -> bool { false }

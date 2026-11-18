@@ -1419,6 +1419,12 @@ impl LivingEntity {
         self.attributes.get_value(attribute)
     }
 
+    /// `getAttributeValue` read-only (cached, без dirty-пересчёта)
+    /// — для &self-контекстов (pathfinding/AI read-paths).
+    pub fn get_attribute_value_by_id_ro(&self, attribute: &Identifier) -> f64 {
+        self.attributes.get_value_ro(attribute)
+    }
+
     /// `getAttributeBaseValue(attribute)`.
     pub fn get_attribute_base_value_by_id(&mut self, attribute: &Identifier) -> f64 {
         self.attributes.get_base_value(attribute)
@@ -2050,6 +2056,15 @@ impl LivingEntity {
         self.entity.is_under_water()
     }
 
+    /// `canStandOnFluid` — базовая реализация `false`
+    /// (Strider переопределяет на lava).
+    pub fn can_stand_on_fluid(
+        &self,
+        _fluid: &crate::world::level::block::state::fluid_state::FluidState,
+    ) -> bool {
+        false
+    }
+
     /// `isInLava`.
     pub fn is_in_lava(&self) -> bool {
         self.entity.is_in_lava()
@@ -2302,6 +2317,48 @@ impl LivingEntity {
     /// `setDeltaMovement`.
     pub fn set_delta_movement(&mut self, delta: Vec3) {
         self.entity.set_delta_movement(delta.x, delta.y, delta.z);
+    }
+
+    /// `getSpeed`.
+    pub fn get_speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// `setSpeed`.
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed;
+    }
+
+    /// `setZza`/`setYya`/`setXxa` — входные значения движения
+    /// (поля `zza`/`yya`/`xxa`).
+    pub fn set_zza(&mut self, amount: f32) {
+        self.zza = amount;
+    }
+    pub fn set_yya(&mut self, amount: f32) {
+        self.yya = amount;
+    }
+    pub fn set_xxa(&mut self, amount: f32) {
+        self.xxa = amount;
+    }
+    pub fn get_zza(&self) -> f32 {
+        self.zza
+    }
+    pub fn get_yya(&self) -> f32 {
+        self.yya
+    }
+    pub fn get_xxa(&self) -> f32 {
+        self.xxa
+    }
+
+    /// `isAffectedByFluids` — базовая реализация `true`
+    /// (переопределяется у летунов/призраков).
+    pub fn is_affected_by_fluids(&self) -> bool {
+        true
+    }
+
+    /// `getY(double)` — Y + fraction*height.
+    pub fn get_y_fraction(&self, fraction: f64) -> f64 {
+        self.entity.get_y() + self.entity.dimensions.height as f64 * fraction
     }
 
     /// `setYRot`, `setXRot`.

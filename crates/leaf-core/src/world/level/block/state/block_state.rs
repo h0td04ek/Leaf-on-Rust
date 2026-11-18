@@ -145,6 +145,139 @@ impl BlockState {
     ) -> Option<T> {
         self.values.get_typed(property)
     }
+
+    /// `is(TagKey)` по именованному тегу блоков.
+    pub fn is_named_tag(&self, tag_location: &crate::resources::identifier::Identifier) -> bool {
+        crate::tags::is_block_in_named_tag(&self.block.id, tag_location)
+    }
+
+    /// `is(BlockTags.X)` — короткая форма для тегов блоков.
+    pub fn is_block_tag(&self, tag_location: &crate::resources::identifier::Identifier) -> bool {
+        self.is_named_tag(tag_location)
+    }
+
+    /// `CampfireBlock.isLitCampfire(state)` — campfire/soul_campfire
+    /// со свойством `lit=true`.
+    pub fn is_lit_campfire(&self) -> bool {
+        matches!(
+            self.values.get_by_name("lit"),
+            Some(super::property::StateValue::Bool(true))
+        )
+    }
+
+    /// Свойство `open` (doors/fence gates/trapdoors) —
+    /// `state.getValue(X.OPEN)` в Java.
+    pub fn is_open_property(&self) -> bool {
+        matches!(
+            self.values.get_by_name("open"),
+            Some(super::property::StateValue::Bool(true))
+        )
+    }
+
+    /// `getShape(level, pos)` — визуальная форма блока.
+    /// По умолчанию совпадает с collision shape (большинство
+    /// блоков), если у блока задана явная форма — она и есть.
+    pub fn get_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        self.block_shape(level, pos, false)
+    }
+
+    /// `getCollisionShape(level, pos)`.
+    pub fn get_collision_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        if !self.block.properties.has_collision {
+            return crate::world::phys::shapes::VoxelShape::empty();
+        }
+        self.block_shape(level, pos, true)
+    }
+
+    /// Общая форма блока: явная `collision_shape` из свойств,
+    /// иначе — полный куб для твёрдых, пусто для air/liquid.
+    fn block_shape(
+        &self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _pos: crate::core::block_pos::BlockPos,
+        _collision: bool,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        if let Some(shape) = &self.block.properties.collision_shape {
+            return shape.clone();
+        }
+        if self.is_air() || self.block.properties.liquid {
+            return crate::world::phys::shapes::VoxelShape::empty();
+        }
+        crate::world::phys::shapes::VoxelShape::block()
+    }
+
+    /// `isCollisionShapeFullBlock(level, pos)` —
+    /// `Block.isShapeFullBlock(getCollisionShape)`.
+    pub fn is_collision_shape_full_block(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> bool {
+        let shape = self.get_collision_shape(level, pos);
+        crate::world::level::block::Block::is_shape_full_block(&shape)
+    }
+
+    /// `entityCanStandOn(level, pos, entity)` —
+    /// `Block.isFaceFull(collisionShape, UP)`; entity пока не
+    /// влияет на форму (CollisionContext.of(entity) — entity-aware
+    /// shapes добавим с портом коллизий сущностей).
+    pub fn entity_can_stand_on(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> bool {
+        let shape = self.get_collision_shape(level, pos);
+        !shape.is_empty() && shape.max(crate::core::direction::Axis::Y) >= 0.999
+    }
+
+    /// `isSolidRender(level, pos)` — full collision cube.
+    pub fn is_solid_render(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> bool {
+        self.is_collision_shape_full_block(level, pos)
+    }
+
+    /// `isSolid()` — материал твёрдый (для pathfinding —
+    /// full collision shape).
+    pub fn is_solid(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> bool {
+        self.is_solid_render(level, pos)
+    }
+
+    /// `BlockBehaviour.isPathfindable(state, type)` — дефолтная
+    /// реализация + переопределение через `properties.pathfindable`.
+    pub fn is_pathfindable(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+        type_: crate::world::level::pathfinder::path_computation_type::PathComputationType,
+    ) -> bool {
+        use crate::world::level::pathfinder::path_computation_type::PathComputationType as T;
+        if let Some(v) = self.block.properties.pathfindable {
+            return v;
+        }
+        match type_ {
+            T::Land | T::Air => !self.is_collision_shape_full_block(level, pos),
+            T::Water => {
+                let fs = self.get_fluid_state();
+                fs.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+                    || fs.is_water()
+            }
+        }
+    }
 }
 
 impl PartialEq for BlockState {

@@ -146,7 +146,7 @@ cargo test -p leaf-core
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-17. **~60k строк Rust** в `crates/leaf-core`, 75 тестов зелёные.
+Актуально на 2026-11-17. **~75k строк Rust** в `crates/leaf-core`, 84 теста зелёные.
 
 ### ✅ Работает и проверено тестами
 
@@ -157,13 +157,14 @@ cargo test -p leaf-core
 | **util/** | ~60 модулей: `mth`, bit_storage, easing, valueproviders, weighted random, debugchart, directories и др. |
 | **core/** | `BlockPos`, `SectionPos`, `QuartPos`, `GlobalPos`, `Vec3i`, `Direction`, `Registry`, `SharedConstants`/`WorldVersion` |
 | **network/codec** | ByteBuf-codec'и, `id_dispatch_codec`, stream codec, bundle codec'и |
-| **network/protocol** | **game_protocols.rs** — регистрация 174 пакетов ✅ | Инфраструктура (ProtocolInfoBuilder, codec dispatch, bundler) + пакеты: **handshake, status, ping, cookie, common, login, configuration** ✅ + **game ~175 пакетов** (entity-движение/телепорты, respawn, position-sync, projectile, experience, spawn-position, tag-query, move/minecart/vehicle, take-item, entity-motion/passengers/link, bundle, border×5, ticking state/step, boss event, sound×2, damage event, mob-effect add/remove/update, attributes, objectives/teams/scores, waypoint, player-info update/remove, recipe-book settings/remove, serverbound: structure/jigsaw/test-block/beacon/command-blocks/recipe-book/pick-item/use-item-on...) |
+| **network/protocol** | **ВСЕ протоколы дописаны** ✅ | Инфраструктура (ProtocolInfoBuilder, codec dispatch, bundler) + **все фазы**: handshake, status, ping, cookie, common, login, configuration ✅ + **game — все 180+ пакетов** (entity-движение/телепорты, respawn, position-sync, projectile, experience, spawn-position, tag-query, move/minecart/vehicle, take-item, entity-motion/passengers/link, bundle, border×5, ticking state/step, boss event, sound×2, damage event, mob-effect add/remove/update, attributes, objectives/teams/scores, waypoint, player-info update/remove, recipe-book, containers, chunks (`LevelChunkWithLight`/`LevelChunkPacketData`/`LightUpdate`/`ChunksBiomes`/heightmaps/palettes), entity data (`SetEntityData`/`AddEntity`/synched-data serializers), dialogs (`ShowDialog`/`CommonDialogData`/`Dialog`/`ActionButton`), debug subscriptions, commands...) |
 | **network/chat** | Компоненты + стили + click/hover events + **JSON-сериализация** (`ComponentSerialization.CODEC`-аналог), `CommonComponents`, `ComponentUtils`, NumberFormat |
 | **core/component** | **Data components полные**: `DataComponentType`/`Map`/`Patch`/`PatchedDataComponentMap`/`TypedDataComponent`, все **104 типа** vanilla-порядка; Send+Sync кодеки (`SyncFnCodec`); payload'ы: UseEffects, UseCooldown, CustomModelData, OminousBottleAmplifier, DyedItemColor, ItemLore, TooltipDisplay, DamageResistant, MapId |
 | **world/item** | `Item` (registry + holderRegistry-кодек), **`ItemStack` полная модель** — `Holder<Item>` + `PatchedDataComponentMap`, все 4 wire-кодека (optional/untrusted-delimited/strict/list); `Rarity`, `DyeColor` |
 | **joml/** | **Полный порт JOML**: Vector2f/3f/3i/4f, Quaternionf, AxisAngle4f, Matrix2f/3f/3x2f/4f, Math — конвенции и формулы как в JOML (тесты на трансформации/кватернионы) |
 | **tags/** | `TagKey` (registry+location, stream-кодек) |
-| **world/** | `Rotation`, `Mirror`, `StructureMode`, `TestBlockMode`, block entities (command/jigsaw/structure/test-instance), `GameTestInstance`, `RecipeBookType`/`Settings`, `RecipeDisplayId`, `DisplaySlot`, `MobEffect`, `DamageType`, `SoundEvent`, `BossEvent` enums, `Team`, `ObjectiveCriteria`, `Waypoint`/`TrackedWaypoint`, `MinecartStep`, `RespawnData`, `InteractionHand`, `Difficulty` |
+| **world/** | `Rotation`, `Mirror`, `StructureMode`, `TestBlockMode`, block entities, `GameTestInstance`, `RecipeBookType`/`Settings`, `DisplaySlot`, `MobEffect`, `DamageType`, `SoundEvent`, `BossEvent` enums, `Team`, `ObjectiveCriteria`, `Waypoint`/`TrackedWaypoint`, `MinecartStep`, `RespawnData`, `InteractionHand`, `Difficulty`, `LevelChunk`/`ProtoChunk`/palettes/`LevelChunkSection`, levelgen (noise/improved/perlin/normal, `DensityFunction`-система, `Climate` Parameter/RTree/SpawnFinder, biomes, `ChunkGenerator`/`NoiseBasedChunkGenerator`, heightmap, blending) |
+| **entity/AI** | **`Mob`** (goal/target selectors, navigation, controls, sensing, leash/home/restriction), **`LivingEntity`** полный порт (~2600 строк: hurt-цепочка, эффекты, equipment, attributes), **AI-фреймворк**: `Goal`/`WrappedGoal`/`GoalSelector`/`GoalFlagSet`, `LookControl`/`MoveControl`/`FlyingMoveControl`/`JumpControl`/`BodyRotationControl`, `Sensing`, **pathfinding полный**: `Node`/`Target`/`Path`/`BinaryHeap`/`PathType`(+cache)/`PathfindingContext`/`NodeEvaluator`/`WalkNodeEvaluator`/`FlyNodeEvaluator`/`AmphibiousNodeEvaluator`/`SwimNodeEvaluator`/`PathFinder` (A*), **навигация**: `MobNavigation`/`PathNavigation` (~1000 строк: moveTo/tick/stuck-detection/trim/timeout) + `NavKind` Ground/Flying/Amphibious/WaterBound/WallClimber, `PathNavigationRegion`, `LevelReader`-интерфейс, `BlockState` collision/pathfind API, `Entity`/`DamageSource`/`DamageTypes`/`DamageSources`/`CombatTracker`, `EntityType`+`MobCategory`, `SynchedEntityData` |
 | **resources/** | `Identifier`, `ResourceKey` |
 
 ### 🟡 В работе
@@ -171,11 +172,12 @@ cargo test -p leaf-core
 | Подсистема | Состояние |
 |---|---|
 | **Запуск сервера** | JVM исполняет Java (~0.8s bootstrap), сервер доходит до `PaperBootstrap`, дальше `FileNotFoundException` в natives — баг jvm25-rust |
-| **network/protocol/game** | Осталось ~30 пакетов (LevelChunk, RecipeDisplay, AdvancementHolder и др.): chunks (`LevelChunkWithLight`, `ChunksBiomes`, `LightUpdate`, heightmaps/palettes), entity data (`SetEntityData`, `AddEntity`), containers (content/slot/click/merchant/cursor/inventory), `LoginPacket`, map item, particles, explode, recipe book add/update-recipes, advancements, command tree (`CommandNode`), debug subscriptions |
+| **network/protocol/game** | ✅ Дописано: все 180+ пакетов включая chunks/entity-data/containers/dialogs/debug |
 | **core/component payloads** | ~55 из 104 типов ждут свои payload-классы (`FoodProperties`, `Consumable`, `PotionContents`, `ArmorTrim`, `Equippable`, `Tool`, `AdventureModePredicate`, `ItemEnchantments`, books, fireworks, bees, entity-variant реестры, `EitherHolder`...) — wire-id порядок уже корректен |
 | **registries** | Нужны `HolderSet`/`EitherHolder` и bootstrap реестров (ITEM, DAMAGE_TYPE, ENTITY_TYPE, SOUND_EVENT...) для полной резолва holder'ов |
-| **world/level** | Чанки, lighting, level-логика — в портировании |
-| **entity/player/command** | Command-дерево и entity-логика — следующие этапы |
+| **world/level** | `Level`/`ServerLevel` runtime, lighting engine, chunk loading/generation pipeline, block-entity ticking |
+| **entity/player/command** | `Player`-полный порт, конкретные goal-классы мобов (64 шт), `CommandNode`-дерево и dispatcher |
+| **loot-условия** | Все 17 типов дописаны; остаются `Mob`-специфичные проверки через `EntityPredicateTarget` |
 
 ### 🔴 Осталось
 

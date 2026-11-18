@@ -72,3 +72,5 @@ pub mod light_layer;
 pub mod level_height_accessor;
 pub mod levelgen;
 pub mod storage;
+pub mod pathfinder;
+pub mod path_navigation_region;

@@ -47,6 +47,14 @@ impl AttributeMap {
             .unwrap_or(0.0)
     }
 
+    /// `getValue` read-only (cached_value без dirty-пересчёта).
+    pub fn get_value_ro(&self, attribute: &Identifier) -> f64 {
+        self.attributes
+            .get(attribute)
+            .map(|i| i.get_value_ro())
+            .unwrap_or(0.0)
+    }
+
     /// `getBaseValue(attribute)`.
     pub fn get_base_value(&mut self, attribute: &Identifier) -> f64 {
         self.attributes

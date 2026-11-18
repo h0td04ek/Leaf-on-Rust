@@ -140,6 +140,18 @@ impl FluidState {
     /// (включая текущую воду; `bubble_column` — нет).
     pub fn is_water(&self) -> bool {
         self.fluid.id == Identifier::minecraft("water")
+            || self.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+    }
+
+    /// `is(FluidTags.LAVA)`.
+    pub fn is_lava(&self) -> bool {
+        self.fluid.id == Identifier::minecraft("lava")
+            || self.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::lava())
+    }
+
+    /// `is(TagKey<Fluid>)` по именованному тегу.
+    pub fn is_in_named_tag(&self, tag_location: &Identifier) -> bool {
+        !self.is_empty() && crate::tags::is_fluid_in_named_tag(&self.fluid.id, tag_location)
     }
 }
 

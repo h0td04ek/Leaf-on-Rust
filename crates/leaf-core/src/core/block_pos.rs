@@ -29,6 +29,8 @@ pub struct BlockPos {
 }
 
 impl BlockPos {
+    /// `ZERO`.
+    pub const ZERO: BlockPos = BlockPos { x: 0, y: 0, z: 0 };
     pub const fn new(x: i32, y: i32, z: i32) -> Self {
         Self { x, y, z }
     }
@@ -129,6 +131,31 @@ impl BlockPos {
     }
 
     // ---------------------------------------------------------- offset/move
+
+    /// `closerToCenterThan(Vec3i pos, double dist)` —
+    /// расстояние от центра блока до центра pos < dist.
+    pub fn closer_to_center_than_vec3i(&self, pos: &Vec3i, dist: f64) -> bool {
+        let dx = pos.x as f64 - (self.x as f64 + 0.5);
+        let dy = pos.y as f64 - (self.y as f64 + 0.5);
+        let dz = pos.z as f64 - (self.z as f64 + 0.5);
+        dx * dx + dy * dy + dz * dz < dist * dist
+    }
+
+    /// `closerToCenterThan(Vec3 pos, double dist)`.
+    pub fn closer_to_center_than(&self, pos: crate::world::phys::vec3::Vec3, dist: f64) -> bool {
+        let cx = self.x as f64 + 0.5;
+        let cy = self.y as f64 + 0.5;
+        let cz = self.z as f64 + 0.5;
+        let dx = pos.x - cx;
+        let dy = pos.y - cy;
+        let dz = pos.z - cz;
+        dx * dx + dy * dy + dz * dz < dist * dist
+    }
+
+    /// `distManhattan(Vec3i)`.
+    pub fn dist_manhattan_vec3i(&self, pos: &Vec3i) -> i32 {
+        (self.x - pos.x).abs() + (self.y - pos.y).abs() + (self.z - pos.z).abs()
+    }
 
     pub fn offset(&self, dx: i32, dy: i32, dz: i32) -> Self {
         if dx == 0 && dy == 0 && dz == 0 {

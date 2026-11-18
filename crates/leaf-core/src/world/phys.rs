@@ -2,6 +2,7 @@
 
 pub mod aabb;
 pub mod hit_result;
+pub mod shapes;
 pub mod vec3;
 
 pub use aabb::Aabb;

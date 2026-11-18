@@ -231,4 +231,20 @@ pub trait LevelReader {
     ) -> Vec<crate::world::item::item_stack::ItemStack> {
         Vec::new()
     }
+
+    /// `ServerLevel.getPathTypeCache` — кэш `PathType` уровня.
+    /// Default — нет кэша (контекст будет считать напрямую).
+    fn path_type_cache(&self) -> Option<&crate::world::level::pathfinder::path_type_cache::PathTypeCache> {
+        None
+    }
+
+    /// `CollisionGetter.noCollision(entity, aabb)` — нет ли
+    /// коллизий у сущности с блоками/сущностями в AABB.
+    /// Default — true (коллизий нет; конкретный Level переопределит).
+    fn no_collision(&self, _aabb: &crate::world::phys::aabb::Aabb) -> bool {
+        true
+    }
+
+    // `CollisionGetter.getWorldBorder`-стиль проверек не нужен —
+    // `isOutsideBuildHeight` уже покрыт `min_build_height`/`height`.
 }

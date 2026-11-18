@@ -171,6 +171,13 @@ impl AttributeInstance {
         self.modifiers_by_operation.values().any(|m| m.contains_key(&modifier.id))
     }
 
+    /// `getValue()` без &mut — возвращает последний
+    /// закэшированный total (dirty-пересчёт требует &mut;
+    /// используется read-only контекстами вроде pathfinding).
+    pub fn get_value_ro(&self) -> f64 {
+        self.cached_value
+    }
+
     /// `getValue()` — пересчёт кэша если dirty.
     pub fn get_value(&mut self) -> f64 {
         self.update_cached_value();

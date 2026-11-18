@@ -28,6 +28,28 @@ pub struct Block {
     /// (hasCollision, isAir, destroysDrops и т.п.) — добавляются
     /// инкрементально по мере порта BlockBehaviour.
     pub properties: BlockProperties,
+
+    /// `BlockKind` — класс блока для pathfinding/особых проверок
+    /// (в Java — `instanceof DoorBlock`/`BaseRailBlock` и т.п.).
+    pub kind: BlockKind,
+}
+
+/// `BlockKind` — тип блока, влияющий на `PathType` и
+/// проходимость (аналог instanceof-проверок в
+/// `WalkNodeEvaluator.getPathTypeFromState`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlockKind {
+    /// Обычный блок.
+    #[default]
+    Normal,
+    /// `DoorBlock` — `wooden` = `DoorType.canOpenByHand()`.
+    Door { wooden: bool },
+    /// `FenceGateBlock`.
+    FenceGate,
+    /// `BaseRailBlock`.
+    BaseRail,
+    /// `LeavesBlock`.
+    Leaves,
 }
 
 /// Подмножество `BlockBehaviour.Properties` — флаги,
@@ -49,6 +71,14 @@ pub struct BlockProperties {
     pub explosion_resistance: Option<f32>,
     /// `liquid` — блок-жидкость (`LiquidBlock` в Java).
     pub liquid: bool,
+    /// `isPathfindable` — переопределение проходимости
+    /// (`None` → дефолт `BlockBehaviour.isPathfindable`).
+    pub pathfindable: Option<bool>,
+    /// `collisionShape` — форма коллизии блока
+    /// (`None` → полный куб для твёрдых, пусто для air/liquid).
+    pub collision_shape: Option<crate::world::phys::shapes::VoxelShape>,
+    // `isLitCampfire`-подобные блоки: `lit`-свойство читается
+    // из `BlockState.values` (campfire/soul_campfire).
 }
 
 /// Глобальный реестр блоков (`BuiltInRegistries.BLOCK`) —
@@ -83,6 +113,25 @@ pub fn block_by_identifier(id: &crate::resources::identifier::Identifier) -> Opt
 }
 
 impl Block {
+    /// `Block.isShapeFullBlock(VoxelShape)` — форма совпадает
+    /// с единичным кубом блока.
+    pub fn is_shape_full_block(shape: &crate::world::phys::shapes::VoxelShape) -> bool {
+        if shape.is_empty() {
+            return false;
+        }
+        match shape.bounds() {
+            Some(b) => {
+                (b.min_x - 0.0).abs() < 1e-6
+                    && (b.min_y - 0.0).abs() < 1e-6
+                    && (b.min_z - 0.0).abs() < 1e-6
+                    && (b.max_x - 1.0).abs() < 1e-6
+                    && (b.max_y - 1.0).abs() < 1e-6
+                    && (b.max_z - 1.0).abs() < 1e-6
+            }
+            None => false,
+        }
+    }
+
     /// `canSurvive` — базовая реализация `BlockBehaviour.canSurvive`
     /// (true; переопределяется конкретными блоками при их порте).
     pub fn can_survive(&self, _state: &state::BlockState, _level: &dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos) -> bool {
@@ -95,7 +144,14 @@ impl Block {
             id,
             state_definition: None,
             properties: BlockProperties::default(),
+            kind: BlockKind::Normal,
         }
+    }
+
+    /// `withKind`.
+    pub fn with_kind(mut self, kind: BlockKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     /// `withStateDefinition`.
