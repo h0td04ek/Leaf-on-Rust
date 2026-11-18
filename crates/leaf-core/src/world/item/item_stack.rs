@@ -85,6 +85,27 @@ impl ItemStack {
         self.clone()
     }
 
+    /// `getHoverName()` — имя для подсказки (custom_name компонент или item id).
+    pub fn get_hover_name(&self) -> crate::network::chat::component::Component {
+        let id = crate::resources::identifier::Identifier::parse("custom_name")
+            .expect("custom_name id");
+        if let Some(c) = self.components.get_by_id::<crate::network::chat::component::Component>(&id) {
+            return c.clone();
+        }
+        match self.item_holder().and_then(|h| h.key().map(|k| k.id().clone())) {
+            Some(id) => crate::network::chat::component::Component::translatable(
+                format!("item.{}.{}", id.get_namespace(), id.get_path()),
+                vec![],
+            ),
+            None => crate::network::chat::component::Component::literal("item"),
+        }
+    }
+
+    /// `getDisplayName()` — синоним `getHoverName`.
+    pub fn get_display_name(&self) -> crate::network::chat::component::Component {
+        self.get_hover_name()
+    }
+
     /// `getMaxStackSize()` — `item.getMaxStackSize()`:
     /// `MAX_STACK_SIZE` компонент предмета, default 64.
     pub fn get_max_stack_size(&self) -> i32 {

@@ -111,6 +111,12 @@ pub struct Entity {
     pub tags: Vec<crate::resources::identifier::Identifier>,
     /// `persistenceRequired` — требуется сохранение.
     pub persistence_required: bool,
+    /// `fallDistance` — дистанция падения.
+    pub fall_distance: f32,
+    /// `wasTouchingWater` — касался ли воды в прошлом тике.
+    pub was_touching_water: bool,
+    /// `wasEyeInWater` — глаз был в воде.
+    pub was_eye_in_water: bool,
 }
 
 impl Entity {
@@ -153,6 +159,9 @@ impl Entity {
             data: crate::network::syncher::synched_entity_data::SynchedEntityData::new(Vec::new()),
             tags: Vec::new(),
             persistence_required: false,
+            fall_distance: 0.0,
+            was_touching_water: false,
+            was_eye_in_water: false,
         }
     }
 
@@ -480,6 +489,12 @@ impl Entity {
 
     /// `isPickable()`.
     pub fn is_pickable(&self) -> bool { true }
+
+    /// `isLivingEntity()` — `true` для LivingEntity-наследников.
+    pub fn is_living_entity(&self) -> bool { false }
+
+    /// `getMainHandItem()` — предмет в основной руке (`None` у базовой Entity).
+    pub fn get_main_hand_item(&self) -> Option<crate::world::item::item_stack::ItemStack> { None }
 
     /// `isSpectator()`.
     pub fn is_spectator(&self) -> bool { false }

@@ -114,6 +114,21 @@ impl DamageSource {
         self.causing_entity.as_ref().or(self.direct_entity.as_ref())
     }
 
+    /// `is(DamageTypeTags.IS_FALL)` — урон от падения.
+    pub fn is_fall(&self) -> bool {
+        self.ty.value().map(|dt| {
+            let p = dt.id.get_path();
+            matches!(p, "fall" | "fly_into_wall" | "ender_pearl" | "stalagmite"
+                | "falling_block" | "falling_anvil" | "falling_stalactite"
+                | "sweet_berry_bush" | "freeze" | "dragon_breath" | "generic")
+        }).unwrap_or(false)
+    }
+
+    /// `is(DamageTypeTags.ALWAYS_MOST_SIGNIFICANT_FALL)`.
+    pub fn is_always_most_significant_fall(&self) -> bool {
+        self.ty.value().map(|dt| dt.id.get_path() == "generic").unwrap_or(false)
+    }
+
     /// `copy()`.
     pub fn copy(&self) -> Self {
         Self {
@@ -201,6 +216,9 @@ impl Clone for crate::world::entity::entity::Entity {
             data: self.data.clone(),
             tags: self.tags.clone(),
             persistence_required: self.persistence_required,
+            fall_distance: self.fall_distance,
+            was_touching_water: self.was_touching_water,
+            was_eye_in_water: self.was_eye_in_water,
         }
     }
 }
