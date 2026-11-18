@@ -27,6 +27,7 @@ packet_types! {
     clientbound_resource_pack_pop => "resource_pack_pop",
     clientbound_resource_pack_push => "resource_pack_push",
     clientbound_server_links => "server_links",
+    clientbound_show_dialog => "show_dialog",
     clientbound_store_cookie => "store_cookie",
     clientbound_transfer => "transfer",
     clientbound_update_tags => "update_tags",

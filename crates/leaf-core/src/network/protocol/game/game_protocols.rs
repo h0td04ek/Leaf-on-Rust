@@ -14,6 +14,7 @@ use crate::network::protocol::game::clientbound_commands_packet::ClientboundComm
 use crate::network::protocol::game::clientbound_update_recipes_packet::ClientboundUpdateRecipesPacket;
 use crate::network::protocol::game::clientbound_place_ghost_recipe_packet::ClientboundPlaceGhostRecipePacket;
 use crate::network::protocol::game::clientbound_recipe_book_add_packet::ClientboundRecipeBookAddPacket;
+use crate::network::protocol::common::clientbound_show_dialog_packet::ClientboundShowDialogPacket;
 use crate::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 
 use crate::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
@@ -1030,6 +1031,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_recipe_book_add::<ClientboundRecipeBookAddPacket>(),
             ClientboundRecipeBookAddPacket::stream_codec(),
+        );
+        b.add_packet(
+            common_types::clientbound_show_dialog::<ClientboundShowDialogPacket>(),
+            ClientboundShowDialogPacket::stream_codec(),
         );
     })
 }
