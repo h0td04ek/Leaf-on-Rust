@@ -359,3 +359,4 @@ pub mod game_protocols;
 pub mod serverbound_container_click_packet;
 pub mod serverbound_debug_subscription_request_packet;
 pub mod vec_delta_codec;
+pub mod clientbound_update_advancements_packet;

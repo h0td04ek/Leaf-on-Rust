@@ -8,6 +8,8 @@ use crate::network::protocol::protocol_info_builder;
 use crate::network::protocol::unbound_protocol::SimpleUnboundProtocol;
 use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
+use crate::network::protocol::game::clientbound_test_instance_block_status::ClientboundTestInstanceBlockStatus;
+use crate::network::protocol::game::clientbound_update_advancements_packet::ClientboundUpdateAdvancementsPacket;
 use crate::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 
 use crate::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
@@ -468,6 +470,10 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             common_types::serverbound_custom_click_action::<ServerboundCustomClickActionPacket>(),
             ServerboundCustomClickActionPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_test_instance_block_status::<ClientboundTestInstanceBlockStatus>(),
+            ClientboundTestInstanceBlockStatus::stream_codec(),
         );
     })
 }
@@ -1000,6 +1006,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             common_types::clientbound_clear_dialog::<ClientboundClearDialogPacket>(),
             ClientboundClearDialogPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_update_advancements::<ClientboundUpdateAdvancementsPacket>(),
+            ClientboundUpdateAdvancementsPacket::stream_codec(),
         );
     })
 }
