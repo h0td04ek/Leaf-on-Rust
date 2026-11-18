@@ -1,5 +1,6 @@
 //! `util` — математические и прочие хелперы ядра.
 
+pub mod context;
 pub mod abortable_iteration_consumer;
 pub mod argb;
 pub mod array_list_deque;

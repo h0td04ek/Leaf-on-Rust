@@ -15,8 +15,16 @@ use crate::network::chat::component::Component;
 use crate::world::damagesource::combat_tracker::CombatTracker;
 use crate::world::damagesource::damage_source::DamageSource;
 use crate::world::effect::mob_effect_instance::MobEffectInstance;
+use crate::entity::ai::attributes::attribute_map::AttributeMap;
+use crate::entity::ai::attributes::attributes as attribute_ids;
+use crate::entity::ai::attributes::default_attributes;
+use crate::world::damagesource::combat_rules::CombatRules;
+use crate::world::effect::mob_effects;
 use crate::world::entity::entity::Entity;
 use crate::world::entity::entity_type::EntityType;
+use crate::world::item::component::blocks_attacks::BlocksAttacks;
+use crate::world::item::equipment::equippable::Equippable;
+use crate::resources::identifier::Identifier;
 use crate::world::item::item_stack::ItemStack;
 use crate::world::phys::vec3::Vec3;
 
@@ -24,8 +32,8 @@ use crate::world::phys::vec3::Vec3;
 pub struct LivingEntity {
     /// Базовая entity.
     pub entity: Entity,
-    /// `attributes` — карта атрибутов.
-    pub attributes: HashMap<u64, f64>,
+    /// `attributes` — `AttributeMap` (AttributeInstance на атрибут).
+    pub attributes: AttributeMap,
     /// `combatTracker`.
     pub combat_tracker: CombatTracker,
     /// `activeEffects` — активные эффекты.
@@ -46,6 +54,8 @@ pub struct LivingEntity {
     pub hurt_time: i32,
     /// `hurtDuration`.
     pub hurt_duration: i32,
+    /// `invulnerableTime` — тики неуязвимости после урона.
+    pub invulnerable_time: i32,
     /// `deathTime`.
     pub death_time: i32,
     /// `oAttackAnim`, `attackAnim`.
@@ -111,9 +121,22 @@ impl LivingEntity {
     pub fn new(entity_type: Holder<EntityType>, level: Option<std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>>) -> Self {
         let entity = Entity::new(entity_type.clone(), level);
         let combat_tracker = CombatTracker::new(entity.clone());
+        let type_id = match &entity_type {
+            Holder::Direct(t) => Some(t.id.clone()),
+            Holder::Key(k) => Some(k.identifier.clone()),
+            Holder::Reference(_) => None,
+        };
+        let supplier = type_id
+            .as_ref()
+            .and_then(|id| default_attributes::get_supplier(id).cloned())
+            .unwrap_or_default();
+        let mut attributes = AttributeMap::new(supplier);
+        let health = attributes
+            .get_value(&attribute_ids::max_health())
+            .clamp(0.0, f64::MAX) as f32;
         Self {
             entity,
-            attributes: HashMap::new(),
+            attributes,
             combat_tracker,
             active_effects: HashMap::new(),
             last_equipment_items: HashMap::new(),
@@ -124,6 +147,7 @@ impl LivingEntity {
             remove_stinger_time: 0,
             hurt_time: 0,
             hurt_duration: 0,
+            invulnerable_time: 0,
             death_time: 0,
             o_attack_anim: 0.0,
             attack_anim: 0.0,
@@ -155,7 +179,7 @@ impl LivingEntity {
             auto_spin_attack_ticks: 0,
             auto_spin_attack_dmg: 0.0,
             xp_reward: 0,
-            health: 20.0,
+            health,
         }
     }
 
@@ -164,9 +188,9 @@ impl LivingEntity {
         self.health
     }
 
-    /// `getMaxHealth()` — `MAX_HEALTH` атрибут (default 20).
-    pub fn get_max_health(&self) -> f32 {
-        self.attributes.values().next().map(|_| 20.0f32).unwrap_or(20.0)
+    /// `getMaxHealth()` — `MAX_HEALTH` атрибут.
+    pub fn get_max_health(&mut self) -> f32 {
+        self.attributes.get_value(&attribute_ids::max_health()) as f32
     }
 
     /// `isAlive()`.
@@ -285,30 +309,489 @@ impl LivingEntity {
         entity.set_shared_flag(LivingEntity::FLAG_DEAD, true);
     }
 
-    /// `hurt(source, amount)`.
+    /// `hurt(source, amount)` — клиентский алиас `hurtServer`.
     pub fn hurt(&mut self, source: DamageSource, amount: f32) -> bool {
-        if !self.is_alive() || self.is_invulnerable_to(&source) {
-            return false;
-        }
-        self.combat_tracker.record_damage(source.clone(), amount);
-        self.last_damage_source = Some(source.clone());
-        self.last_damage_stamp = self.entity.tick_count as i64;
-        self.hurt_duration = 10;
-        self.hurt_time = self.hurt_duration.max(10);
-        self.set_health(self.get_health() - amount);
-        self.last_hurt = amount;
-        self.no_action_time = 0;
-        if self.get_health() <= 0.0 {
-            self.die(source);
-            return true;
-        }
-        true
+        self.hurt_server(source, amount)
     }
 
-    /// `isInvulnerableTo(source)`.
-    pub fn is_invulnerable_to(&self, _source: &DamageSource) -> bool {
+    /// `hurtServer(level, damageSource, amount)` — полная серверная
+    /// цепочка урона `LivingEntity.hurtServer` (1.21.11).
+    pub fn hurt_server(&mut self, source: DamageSource, amount: f32) -> bool {
+        if self.is_invulnerable_to(&source) {
+            return false;
+        }
+        if self.is_dead_or_dying() {
+            return false;
+        }
+        if source.is_fire() && self.has_effect(&mob_effects::fire_resistance()) {
+            return false;
+        }
+        self.no_action_time = 0;
+        let mut amount = amount.max(0.0);
+        let use_item = self.get_use_item().clone();
+        let blocked = self.apply_item_blocking(&source, amount);
+        amount -= blocked;
+        let flag = blocked > 0.0;
+        if source.is_tag(&crate::tags::damage_type_tags::keys::is_freezing())
+            && self.entity_type_is_freeze_hurts_extra()
+        {
+            amount *= 5.0;
+        }
+        if source.damages_helmet() {
+            let head = self.get_item_by_slot(EquipmentSlot::Head).clone();
+            if !head.is_empty() {
+                self.hurt_helmet(&source, amount);
+                amount *= 0.75;
+            }
+        }
+        if !amount.is_finite() {
+            amount = f32::MAX;
+        }
+        let mut flag1 = true;
+        if self.invulnerable_time > 10 && !source.bypasses_cooldown() {
+            if amount <= self.last_hurt {
+                return false;
+            }
+            self.actually_hurt(&source, amount - self.last_hurt);
+            self.last_hurt = amount;
+            flag1 = false;
+        } else {
+            self.last_hurt = amount;
+            self.invulnerable_time = 20;
+            self.actually_hurt(&source, amount);
+            self.hurt_duration = 10;
+            self.hurt_time = self.hurt_duration;
+        }
+        self.resolve_mob_responsible_for_damage(&source);
+        self.resolve_player_responsible_for_damage(&source);
+        if flag1 {
+            if flag {
+                if let Some(ba) = use_item.get_component::<BlocksAttacks>(
+                    &Identifier::minecraft("blocks_attacks"),
+                ) {
+                    if let Some(sound) = ba.on_blocked() {
+                        self.entity.play_sound(Some(sound), 1.0, 0.8 + rand_f32() * 0.4);
+                    }
+                }
+            }
+            if !source.no_impact() && (!flag || amount > 0.0) {
+                self.mark_hurt();
+            }
+            if !source.no_knockback() {
+                let mut d = 0.0f64;
+                let mut d1 = 0.0f64;
+                if let Some(pos) = source.get_source_position() {
+                    d = pos.x - self.entity.pos.x;
+                    d1 = pos.z - self.entity.pos.z;
+                }
+                self.knockback(0.4, d, d1);
+                if !flag {
+                    self.indicate_damage(d as f32, d1 as f32);
+                }
+            }
+        }
+        if self.is_dead_or_dying() {
+            if !self.check_totem_death_protection(&source) {
+                if flag1 {
+                    self.make_sound(self.get_death_sound());
+                    self.play_secondary_hurt_sound(&source);
+                }
+                self.die(source.clone());
+            }
+        } else if flag1 {
+            self.play_hurt_sound(&source);
+            self.play_secondary_hurt_sound(&source);
+        }
+        let flag2 = !flag || amount > 0.0;
+        if flag2 {
+            self.last_damage_source = Some(source.clone());
+            self.last_damage_stamp = self.entity.tick_count as i64;
+        }
+        flag2
+    }
+
+    /// `isInvulnerableTo(source)` — `isInvulnerable() &&
+    /// !BYPASSES_INVULNERABILITY`.
+    pub fn is_invulnerable_to(&self, source: &DamageSource) -> bool {
+        self.entity.is_invulnerable() && !source.bypasses_invulnerability()
+    }
+
+    /// `applyItemBlocking(level, damageSource, damageAmount)` —
+    /// блок щитом/предметом с `blocks_attacks`.
+    pub fn apply_item_blocking(
+        &mut self,
+        damage_source: &DamageSource,
+        damage_amount: f32,
+    ) -> f32 {
+        if damage_amount <= 0.0 {
+            return 0.0;
+        }
+        let Some(item_blocking_with) = self.get_item_blocking_with().cloned() else {
+            return 0.0;
+        };
+        let Some(blocks_attacks) = item_blocking_with.get_component::<BlocksAttacks>(
+            &Identifier::minecraft("blocks_attacks"),
+        ) else {
+            return 0.0;
+        };
+        if let Some(bypassed_by) = &blocks_attacks.bypassed_by {
+            if damage_source.is_tag(bypassed_by) {
+                return 0.0;
+            }
+        }
+        let acos = match damage_source.get_source_position() {
+            Some(source_pos) => {
+                let view = self.entity.calculate_view_vector(0.0, self.y_head_rot);
+                let mut d = source_pos.subtract_vec(&self.entity.pos);
+                d.y = 0.0;
+                if d.length_squared() > 1.0e-7 {
+                    d = d.normalize();
+                    view.dot_vec(&d).clamp(-1.0, 1.0).acos() as f32
+                } else {
+                    std::f32::consts::PI
+                }
+            }
+            None => std::f32::consts::PI,
+        };
+        let blocked =
+            blocks_attacks.resolve_blocked_damage(damage_source, damage_amount, acos as f64);
+        if blocked > 0.0 && self.entity.is_player() {
+            let item_damage = blocks_attacks.item_damage.apply(blocked);
+            if item_damage > 0 {
+                let mut stack = self.get_item_blocking_with().cloned().unwrap_or_else(ItemStack::empty);
+                let slot = self.get_used_item_hand().as_equipment_slot();
+                stack.hurt_and_break(item_damage, self, Some(slot));
+                self.set_item_slot(slot, stack);
+            }
+        }
+        if blocked > 0.0
+            && !damage_source.is_projectile()
+            && damage_source
+                .get_causing_entity()
+                .map(|e| e.is_living_entity())
+                .unwrap_or(false)
+        {
+            self.block_using_item(damage_source);
+        }
+        blocked
+    }
+
+    /// `getItemBlockingWith()` — предмет, которым блокируют.
+    pub fn get_item_blocking_with(&self) -> Option<&ItemStack> {
+        if !self.is_using_item() {
+            return None;
+        }
+        if self
+            .use_item
+            .has_component(&Identifier::minecraft("blocks_attacks"))
+        {
+            let ba = self.use_item.get_component::<BlocksAttacks>(
+                &Identifier::minecraft("blocks_attacks"),
+            );
+            if let Some(ba) = ba {
+                let used = self.use_item.get_use_duration_ticks()
+                    - self.use_item_remaining;
+                if used >= ba.block_delay_ticks() {
+                    return Some(&self.use_item);
+                }
+            }
+        }
+        None
+    }
+
+    /// `isBlocking()`.
+    pub fn is_blocking(&self) -> bool {
+        self.get_item_blocking_with().is_some()
+    }
+
+    /// `playSecondaryHurtSound` — звук thorns.
+    pub fn play_secondary_hurt_sound(&mut self, damage_source: &DamageSource) {
+        if damage_source
+            .get_type()
+            .value()
+            .map(|dt| dt.id == Identifier::minecraft("thorns"))
+            .unwrap_or(false)
+        {
+            let sound = crate::sounds::sound_events::thorns_hit();
+            self.entity.play_sound(Some(&sound), 1.0, 1.0);
+        }
+    }
+
+    /// `resolveMobResponsibleForDamage` — `lastHurtByMob`.
+    pub fn resolve_mob_responsible_for_damage(&mut self, damage_source: &DamageSource) {
+        if let Some(causing) = damage_source.get_causing_entity() {
+            if causing.is_living_entity()
+                && !damage_source.is_tag(&crate::tags::damage_type_tags::keys::no_anger())
+            {
+                self.last_hurt_by_mob_timestamp =
+                    self.entity.tick_count + DAMAGE_SOURCE_TIMEOUT as i32;
+            }
+        }
+    }
+
+    /// `resolvePlayerResponsibleForDamage` — `lastHurtByPlayer`.
+    pub fn resolve_player_responsible_for_damage(&mut self, damage_source: &DamageSource) {
+        if let Some(causing) = damage_source.get_causing_entity() {
+            if causing.is_player() {
+                self.last_hurt_by_player_memory_time = 100;
+            }
+        }
+    }
+
+    /// `blockUsingItem(level, entity)` — контратакующий knockback.
+    pub fn block_using_item(&mut self, _damage_source: &DamageSource) {}
+
+    /// `blockedByItem(entity)` — отбрасывание блокирующего.
+    pub fn blocked_by_item(&mut self, _entity: &LivingEntity) {}
+
+    /// `checkTotemDeathProtection` — тотем бессмертия.
+    pub fn check_totem_death_protection(&mut self, damage_source: &DamageSource) -> bool {
+        if damage_source.bypasses_invulnerability() {
+            return false;
+        }
+        let mut found: Option<crate::world::item::component::death_protection::DeathProtection> = None;
+        for hand_is_main in [true, false] {
+            let stack = if hand_is_main {
+                self.get_main_hand_item().clone()
+            } else {
+                self.get_offhand_item().clone()
+            };
+            if let Some(dp) = stack.get_component::<crate::world::item::component::death_protection::DeathProtection>(
+                &Identifier::minecraft("death_protection"),
+            ) {
+                let mut s = stack;
+                s.shrink(1);
+                if hand_is_main {
+                    self.set_item_slot(EquipmentSlot::Mainhand, s);
+                } else {
+                    self.set_item_slot(EquipmentSlot::Offhand, s);
+                }
+                found = Some(dp);
+                break;
+            }
+        }
+        let has_toten = found.is_some();
+        if let Some(dp) = found {
+            self.set_health(1.0);
+            for effect in &dp.death_effects {
+                effect.apply(self);
+            }
+        }
+        has_toten
+    }
+
+    /// `playHurtSound` — звук получения урона.
+    pub fn play_hurt_sound(&mut self, damage_source: &DamageSource) {
+        let sound = self.get_hurt_sound(damage_source);
+        self.make_sound(sound);
+    }
+
+    /// `makeSound(sound)`.
+    pub fn make_sound(&mut self, sound: Option<crate::sounds::sound_event::SoundEvent>) {
+        if let Some(s) = sound {
+            let holder = crate::core::holder::Holder::Direct(s);
+            self.entity.play_sound(Some(&holder), self.get_voice_volume(), self.get_voice_pitch());
+        }
+    }
+
+    /// `hurtHelmet` — базовая пустая (переопределяется в ArmorStand/Player).
+    pub fn hurt_helmet(&mut self, _damage_source: &DamageSource, _damage_amount: f32) {}
+
+    /// `hurtArmor` — базовая пустая.
+    pub fn hurt_armor(&mut self, _damage_source: &DamageSource, _damage_amount: f32) {}
+
+    /// `doHurtEquipment` — износ экипировки при уроне.
+    pub fn do_hurt_equipment(
+        &mut self,
+        damage_source: &DamageSource,
+        damage_amount: f32,
+        slots: &[EquipmentSlot],
+    ) {
+        if damage_amount <= 0.0 {
+            return;
+        }
+        let amount = ((damage_amount / 4.0).max(1.0)) as i32;
+        for &slot in slots {
+            let stack = self.get_item_by_slot(slot).clone();
+            let equippable = stack.get_component::<Equippable>(
+                &Identifier::minecraft("equippable"),
+            );
+            if let Some(eq) = equippable {
+                if eq.damage_on_hurt
+                    && stack.is_damageable_item()
+                    && stack.can_be_hurt_by(damage_source)
+                {
+                    let mut s = stack;
+                    s.hurt_and_break(amount, self, Some(slot));
+                    self.set_item_slot(slot, s);
+                }
+            }
+        }
+    }
+
+    /// `getDamageAfterArmorAbsorb` — броня + toughness.
+    pub fn get_damage_after_armor_absorb(
+        &mut self,
+        damage_source: &DamageSource,
+        damage_amount: f32,
+    ) -> f32 {
+        if !damage_source.bypasses_armor() {
+            self.hurt_armor(damage_source, damage_amount);
+            let armor = self.get_armor_value() as f32;
+            let toughness =
+                self.get_attribute_value_by_id(&attribute_ids::armor_toughness()) as f32;
+            CombatRules::get_damage_after_absorb(
+                &self.entity,
+                damage_amount,
+                damage_source,
+                armor,
+                toughness,
+                None,
+            )
+        } else {
+            damage_amount
+        }
+    }
+
+    /// `getDamageAfterMagicAbsorb` — resistance + чары защиты.
+    pub fn get_damage_after_magic_absorb(
+        &mut self,
+        damage_source: &DamageSource,
+        mut damage_amount: f32,
+    ) -> f32 {
+        if damage_source.bypasses_effects() {
+            return damage_amount;
+        }
+        if self.has_effect(&mob_effects::resistance())
+            && !damage_source.bypasses_resistance()
+        {
+            let amplifier = self
+                .get_effect_instance(&mob_effects::resistance())
+                .map(|i| i.amplifier())
+                .unwrap_or(0);
+            let reduction = ((amplifier + 1) * 5).min(25);
+            damage_amount =
+                (damage_amount * (25 - reduction) as f32 / 25.0).max(0.0);
+        }
+        if damage_amount <= 0.0 {
+            return 0.0;
+        }
+        if damage_source.bypasses_enchantments() {
+            return damage_amount;
+        }
+        let damage_protection =
+            crate::world::item::enchantment::enchantment_helper::get_damage_protection(
+                self, damage_source,
+            );
+        if damage_protection > 0.0 {
+            damage_amount = CombatRules::get_damage_after_magic_absorb(
+                damage_amount,
+                damage_protection,
+            );
+        }
+        damage_amount
+    }
+
+    /// `actuallyHurt` — применение урона после всех поглощений.
+    pub fn actually_hurt(&mut self, damage_source: &DamageSource, amount: f32) {
+        if self.is_invulnerable_to(damage_source) {
+            return;
+        }
+        let amount = self.get_damage_after_armor_absorb(damage_source, amount);
+        let amount = self.get_damage_after_magic_absorb(damage_source, amount);
+        let absorbed = self.get_absorption_amount();
+        let health_damage = (amount - absorbed).max(0.0);
+        self.set_absorption_amount(absorbed - (amount - health_damage));
+        if health_damage != 0.0 {
+            self.combat_tracker
+                .record_damage(damage_source.clone(), health_damage);
+            self.set_health(self.get_health() - health_damage);
+            self.set_absorption_amount(
+                self.get_absorption_amount() - health_damage,
+            );
+        }
+    }
+
+    /// `onEquippedItemBroken(stack, slot)` — предмет сломан.
+    pub fn on_equipped_item_broken(
+        &mut self,
+        stack: &ItemStack,
+        slot: Option<EquipmentSlot>,
+    ) {
+        if let Some(sound) = stack.get_component::<crate::core::holder::Holder<crate::sounds::sound_event::SoundEvent>>(
+            &Identifier::minecraft("break_sound"),
+        ) {
+            self.entity.play_sound(Some(&sound), 1.0, 1.0);
+        }
+        let _ = slot;
+    }
+
+    /// `entityTypeIsFreezeHurtsExtra` — `FREEZE_HURTS_EXTRA_TYPES` тег.
+    fn entity_type_is_freeze_hurts_extra(&self) -> bool {
         false
     }
+
+    /// `randomTeleport(diameter)` — случайный телепорт в радиусе.
+    /// Используется `TeleportRandomlyConsumeEffect`.
+    pub fn teleport_randomly(&mut self, diameter: f32) {
+        let d = diameter as f64;
+        let nx = self.entity.pos.x + (rand::random::<f64>() - 0.5) * d;
+        let ny = self.entity.pos.y + (rand::random::<f64>() - 0.5) * d.min(4.0);
+        let nz = self.entity.pos.z + (rand::random::<f64>() - 0.5) * d;
+        self.entity.pos = crate::world::phys::vec3::Vec3::new(nx, ny, nz);
+        self.entity.set_delta_movement(0.0, 0.0, 0.0);
+        self.no_action_time = 0;
+    }
+
+    /// `markHurt()` — `animateHurt` + shared flag.
+    pub fn mark_hurt(&mut self) {
+        self.hurt_duration = 10;
+        self.hurt_time = self.hurt_duration;
+        self.entity.set_shared_flag(0x02, true);
+    }
+
+    /// `knockback(strength, x, z)` — реальный knockback с
+    /// `knockback_resistance` атрибутом.
+    pub fn knockback(&mut self, strength: f64, x: f64, z: f64) {
+        let strength = strength
+            * (1.0 - self.get_attribute_value_by_id(&attribute_ids::knockback_resistance()));
+        if strength <= 0.0 {
+            return;
+        }
+        let delta = self.entity.get_delta_movement();
+        let mut x = x;
+        let mut z = z;
+        while x * x + z * z < 1.0e-5 {
+            x = (rand_f64() - rand_f64()) * 0.01;
+            z = (rand_f64() - rand_f64()) * 0.01;
+        }
+        let len = (x * x + z * z).sqrt();
+        let vx = x / len * strength;
+        let vz = z / len * strength;
+        let vy = if self.entity.is_on_ground() {
+            (delta.y / 2.0 + strength).min(0.4)
+        } else {
+            delta.y
+        };
+        self.entity
+            .set_delta_movement(delta.x / 2.0 - vx, vy, delta.z / 2.0 - vz);
+    }
+
+    /// `indicateDamage(xDistance, zDistance)`.
+    pub fn indicate_damage(&mut self, x_distance: f32, z_distance: f32) {
+        let _ = (x_distance, z_distance);
+    }
+
+    /// `getArmorValue()` — `ARMOR` атрибут (floor).
+    pub fn get_armor_value(&mut self) -> i32 {
+        self.attributes.get_value(&attribute_ids::armor()).floor() as i32
+    }
+
+    /// `getArmorCoverPercentage()` — доля покрытой брони экипировкой.
+    pub fn get_armor_cover_percentage(&mut self) -> f32 {
+        0.0
+    }
+
 
     /// `getKillCredit()`.
     pub fn get_kill_credit(&self) -> Option<Entity> {
@@ -353,6 +836,18 @@ impl LivingEntity {
                 i.effect.value().map(|x| x.id == e.id).unwrap_or(false)
             })
         }).unwrap_or(false)
+    }
+
+    /// `getEffect(effect)` — активный инстанс по holder'у эффекта.
+    pub fn get_effect_instance(
+        &self,
+        effect: &Holder<crate::world::effect::mob_effect::MobEffect>,
+    ) -> Option<&MobEffectInstance> {
+        effect.value().and_then(|e| {
+            self.active_effects.values().find(|i| {
+                i.effect.value().map(|x| x.id == e.id).unwrap_or(false)
+            })
+        })
     }
 
     /// `getActiveEffects()`.
@@ -442,12 +937,24 @@ impl LivingEntity {
     }
 
     /// `getAttributeValue(attribute)`.
-    pub fn get_attribute_value(&self, attribute: &Holder<crate::entity::ai::attributes::Attribute>) -> f64 {
-        attribute.value().map(|a| {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&a.id, &mut h);
-            self.attributes.get(&std::hash::Hasher::finish(&h)).copied().unwrap_or(0.0)
-        }).unwrap_or(0.0)
+    pub fn get_attribute_value(&mut self, attribute: &Holder<crate::entity::ai::attributes::Attribute>) -> f64 {
+        match attribute.value() {
+            Some(a) => self.attributes.get_value(&a.id),
+            None => attribute
+                .key()
+                .map(|k| self.attributes.get_value(&k.identifier))
+                .unwrap_or(0.0),
+        }
+    }
+
+    /// `getAttributeValue` по registry-id атрибута.
+    pub fn get_attribute_value_by_id(&mut self, attribute: &Identifier) -> f64 {
+        self.attributes.get_value(attribute)
+    }
+
+    /// `getAttributeBaseValue(attribute)`.
+    pub fn get_attribute_base_value_by_id(&mut self, attribute: &Identifier) -> f64 {
+        self.attributes.get_base_value(attribute)
     }
 
     /// `getKnockback(target)`.
@@ -492,10 +999,6 @@ impl LivingEntity {
         Vec3::new((-yaw.sin() * pitch.cos()) as f64, (-pitch.sin()) as f64, (yaw.cos() * pitch.cos()) as f64)
     }
 
-    /// `isBlocking()`.
-    pub fn is_blocking(&self) -> bool {
-        false
-    }
 
     /// `isDamageSourceBlocked(source)`.
     pub fn is_damage_source_blocked(&self, _source: &DamageSource) -> bool {
@@ -621,26 +1124,6 @@ impl LivingEntity {
             self.active_effects.remove(&key);
         }
         self.effects_dirty = true;
-    }
-
-    /// `getArmorValue()`.
-    pub fn get_armor_value(&self) -> f32 {
-        0.0
-    }
-
-    /// `getArmorCoverPercentage()`.
-    pub fn get_armor_cover_percentage(&self) -> f32 {
-        0.0
-    }
-
-    /// `getDamageAfterArmorAbsorb`.
-    pub fn get_damage_after_armor_absorb(&self, _source: &DamageSource, damage: f32) -> f32 {
-        damage
-    }
-
-    /// `getDamageAfterMagicAbsorb`.
-    pub fn get_damage_after_magic_absorb(&self, _source: &DamageSource, damage: f32) -> f32 {
-        damage
     }
 
     /// `causeFallDamage(fallDistance, multiplier, source)`.
@@ -823,11 +1306,6 @@ impl LivingEntity {
         0
     }
 
-    /// `markHurt`.
-    pub fn mark_hurt(&mut self) {
-        self.hurt_time = self.hurt_duration;
-    }
-
     /// `lerpHeadTo`.
     pub fn lerp_head_to(&mut self, _y_rot: f32, _x_rot: f32, _steps: i32) {}
 
@@ -856,12 +1334,6 @@ impl LivingEntity {
     pub fn get_attack_knockback(&self, _target: &Entity, _damage: f32) -> f32 {
         0.0
     }
-
-    /// `knockback`.
-    pub fn knockback(&mut self, _strength: f32, _x: f64, _z: f64) {}
-
-    /// `indicateDamage`.
-    pub fn indicate_damage(&mut self, _yaw: f32) {}
 
     /// `getDamageAfterFallFall`.
     pub fn get_damage_after_fall_fall(&self, _distance: f32) -> f32 {
@@ -1338,7 +1810,7 @@ impl LivingEntity {
     }
 
     /// `getMaxHealth` variant.
-    pub fn max_health(&self) -> f32 {
+    pub fn max_health(&mut self) -> f32 {
         self.get_max_health()
     }
 
@@ -1364,7 +1836,7 @@ impl LivingEntity {
 
     /// `die` variant.
     pub fn die_entity(&mut self, source: DamageSource) {
-        self.die(source);
+        self.die(source.clone());
     }
 
     /// `onKilled` variant.
@@ -1568,6 +2040,7 @@ impl Clone for LivingEntity {
             remove_stinger_time: self.remove_stinger_time,
             hurt_time: self.hurt_time,
             hurt_duration: self.hurt_duration,
+            invulnerable_time: self.invulnerable_time,
             death_time: self.death_time,
             o_attack_anim: self.o_attack_anim,
             attack_anim: self.attack_anim,
@@ -1602,4 +2075,15 @@ impl Clone for LivingEntity {
             health: self.health,
         }
     }
+}
+
+/// `LivingEntity.DAMAGE_SOURCE_TIMEOUT`.
+const DAMAGE_SOURCE_TIMEOUT: u32 = 40;
+
+fn rand_f64() -> f64 {
+    rand::random::<f64>()
+}
+
+fn rand_f32() -> f32 {
+    rand::random::<f32>()
 }

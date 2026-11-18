@@ -99,6 +99,8 @@ pub struct Entity {
     pub eye_height_old: f32,
     /// `invisible` — невидим.
     pub invisible: bool,
+    /// `invulnerable` — неуязвимость (босс/команды).
+    pub invulnerable: bool,
     /// `glowing` — светящийся.
     pub glowing: bool,
     /// `noPhysics` — без физики.
@@ -153,6 +155,7 @@ impl Entity {
             eye_height: 1.62,
             eye_height_old: 1.62,
             invisible: false,
+            invulnerable: false,
             glowing: false,
             no_physics: false,
             shared_flags: 0,
@@ -639,6 +642,12 @@ impl Entity {
     /// `isInWater()`.
     pub fn is_in_water(&self) -> bool { false }
 
+    /// `isBaby()` — false для базовой entity (как в Java).
+    pub fn is_baby(&self) -> bool { false }
+
+    /// `isFlying()` — полёт (для Player переопределяется).
+    pub fn is_flying(&self) -> bool { false }
+
     /// `isInLava()`.
     pub fn is_in_lava(&self) -> bool { false }
 
@@ -664,7 +673,38 @@ impl Entity {
     pub fn heal(&mut self, _amount: f32) {}
 
     /// `isInvulnerable()`.
-    pub fn is_invulnerable(&self) -> bool { false }
+    pub fn is_invulnerable(&self) -> bool { self.invulnerable }
+
+    /// `calculateViewVector(xRot, yRot)` — единичный вектор взгляда.
+    pub fn calculate_view_vector(&self, x_rot: f32, y_rot: f32) -> Vec3 {
+        let pitch = x_rot.to_radians();
+        let yaw = (-y_rot).to_radians();
+        let cp = pitch.cos();
+        Vec3::new(
+            (-yaw.sin() * cp) as f64,
+            (-pitch.sin()) as f64,
+            (yaw.cos() * cp) as f64,
+        )
+    }
+
+    /// `isPlayer()` — переопределяется в `Player`.
+    pub fn is_player(&self) -> bool { false }
+
+    /// `playSound(sound, volume, pitch)` — через level.
+    pub fn play_sound(
+        &mut self,
+        sound: Option<&crate::core::holder::Holder<crate::sounds::sound_event::SoundEvent>>,
+        volume: f32,
+        pitch: f32,
+    ) {
+        let Some(sound) = sound else { return; };
+        let Some(id) = sound.value().map(|e| e.location.clone()).or_else(|| {
+            sound.key().map(|k| k.identifier.clone())
+        }) else { return; };
+        if let Some(level) = self.level.clone() {
+            level.play_sound(self.pos, &id, volume, pitch);
+        }
+    }
 
     /// `isInvulnerableTo(source)`.
     pub fn is_invulnerable_to(&self, _source: &crate::world::damagesource::damage_type::DamageType) -> bool { false }

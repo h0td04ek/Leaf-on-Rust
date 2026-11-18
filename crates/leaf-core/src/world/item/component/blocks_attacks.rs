@@ -57,6 +57,38 @@ impl BlocksAttacksDamageReduction {
     }
 }
 
+impl BlocksAttacksDamageReduction {
+    /// `resolve(damageSource, damageAmount, horizontalAngle)`.
+    pub fn resolve(
+        &self,
+        damage_source: &crate::world::damagesource::damage_source::DamageSource,
+        damage_amount: f32,
+        horizontal_angle: f64,
+    ) -> f32 {
+        if horizontal_angle > (std::f64::consts::PI / 180.0) * self.horizontal_blocking_angle as f64 {
+            return 0.0;
+        }
+        if let Some(type_) = &self.type_ {
+            let matched = match damage_source.get_type().value() {
+                Some(dt) => match type_ {
+                    HolderSet::Direct(holders) => holders.iter().any(|h| {
+                        matches!(h, Holder::Direct(i) if i.id == dt.id)
+                            || h.value().map(|v| v.id == dt.id).unwrap_or(false)
+                    }),
+                    HolderSet::Named(tag_loc) => {
+                        crate::tags::damage_type_tags::is_member_of_tag(tag_loc, &dt.id)
+                    }
+                },
+                None => false,
+            };
+            if !matched {
+                return 0.0;
+            }
+        }
+        crate::util::mth::clamp_f32(self.base + self.factor * damage_amount, 0.0, damage_amount)
+    }
+}
+
 /// `BlocksAttacks.ItemDamageFunction` — (threshold, base, factor).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlocksAttacksItemDamageFunction {
@@ -196,5 +228,30 @@ impl BlocksAttacks {
                 )
             },
         )
+    }
+
+    /// `resolveBlockedDamage(damageSource, damageAmount, horizontalAngle)`.
+    pub fn resolve_blocked_damage(
+        &self,
+        damage_source: &crate::world::damagesource::damage_source::DamageSource,
+        damage_amount: f32,
+        horizontal_angle: f64,
+    ) -> f32 {
+        let mut f = 0.0f32;
+        for reduction in &self.damage_reductions {
+            f += reduction.resolve(damage_source, damage_amount, horizontal_angle);
+        }
+        crate::util::mth::clamp_f32(f, 0.0, damage_amount)
+    }
+
+    /// `blockDelayTicks()`.
+    pub fn block_delay_ticks(&self) -> i32 {
+        (self.block_delay_seconds * 20.0).round() as i32
+    }
+
+    /// `onBlocked(level, entity)` — звук блокировки (вызывающий код
+    /// проигрывает его через level).
+    pub fn on_blocked(&self) -> Option<&Holder<SoundEvent>> {
+        self.block_sound.as_ref()
     }
 }

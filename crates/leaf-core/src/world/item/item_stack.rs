@@ -14,6 +14,7 @@ use crate::core::component::{DataComponentPatch, PatchedDataComponentMap};
 use crate::core::holder::Holder;
 use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::resources::identifier::Identifier;
 use crate::world::item::item;
 use std::hash::{Hash, Hasher};
 
@@ -109,10 +110,22 @@ impl ItemStack {
         crate::nbt::tag::Tag::Compound(tag)
     }
 
-    /// `getUseDuration()` — длительность использования (тики).
+    /// `getUseDuration(entity)` — `Item.getUseDuration(stack, entity)`
+    /// базовая реализация: `consumable.consumeTicks()`, иначе 72000
+    /// при `blocks_attacks`/`kinetic_weapon`, иначе 0.
     pub fn get_use_duration_ticks(&self) -> i32 {
-        // USE_DURATION компонент (default 0)
-        0
+        if let Some(c) = self.get_component::<crate::world::item::component::consumable::Consumable>(
+            &Identifier::minecraft("consumable"),
+        ) {
+            return (c.consume_seconds * 20.0).floor() as i32;
+        }
+        if self.has_component(&Identifier::minecraft("blocks_attacks"))
+            || self.has_component(&Identifier::minecraft("kinetic_weapon"))
+        {
+            72000
+        } else {
+            0
+        }
     }
 
     /// `getHoverName()` — имя для подсказки (custom_name компонент или item id).
@@ -162,6 +175,145 @@ impl ItemStack {
             c.value.type_id().hash(&mut h);
         }
         h.finish()
+    }
+
+    /// `shrink(amount)` — уменьшить count.
+    pub fn shrink(&mut self, amount: i32) {
+        self.count -= amount;
+        if self.count <= 0 {
+            *self = ItemStack::empty();
+        }
+    }
+
+    /// `split(amount)` — отщепить часть стопки.
+    pub fn split(&mut self, amount: i32) -> ItemStack {
+        let i = self.count.min(amount);
+        let mut result = self.copy();
+        result.count = i;
+        self.shrink(i);
+        result
+    }
+
+    /// `get(component)` — значение компонента по registry-id.
+    pub fn get_component<T: Clone + 'static>(
+        &self,
+        component_id: &crate::resources::identifier::Identifier,
+    ) -> Option<T> {
+        self.components
+            .get_by_id::<T>(component_id)
+            .cloned()
+    }
+
+    /// `has(component)` по registry-id.
+    pub fn has_component(&self, component_id: &crate::resources::identifier::Identifier) -> bool {
+        self.components.has_by_id(component_id)
+    }
+
+    /// `set(component, value)` — записать значение компонента.
+    /// `None` равносильно удалению (как Java `set`/`remove`).
+    pub fn set_component<T>(
+        &mut self,
+        component_id: &Identifier,
+        value: Option<T>,
+    ) where
+        T: crate::core::component::data_component_type::ComponentValueData + 'static,
+    {
+        if let Some(ty) = crate::core::component::data_component_type::data_component_type_by_identifier(component_id) {
+            self.components.set(&ty, value);
+        }
+    }
+
+    /// `getMaxDamage()` — `max_damage` компонент (default 0).
+    pub fn get_max_damage(&self) -> i32 {
+        self.get_component::<i32>(
+            &crate::resources::identifier::Identifier::minecraft("max_damage"),
+        )
+        .unwrap_or(0)
+    }
+
+    /// `getDamageValue()` — `damage` компонент (default 0).
+    pub fn get_damage_value(&self) -> i32 {
+        self.get_component::<i32>(
+            &crate::resources::identifier::Identifier::minecraft("damage"),
+        )
+        .unwrap_or(0)
+    }
+
+    /// `setDamageValue(value)`.
+    pub fn set_damage_value(&mut self, value: i32) {
+        self.set_component(&Identifier::minecraft("damage"), Some(value));
+    }
+
+    /// `isDamageableItem()` — `max_damage > 0` и нет `unbreakable`.
+    pub fn is_damageable_item(&self) -> bool {
+        !self.has_component(&Identifier::minecraft("unbreakable"))
+            && self.get_max_damage() > 0
+    }
+
+    /// `canBeHurtBy(damageSource)` — `damage_resistant` компонент.
+    pub fn can_be_hurt_by(
+        &self,
+        damage_source: &crate::world::damagesource::damage_source::DamageSource,
+    ) -> bool {
+        match self.get_component::<crate::world::item::component::damage_resistant::DamageResistant>(
+            &Identifier::minecraft("damage_resistant"),
+        ) {
+            Some(dr) => !damage_source.is_tag(&dr.types),
+            None => true,
+        }
+    }
+
+    /// `is(item)` — совпадение по registry-id предмета или тегу.
+    pub fn is(&self, item_id: &crate::resources::identifier::Identifier) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        if let Some(id) = self.item_identifier() {
+            return id == *item_id;
+        }
+        false
+    }
+
+    /// `is(TagKey)` — членство предмета в тегe (`item` реестр).
+    /// Теги предметов грузятся через `tags::item_tags::register_tag`.
+    pub fn is_in_item_tag(&self, tag: &crate::tags::tag_key::TagKey<item::Item>) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        match self.item_identifier() {
+            Some(id) => crate::tags::damage_type_tags::is_member_of_tag(
+                tag.location(),
+                &id,
+            ),
+            None => false,
+        }
+    }
+
+    /// `hurtAndBreak(amount, entity, slot)` — износ предмета.
+    ///
+    /// Java `ItemStack.hurtAndBreak(int, LivingEntity, EquipmentSlot)`:
+    /// прочность уменьшается на `amount`, при разрушении предмет
+    /// заменяется пустым и вызывается `entity.onEquippedItemBroken`.
+    pub fn hurt_and_break(
+        &mut self,
+        amount: i32,
+        entity: &mut crate::world::entity::living_entity::LivingEntity,
+        slot: Option<crate::entity::equipment_slot::EquipmentSlot>,
+    ) {
+        if !self.is_damageable_item() {
+            return;
+        }
+        if amount <= 0 {
+            return;
+        }
+        let max_damage = self.get_max_damage();
+        let new_damage = (self.get_damage_value() + amount).clamp(0, max_damage);
+        self.set_damage_value(new_damage);
+        if new_damage >= max_damage {
+            let stack = self.copy();
+            self.shrink(1);
+            entity.on_equipped_item_broken(&stack, slot);
+        }
     }
 
     /// Общий decode optional-кодека.

@@ -13,6 +13,14 @@ impl HumanoidArm {
     /// Порядок в `values()` (id = ordinal в Java).
     pub const VALUES: [HumanoidArm; 2] = [HumanoidArm::Left, HumanoidArm::Right];
 
+    /// `asEquipmentSlot()` — `MAINHAND`/`OFFHAND` слот руки.
+    pub fn as_equipment_slot(&self) -> crate::entity::equipment_slot::EquipmentSlot {
+        match self {
+            HumanoidArm::Left => crate::entity::equipment_slot::EquipmentSlot::Offhand,
+            HumanoidArm::Right => crate::entity::equipment_slot::EquipmentSlot::Mainhand,
+        }
+    }
+
     /// `getOpposite()`.
     pub fn get_opposite(&self) -> HumanoidArm {
         match self {

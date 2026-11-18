@@ -276,3 +276,15 @@ impl std::fmt::Display for EntityType {
         write!(f, "{}", self.id)
     }
 }
+
+impl PartialEq for EntityType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for EntityType {}
+impl std::fmt::Debug for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("EntityType").field(&self.id).finish()
+    }
+}

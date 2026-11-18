@@ -9,6 +9,7 @@ pub mod compound;
 pub mod io;
 pub mod json;
 pub mod mutf8;
+pub mod path;
 pub mod snbt;
 pub mod snbt_parse;
 pub mod tag;

@@ -154,7 +154,7 @@ use keys::*;
 
 /// Значение тега: конкретный тип или ссылка на другой тег (`#...`).
 #[derive(Clone, Debug)]
-enum TagValue {
+pub enum TagValue {
     Direct(Identifier),
     Nested(TagKey<DamageType>),
 }
@@ -176,6 +176,13 @@ fn tag_key_id(key: &TagKey<DamageType>) -> Identifier {
 /// `Holder.is(tag)` / `source.is(DamageTypeTags.X)` — членство типа в теге.
 pub fn is_in_tag(damage_type_id: &Identifier, tag: &TagKey<DamageType>) -> bool {
     is_in_tag_inner(damage_type_id, &tag_key_id(tag), 0)
+}
+
+/// Проверка членства произвольного registry-id в теге по его location.
+/// Используется для item/entity/других тегов, разделяющих тот же
+/// формат (id -> [members | #nested]).
+pub fn is_member_of_tag(tag_location: &Identifier, value_id: &Identifier) -> bool {
+    is_in_tag_inner(value_id, tag_location, 0)
 }
 
 fn is_in_tag_inner(damage_type_id: &Identifier, tag_location: &Identifier, depth: u32) -> bool {

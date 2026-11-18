@@ -13,3 +13,4 @@ pub mod carver;
 
 pub use generation_step::GenerationStep;
 pub use worldgen_random::{Algorithm, WorldgenRandom};
+pub mod structure;

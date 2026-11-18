@@ -249,3 +249,15 @@ impl MinMaxBoundsDoubles {
         Tag::Compound(c)
     }
 }
+
+impl Default for MinMaxBoundsDoubles {
+    fn default() -> Self {
+        Self::ANY
+    }
+}
+
+impl Default for MinMaxBoundsInts {
+    fn default() -> Self {
+        Self::ANY
+    }
+}

@@ -52,3 +52,61 @@ impl RenderType {
         RENDER_TYPES.get(id as usize).copied()
     }
 }
+
+/// `ObjectiveCriteria` — критерий цели (id + render type).
+///
+/// В Java — registry-backed класс со статическими экземплярами
+/// (DUMMY, TRIGGER, KILL_COUNT и т.д.); здесь — значение +
+/// стандартные константы.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectiveCriteria {
+    /// `id` — identifier критерия.
+    pub id: crate::resources::identifier::Identifier,
+    /// `renderType`.
+    pub render_type: RenderType,
+}
+
+impl ObjectiveCriteria {
+    /// `new(id, renderType)`.
+    pub fn new(id: impl Into<crate::resources::identifier::Identifier>, render_type: RenderType) -> Self {
+        Self { id: id.into(), render_type }
+    }
+
+    /// Стандартные критерии vanilla.
+    pub fn dummy() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("dummy"), RenderType::Integer)
+    }
+    pub fn trigger() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("trigger"), RenderType::Integer)
+    }
+    pub fn death_count() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("death_count"), RenderType::Integer)
+    }
+    pub fn player_kill_count() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("player_kill_count"), RenderType::Integer)
+    }
+    pub fn total_kill_count() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("total_kill_count"), RenderType::Integer)
+    }
+    pub fn health() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("health"), RenderType::Hearts)
+    }
+    pub fn food() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("food"), RenderType::Integer)
+    }
+    pub fn air() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("air"), RenderType::Integer)
+    }
+    pub fn armor() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("armor"), RenderType::Integer)
+    }
+    pub fn xp() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("xp"), RenderType::Integer)
+    }
+    pub fn level() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("level"), RenderType::Integer)
+    }
+    pub fn team_kill() -> Self {
+        Self::new(crate::resources::identifier::Identifier::minecraft("teamkill"), RenderType::Integer)
+    }
+}

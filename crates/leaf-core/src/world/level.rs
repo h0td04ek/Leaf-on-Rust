@@ -71,3 +71,4 @@ pub mod dry_foliage_color;
 pub mod light_layer;
 pub mod level_height_accessor;
 pub mod levelgen;
+pub mod storage;

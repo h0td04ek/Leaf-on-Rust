@@ -10,3 +10,4 @@ pub mod nbt_util;
 pub mod state_properties_predicate;
 pub mod data_component_matchers;
 pub mod block_predicate;
+pub mod entity_predicates;

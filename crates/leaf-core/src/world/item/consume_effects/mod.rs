@@ -97,3 +97,32 @@ impl ConsumeEffect {
         )
     }
 }
+
+impl ConsumeEffect {
+    /// `apply(LivingEntity)` — применение эффекта при поедании/тотеме.
+    pub fn apply(&self, entity: &mut crate::world::entity::living_entity::LivingEntity) {
+        match self {
+            ConsumeEffect::ApplyStatusEffects(e) => {
+                for inst in &e.effects {
+                    if rand::random::<f32>() < e.probability {
+                        entity.add_effect(inst.clone());
+                    }
+                }
+            }
+            ConsumeEffect::RemoveStatusEffects(e) => {
+                for holder in e.effects.iter() {
+                    entity.remove_effect(holder);
+                }
+            }
+            ConsumeEffect::ClearAllStatusEffects(_) => {
+                entity.remove_all_effects();
+            }
+            ConsumeEffect::TeleportRandomly(e) => {
+                entity.teleport_randomly(e.diameter);
+            }
+            ConsumeEffect::PlaySound(e) => {
+                entity.entity.play_sound(Some(&e.sound), 1.0, 1.0);
+            }
+        }
+    }
+}
