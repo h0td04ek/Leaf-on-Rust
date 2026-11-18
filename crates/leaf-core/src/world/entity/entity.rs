@@ -739,6 +739,60 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isInLava()`.
     pub fn is_in_lava(&self) -> bool { false }
 
+    /// `getFluidJumpThreshold` — 0.4 (как в Entity).
+    pub fn get_fluid_jump_threshold(&self) -> f32 {
+        0.4
+    }
+
+    /// `getFluidHeight(tag)` — высота жидкости внутри bb
+    /// (скан блоков в shrunk bb; source=1.0, flowing≈0.889).
+    pub fn get_fluid_height(&self, water: bool) -> f32 {
+        let Some(level) = &self.level else { return 0.0 };
+        let bb = self.get_bounding_box();
+        let (min_x, min_y, min_z) = (bb.min_x + 0.001, bb.min_y + 0.001, bb.min_z + 0.001);
+        let (max_x, max_y, max_z) = (bb.max_x - 0.001, bb.max_y - 0.001, bb.max_z - 0.001);
+        let mut height = 0.0f32;
+        for x in crate::util::mth::floor(min_x)..=crate::util::mth::floor(max_x) {
+            for y in crate::util::mth::floor(min_y)..=crate::util::mth::floor(max_y) {
+                for z in crate::util::mth::floor(min_z)..=crate::util::mth::floor(max_z) {
+                    let fs = level
+                        .get_fluid_state(BlockPos::new(x, y, z))
+                        .unwrap_or_else(crate::world::level::block::state::fluid_state::FluidState::empty);
+                    if fs.is_empty() {
+                        continue;
+                    }
+                    let matches = if water {
+                        fs.is_water()
+                            || fs.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+                    } else {
+                        fs.is_lava()
+                    };
+                    if matches {
+                        height = height.max(if fs.fluid.is_source { 1.0 } else { 0.888_888_9 });
+                    }
+                }
+            }
+        }
+        height
+    }
+
+    /// `isEyeInFluid(FluidTags.WATER/LAVA)` — жидкость в точке глаз.
+    pub fn is_eye_in_fluid(&self, water: bool) -> bool {
+        let Some(level) = &self.level else { return false };
+        let eye = self.get_eye_position();
+        let bp = BlockPos::containing(eye.x, eye.y, eye.z);
+        level
+            .get_fluid_state(bp)
+            .map(|f| {
+                if water {
+                    f.is_water() || f.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+                } else {
+                    f.is_lava()
+                }
+            })
+            .unwrap_or(false)
+    }
+
     /// `isUnderWater()`.
     pub fn is_under_water(&self) -> bool { false }
 
@@ -764,6 +818,11 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn is_invulnerable(&self) -> bool { self.invulnerable }
 
     /// `calculateViewVector(xRot, yRot)` — единичный вектор взгляда.
+    /// `getViewVector(partialTicks)`.
+    pub fn get_view_vector(&self, _partial_ticks: f32) -> Vec3 {
+        self.calculate_view_vector(self.get_x_rot(), self.get_y_rot())
+    }
+
     pub fn calculate_view_vector(&self, x_rot: f32, y_rot: f32) -> Vec3 {
         let pitch = x_rot.to_radians();
         let yaw = (-y_rot).to_radians();

@@ -93,7 +93,7 @@ pub struct Mob {
     /// `LivingEntity`-часть (в Java — superclass).
     pub living: LivingEntity,
     /// `random` — `Entity.getRandom()` (Xoroshiro по умолчанию).
-    pub random: RefCell<Box<dyn RandomSource>>,
+    pub random: std::rc::Rc<RefCell<Box<dyn RandomSource>>>,
     /// `goalSelector`.
     pub goal_selector: GoalSelector,
     /// `targetSelector`.
@@ -156,7 +156,7 @@ impl Mob {
         let navigation = Self::create_navigation_for(&living, level);
         let mut mob = Self {
             living,
-            random: RefCell::new(Box::new(SingleThreadedRandomSource::new(0))),
+            random: std::rc::Rc::new(RefCell::new(Box::new(SingleThreadedRandomSource::new(0)))),
             goal_selector: GoalSelector::new(),
             target_selector: GoalSelector::new(),
             navigation,
@@ -268,8 +268,13 @@ impl Mob {
     /// targetSelector.tick → goalSelector.tick → sensing.tick →
     /// navigation.tick → customServerAiStep → controls.tick.
     pub fn server_ai_step(&mut self) {
-        self.target_selector.tick();
-        self.goal_selector.tick();
+        // mem::take-паттерн: selectors занимают mob при tick.
+        let mut ts = std::mem::take(&mut self.target_selector);
+        ts.tick(self);
+        self.target_selector = ts;
+        let mut gs = std::mem::take(&mut self.goal_selector);
+        gs.tick(self);
+        self.goal_selector = gs;
         self.sensing.tick();
         if let Some(nav) = self.navigation.clone() {
             // navigation.tick читает mob — передаём &*self.
@@ -443,6 +448,51 @@ impl Mob {
 
     /// `checkMobSpawnRules`/`checkMobSpawnObstruction` — статические
     /// проверки спавна (используются наследниками).
+    /// `hasHome` — задана ли home-точка (`homeRadius >= 0`).
+    pub fn has_home(&self) -> bool {
+        self.home_radius >= 0
+    }
+
+    /// `isWithinHome(pos)` — BlockPos-вариант.
+    pub fn is_within_home(&self, pos: BlockPos) -> bool {
+        self.home_position.dist_manhattan(pos) <= self.home_radius
+    }
+
+    /// `isWithinHome(pos)` — Vec3-вариант (через blockPosition).
+    pub fn is_within_home_vec(&self, pos: Vec3) -> bool {
+        self.is_within_home(BlockPos::containing(pos.x, pos.y, pos.z))
+    }
+
+    /// `hasControllingPassenger` — базово false (пассажиры —
+    /// заглушки; Boat/Vehicle переопределят).
+    pub fn has_controlling_passenger(&self) -> bool {
+        self.living.entity.get_controlling_passenger().is_some()
+    }
+
+    /// `getNoActionTime`.
+    pub fn get_no_action_time(&self) -> i32 {
+        self.no_action_time
+    }
+
+    /// `getWalkTargetValue(pos)` — malus path type в точке
+    /// (PathfinderMob-метод; у нас на Mob напрямую).
+    pub fn get_walk_target_value(&self, pos: BlockPos) -> f64 {
+        let path_type = crate::world::entity::ai::util::goal_utils::walk_path_type_static(self, pos);
+        self.get_pathfinding_malus(path_type) as f64
+    }
+
+    /// `shouldPanic` — база `Mob`: паника при горении/уроне
+    /// (наследники переопределяют).
+    pub fn should_panic(&self) -> bool {
+        self.living.entity.is_on_fire() || self.living.entity.hurt_time() > 0
+    }
+
+    /// `getNearestPlayer`-обёртка для LookAtPlayerGoal.
+    pub fn find_nearest_player(&self, range: f64) -> Option<crate::world::entity::entity::Entity> {
+        let level = self.level()?;
+        level.nearest_player(self.living.entity.position(), range)
+    }
+
     /// Делегаты к `living.entity` для pathfinding/AI
     /// (Java-методы Entity, вызываемые из PathNavigation).
     pub fn get_x(&self) -> f64 { self.living.entity.get_x() }

@@ -5,6 +5,7 @@
 //! `tick()` — cleanup → locked cleanup → update → tickRunningGoals.
 
 use super::goal::{no_goal, DynGoal, Goal, GoalFlag, GoalFlagSet, WrappedGoal};
+use crate::world::entity::mob::Mob;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -39,7 +40,7 @@ impl GoalSelector {
 
     /// `removeAllGoals(filter)` — удалить цели, для которых
     /// `filter(goal)` истинно. Останавливает бегущие.
-    pub fn remove_all_goals<F: Fn(&dyn Goal) -> bool>(&mut self, filter: F) {
+    pub fn remove_all_goals<F: Fn(&dyn Goal) -> bool>(&mut self, filter: F, mob: &mut Mob) {
         let mut i = 0;
         while i < self.available_goals.len() {
             let should_remove = {
@@ -49,7 +50,7 @@ impl GoalSelector {
                 wg.is_running() && filter(&*inner)
             };
             if should_remove {
-                self.available_goals[i].lock().unwrap().stop();
+                self.available_goals[i].lock().unwrap().stop(mob);
             }
             if {
                 let arc = self.available_goals[i].clone();
@@ -70,7 +71,7 @@ impl GoalSelector {
     /// `removeGoal(goal)` — удалить конкретную цель (по Arc-идентичности
     /// внутреннего goal нельзя сравнить через dyn — сравниваем по ptr
     /// Arc<Mutex<dyn Goal>>).
-    pub fn remove_goal(&mut self, goal_ptr: usize) {
+    pub fn remove_goal(&mut self, goal_ptr: usize, mob: &mut Mob) {
         let mut i = 0;
         while i < self.available_goals.len() {
             let arc = self.available_goals[i].clone();
@@ -79,7 +80,7 @@ impl GoalSelector {
                 let mut wg = arc.lock().unwrap();
                 let same = arc_ptr == goal_ptr;
                 if same && wg.is_running() {
-                    wg.stop_pub();
+                    wg.stop(mob);
                 }
                 same
             };
@@ -93,7 +94,7 @@ impl GoalSelector {
     }
 
     /// `tick()` — полный цикл GoalSelector.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, mob: &mut Mob) {
         // 1. goalCleanup: running goals с disabled-флагами или
         //    !canContinueToUse → stop.
         for wg_arc in &self.available_goals {
@@ -101,9 +102,9 @@ impl GoalSelector {
             if wg.is_running() {
                 let flags = wg.get_flags();
                 let disabled_hit = flags.intersects(&GoalFlagSet(self.disabled_flags.clone()));
-                let cant_continue = !wg.can_continue_to_use();
+                let cant_continue = !wg.can_continue_to_use(mob);
                 if disabled_hit || cant_continue {
-                    wg.stop();
+                    wg.stop(mob);
                 }
             }
         }
@@ -115,37 +116,39 @@ impl GoalSelector {
         // 3. goalUpdate: для каждой не-running цели без disabled
         //    флагов, заменяющей все locked, и canUse → lock + start.
         for wg_arc in self.available_goals.clone() {
-            let (is_running, flags, can_use_ok, can_replace) = {
+            // ВАЖНО: guard WrappedGoal нельзя держать во время
+            // goal_can_be_replaced_for_all_flags — она локает тот же
+            // Mutex (deadlock, std::sync::Mutex не реентерабелен).
+            let (is_running, flags) = {
                 let wg = wg_arc.lock().unwrap();
                 if wg.is_running() {
-                    (true, GoalFlagSet::empty(), false, false)
+                    (true, GoalFlagSet::empty())
                 } else {
-                    let flags = wg.get_flags();
-                    let disabled_hit = flags.intersects(&GoalFlagSet(self.disabled_flags.clone()));
-                    let can_replace = self.goal_can_be_replaced_for_all_flags(&flags, &wg_arc);
-                    let can_use = if disabled_hit || !can_replace {
-                        false
-                    } else {
-                        wg.can_use()
-                    };
-                    (false, flags, can_use, can_replace)
+                    (false, wg.get_flags())
                 }
             };
-            let _ = (is_running, can_replace);
+            if is_running {
+                continue;
+            }
+            let disabled_hit = flags.intersects(&GoalFlagSet(self.disabled_flags.clone()));
+            let can_replace = self.goal_can_be_replaced_for_all_flags(&flags, &wg_arc);
+            let can_use_ok = !disabled_hit
+                && can_replace
+                && wg_arc.lock().unwrap().can_use(mob);
             if can_use_ok {
                 // Остановить и заменить locked-цели по каждому флагу.
                 for flag in flags.0.iter().copied() {
                     if let Some(old) = self.locked_flags.get(&flag) {
-                        old.lock().unwrap().stop();
+                        old.lock().unwrap().stop(mob);
                     }
                     self.locked_flags.insert(flag, wg_arc.clone());
                 }
-                wg_arc.lock().unwrap().start();
+                wg_arc.lock().unwrap().start(mob);
             }
         }
 
         // 4. tickRunningGoals(true).
-        self.tick_running_goals(true);
+        self.tick_running_goals(true, mob);
     }
 
     /// `goalCanBeReplacedForAllFlags(goal, flagMap)` — для каждого флага
@@ -156,12 +159,12 @@ impl GoalSelector {
         goal_flags: &GoalFlagSet,
         candidate: &Arc<Mutex<WrappedGoal>>,
     ) -> bool {
-        let cand = candidate.lock().unwrap();
+        let cand_priority = candidate.lock().unwrap().priority;
         for flag in goal_flags.0.iter() {
             let ok = match self.locked_flags.get(flag) {
                 Some(locked) => {
                     let l = locked.lock().unwrap();
-                    l.is_interruptable() && cand.priority < l.priority
+                    l.is_interruptable() && cand_priority < l.priority
                 }
                 None => true, // NO_GOAL имеет priority MAX_VALUE
             };
@@ -173,11 +176,11 @@ impl GoalSelector {
     }
 
     /// `tickRunningGoals(tickAllRunning)`.
-    pub fn tick_running_goals(&self, tick_all_running: bool) {
+    pub fn tick_running_goals(&self, tick_all_running: bool, mob: &mut Mob) {
         for wg_arc in &self.available_goals {
             let wg = wg_arc.lock().unwrap();
             if wg.is_running() && (tick_all_running || wg.requires_update_every_tick()) {
-                wg.tick();
+                wg.tick(mob);
             }
         }
     }
@@ -207,12 +210,7 @@ impl GoalSelector {
     }
 }
 
-impl WrappedGoal {
-    /// Внутренний `stop()` без проверки is_running для removeGoal.
-    fn stop_pub(&mut self) {
-        self.stop();
-    }
-}
+
 
 /// Хелпер: получить `GoalFlagSet` из `HashSet<GoalFlag>` для
 /// intersects-проверок (disabled_flags хранится как HashSet).
@@ -244,6 +242,16 @@ fn _unused() {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+    fn test_mob() -> crate::world::entity::mob::Mob {
+        let living = crate::world::entity::living_entity::LivingEntity::new(
+            crate::core::holder::Holder::Direct(
+                crate::world::entity::entity_type::slime_entity_type(),
+            ),
+            None,
+        );
+        crate::world::entity::mob::Mob::new(living)
+    }
+
 
     struct FlagGoal {
         flags: GoalFlagSet,
@@ -252,13 +260,13 @@ mod tests {
         stopped: AtomicBool,
     }
     impl Goal for FlagGoal {
-        fn can_use(&mut self) -> bool {
+        fn can_use(&mut self, _mob: &mut crate::world::entity::mob::Mob) -> bool {
             self.can.load(Ordering::SeqCst)
         }
-        fn start(&mut self) {
+        fn start(&mut self, _mob: &mut crate::world::entity::mob::Mob) {
             self.started.store(true, Ordering::SeqCst);
         }
-        fn stop(&mut self) {
+        fn stop(&mut self, _mob: &mut crate::world::entity::mob::Mob) {
             self.stopped.store(true, Ordering::SeqCst);
         }
         fn get_flags(&self) -> GoalFlagSet {
@@ -284,7 +292,8 @@ mod tests {
         let mut sel = GoalSelector::new();
         let g = mk(&[GoalFlag::Move], true);
         sel.add_goal(0, g.clone());
-        sel.tick();
+        let mut mob = test_mob();
+        sel.tick(&mut mob);
         assert!(sel.available_goals()[0].lock().unwrap().is_running());
     }
 
@@ -294,7 +303,8 @@ mod tests {
         let g = mk(&[GoalFlag::Move], true);
         sel.add_goal(0, g);
         sel.disable_control_flag(GoalFlag::Move);
-        sel.tick();
+        let mut mob = test_mob();
+        sel.tick(&mut mob);
         assert!(!sel.available_goals()[0].lock().unwrap().is_running());
     }
 }

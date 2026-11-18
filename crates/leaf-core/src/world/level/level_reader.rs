@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// `LevelReader` — минимальный read-интерфейс уровня.
 ///
 /// Реализуется `Level`/`ServerLevel`/`WorldGenLevel` по мере порта.
-pub trait LevelReader {
+pub trait LevelReader: Send + Sync {
     /// `getBlockState(pos)` — `None` если чанк не загружен
     /// (в Java возвращает air — здесь Option честнее).
     fn get_block_state(&self, pos: BlockPos) -> Option<BlockState>;
@@ -243,6 +243,47 @@ pub trait LevelReader {
     /// Default — true (коллизий нет; конкретный Level переопределит).
     fn no_collision(&self, _aabb: &crate::world::phys::aabb::Aabb) -> bool {
         true
+    }
+
+    /// `getHeight(Heightmap.Types, x, z)` — высота по heightmap.
+    /// Default: скан сверху вниз по `is_block_counted`.
+    fn get_height(
+        &self,
+        ty: crate::world::level::levelgen::heightmap::HeightmapType,
+        x: i32,
+        z: i32,
+    ) -> i32 {
+        let max_y = self.min_build_height() + self.height();
+        for y in (self.min_build_height()..max_y).rev() {
+            if let Some(state) = self.get_block_state(BlockPos::new(x, y, z)) {
+                if ty.is_block_counted(&state) {
+                    return y + 1;
+                }
+            }
+        }
+        self.min_build_height()
+    }
+
+    /// `getNearestPlayer(targeting, mob, x, y, z, aabb)` —
+    /// ближайший игрок (для LookAtPlayerGoal и др.).
+    /// Default: нет сущностей (ServerLevel переопределит).
+    fn nearest_player(
+        &self,
+        _pos: crate::world::phys::vec3::Vec3,
+        _range: f64,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+
+    /// `getNearestEntity(targeting, entity, x, y, z)` —
+    /// ближайшая сущность заданного типа (LookAtPlayerGoal
+    /// non-Player ветка). Default: нет сущностей.
+    fn nearest_entity(
+        &self,
+        _pos: crate::world::phys::vec3::Vec3,
+        _range: f64,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        None
     }
 
     // `CollisionGetter.getWorldBorder`-стиль проверек не нужен —

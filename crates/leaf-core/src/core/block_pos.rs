@@ -153,6 +153,11 @@ impl BlockPos {
     }
 
     /// `distManhattan(Vec3i)`.
+    /// `distManhattan(pos)` — манхэттенское расстояние до BlockPos.
+    pub fn dist_manhattan(&self, pos: BlockPos) -> i32 {
+        (self.x - pos.x).abs() + (self.y - pos.y).abs() + (self.z - pos.z).abs()
+    }
+
     pub fn dist_manhattan_vec3i(&self, pos: &Vec3i) -> i32 {
         (self.x - pos.x).abs() + (self.y - pos.y).abs() + (self.z - pos.z).abs()
     }

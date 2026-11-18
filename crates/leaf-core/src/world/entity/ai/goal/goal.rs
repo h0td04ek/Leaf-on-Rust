@@ -4,6 +4,7 @@
 //! которые цель занимает (MOVE/LOOK/JUMP/TARGET). `GoalSelector`
 //! вытесняет цели с конфликтующими флагами по приоритету.
 
+use crate::world::entity::mob::Mob;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +24,12 @@ pub enum GoalFlag {
 /// `EnumSet<Goal.Flag>`.
 #[derive(Debug, Clone, Default)]
 pub struct GoalFlagSet(pub HashSet<GoalFlag>);
+
+impl std::iter::FromIterator<GoalFlag> for GoalFlagSet {
+    fn from_iter<I: IntoIterator<Item = GoalFlag>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
 
 impl GoalFlagSet {
     /// Пустой набор.
@@ -51,26 +58,28 @@ impl GoalFlagSet {
 
 /// `Goal` — цель AI (аналог abstract class).
 pub trait Goal: Send + Sync {
-    /// `canUse()` — можно ли начать.
-    fn can_use(&mut self) -> bool;
+    /// `canUse()` — можно ли начать. `mob` — как `this.mob`
+    /// в Java (цели получают моба параметром, т.к. не могут
+    /// хранить ссылку на владеющий их GoalSelector моб).
+    fn can_use(&mut self, mob: &mut Mob) -> bool;
     /// `canContinueToUse()` — продолжать ли.
-    fn can_continue_to_use(&mut self) -> bool {
-        self.can_use()
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        self.can_use(mob)
     }
     /// `isInterruptable()`.
     fn is_interruptable(&self) -> bool {
         true
     }
     /// `start()`.
-    fn start(&mut self) {}
+    fn start(&mut self, _mob: &mut Mob) {}
     /// `stop()`.
-    fn stop(&mut self) {}
+    fn stop(&mut self, _mob: &mut Mob) {}
     /// `requiresUpdateEveryTick()`.
     fn requires_update_every_tick(&self) -> bool {
         false
     }
     /// `tick()`.
-    fn tick(&mut self) {}
+    fn tick(&mut self, _mob: &mut Mob) {}
     /// `setFlags(flags)`.
     fn set_flags(&mut self, _flags: GoalFlagSet) {}
     /// `getFlags()`.
@@ -126,29 +135,29 @@ impl WrappedGoal {
     }
 
     /// `canUse()`.
-    pub fn can_use(&self) -> bool {
-        self.goal.lock().unwrap().can_use()
+    pub fn can_use(&self, mob: &mut Mob) -> bool {
+        self.goal.lock().unwrap().can_use(mob)
     }
     /// `canContinueToUse()`.
-    pub fn can_continue_to_use(&self) -> bool {
-        self.goal.lock().unwrap().can_continue_to_use()
+    pub fn can_continue_to_use(&self, mob: &mut Mob) -> bool {
+        self.goal.lock().unwrap().can_continue_to_use(mob)
     }
     /// `isInterruptable()`.
     pub fn is_interruptable_pub(&self) -> bool {
         self.is_interruptable()
     }
     /// `start()`.
-    pub fn start(&mut self) {
+    pub fn start(&mut self, mob: &mut Mob) {
         if !self.is_running {
             self.is_running = true;
-            self.goal.lock().unwrap().start();
+            self.goal.lock().unwrap().start(mob);
         }
     }
     /// `stop()`.
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self, mob: &mut Mob) {
         if self.is_running {
             self.is_running = false;
-            self.goal.lock().unwrap().stop();
+            self.goal.lock().unwrap().stop(mob);
         }
     }
     /// `requiresUpdateEveryTick()`.
@@ -160,8 +169,8 @@ impl WrappedGoal {
         self.goal.lock().unwrap().adjusted_tick_delay(adjustment)
     }
     /// `tick()`.
-    pub fn tick(&self) {
-        self.goal.lock().unwrap().tick();
+    pub fn tick(&self, mob: &mut Mob) {
+        self.goal.lock().unwrap().tick(mob);
     }
     /// `setFlags`.
     pub fn set_flags(&self, flags: GoalFlagSet) {
@@ -203,7 +212,7 @@ impl std::hash::Hash for WrappedGoal {
 pub fn no_goal() -> WrappedGoal {
     struct NoGoalImpl;
     impl Goal for NoGoalImpl {
-        fn can_use(&mut self) -> bool {
+        fn can_use(&mut self, _mob: &mut crate::world::entity::mob::Mob) -> bool {
             false
         }
     }
@@ -224,14 +233,24 @@ pub fn dyn_goal<G: Goal + 'static>(goal: G) -> DynGoal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::world::entity::mob::Mob;
+use super::*;
+    fn test_mob() -> crate::world::entity::mob::Mob {
+        let living = crate::world::entity::living_entity::LivingEntity::new(
+            crate::core::holder::Holder::Direct(
+                crate::world::entity::entity_type::slime_entity_type(),
+            ),
+            None,
+        );
+        crate::world::entity::mob::Mob::new(living)
+    }
 
     struct TestGoal {
         can: bool,
         flags: GoalFlagSet,
     }
     impl Goal for TestGoal {
-        fn can_use(&mut self) -> bool {
+        fn can_use(&mut self, _mob: &mut crate::world::entity::mob::Mob) -> bool {
             self.can
         }
         fn get_flags(&self) -> GoalFlagSet {
@@ -257,9 +276,10 @@ mod tests {
             dyn_goal(TestGoal { can: true, flags: GoalFlagSet::empty() }),
         );
         assert!(!wg.is_running());
-        wg.start();
+        let mut mob = test_mob();
+        wg.start(&mut mob);
         assert!(wg.is_running());
-        wg.stop();
+        wg.stop(&mut mob);
         assert!(!wg.is_running());
     }
 

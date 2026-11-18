@@ -4,3 +4,4 @@ pub mod control;
 pub mod goal;
 pub mod navigation;
 pub mod sensing;
+pub mod util;
