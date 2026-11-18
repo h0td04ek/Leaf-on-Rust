@@ -59,7 +59,7 @@ crates/leaf-core/src/
 │   ├── codec/      💬 ByteBuf codecs, id_dispatch_codec, stream codec
 │   ├── protocol/   📜 handshake ✅, status ✅, ping ✅, cookie ✅,
 │   │               common ✅, login ✅, configuration ✅,
-│   │               game — пакеты 1.21.11 (~70 из ~190 портировано)
+│   │               game — пакеты 1.21.11 (~175 из ~204 зарегистрировано в game_protocols)
 │   └── chat/       💬 Компоненты чата, стили, JSON-сериализация
 ├── core/           🧱 Базовые типы: BlockPos, SectionPos, QuartPos,
 │                   GlobalPos, Vec3i, Direction, Registry, Holder,
@@ -157,7 +157,7 @@ cargo test -p leaf-core
 | **util/** | ~60 модулей: `mth`, bit_storage, easing, valueproviders, weighted random, debugchart, directories и др. |
 | **core/** | `BlockPos`, `SectionPos`, `QuartPos`, `GlobalPos`, `Vec3i`, `Direction`, `Registry`, `SharedConstants`/`WorldVersion` |
 | **network/codec** | ByteBuf-codec'и, `id_dispatch_codec`, stream codec, bundle codec'и |
-| **network/protocol** | Инфраструктура (ProtocolInfoBuilder, codec dispatch, bundler) + пакеты: **handshake, status, ping, cookie, common, login, configuration** ✅ + **game ~70 пакетов** (entity-движение/телепорты, respawn, position-sync, projectile, experience, spawn-position, tag-query, move/minecart/vehicle, take-item, entity-motion/passengers/link, bundle, border×5, ticking state/step, boss event, sound×2, damage event, mob-effect add/remove/update, attributes, objectives/teams/scores, waypoint, player-info update/remove, recipe-book settings/remove, serverbound: structure/jigsaw/test-block/beacon/command-blocks/recipe-book/pick-item/use-item-on...) |
+| **network/protocol** | **game_protocols.rs** — регистрация 174 пакетов ✅ | Инфраструктура (ProtocolInfoBuilder, codec dispatch, bundler) + пакеты: **handshake, status, ping, cookie, common, login, configuration** ✅ + **game ~175 пакетов** (entity-движение/телепорты, respawn, position-sync, projectile, experience, spawn-position, tag-query, move/minecart/vehicle, take-item, entity-motion/passengers/link, bundle, border×5, ticking state/step, boss event, sound×2, damage event, mob-effect add/remove/update, attributes, objectives/teams/scores, waypoint, player-info update/remove, recipe-book settings/remove, serverbound: structure/jigsaw/test-block/beacon/command-blocks/recipe-book/pick-item/use-item-on...) |
 | **network/chat** | Компоненты + стили + click/hover events + **JSON-сериализация** (`ComponentSerialization.CODEC`-аналог), `CommonComponents`, `ComponentUtils`, NumberFormat |
 | **core/component** | **Data components полные**: `DataComponentType`/`Map`/`Patch`/`PatchedDataComponentMap`/`TypedDataComponent`, все **104 типа** vanilla-порядка; Send+Sync кодеки (`SyncFnCodec`); payload'ы: UseEffects, UseCooldown, CustomModelData, OminousBottleAmplifier, DyedItemColor, ItemLore, TooltipDisplay, DamageResistant, MapId |
 | **world/item** | `Item` (registry + holderRegistry-кодек), **`ItemStack` полная модель** — `Holder<Item>` + `PatchedDataComponentMap`, все 4 wire-кодека (optional/untrusted-delimited/strict/list); `Rarity`, `DyeColor` |
@@ -171,7 +171,7 @@ cargo test -p leaf-core
 | Подсистема | Состояние |
 |---|---|
 | **Запуск сервера** | JVM исполняет Java (~0.8s bootstrap), сервер доходит до `PaperBootstrap`, дальше `FileNotFoundException` в natives — баг jvm25-rust |
-| **network/protocol/game** | Осталось ~120 пакетов: chunks (`LevelChunkWithLight`, `ChunksBiomes`, `LightUpdate`, heightmaps/palettes), entity data (`SetEntityData`, `AddEntity`), containers (content/slot/click/merchant/cursor/inventory), `LoginPacket`, map item, particles, explode, recipe book add/update-recipes, advancements, command tree (`CommandNode`), debug subscriptions |
+| **network/protocol/game** | Осталось ~30 пакетов (LevelChunk, RecipeDisplay, AdvancementHolder и др.): chunks (`LevelChunkWithLight`, `ChunksBiomes`, `LightUpdate`, heightmaps/palettes), entity data (`SetEntityData`, `AddEntity`), containers (content/slot/click/merchant/cursor/inventory), `LoginPacket`, map item, particles, explode, recipe book add/update-recipes, advancements, command tree (`CommandNode`), debug subscriptions |
 | **core/component payloads** | ~55 из 104 типов ждут свои payload-классы (`FoodProperties`, `Consumable`, `PotionContents`, `ArmorTrim`, `Equippable`, `Tool`, `AdventureModePredicate`, `ItemEnchantments`, books, fireworks, bees, entity-variant реестры, `EitherHolder`...) — wire-id порядок уже корректен |
 | **registries** | Нужны `HolderSet`/`EitherHolder` и bootstrap реестров (ITEM, DAMAGE_TYPE, ENTITY_TYPE, SOUND_EVENT...) для полной резолва holder'ов |
 | **world/level** | Чанки, lighting, level-логика — в портировании |
