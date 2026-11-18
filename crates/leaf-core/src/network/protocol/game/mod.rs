@@ -361,3 +361,4 @@ pub mod serverbound_debug_subscription_request_packet;
 pub mod vec_delta_codec;
 pub mod clientbound_update_advancements_packet;
 pub mod clientbound_commands_packet;
+pub mod clientbound_update_recipes_packet;

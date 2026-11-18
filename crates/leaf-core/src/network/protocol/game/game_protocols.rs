@@ -11,6 +11,7 @@ use crate::network::protocol::game::clientbound_bundle_packet::ClientboundBundle
 use crate::network::protocol::game::clientbound_test_instance_block_status::ClientboundTestInstanceBlockStatus;
 use crate::network::protocol::game::clientbound_update_advancements_packet::ClientboundUpdateAdvancementsPacket;
 use crate::network::protocol::game::clientbound_commands_packet::ClientboundCommandsPacket;
+use crate::network::protocol::game::clientbound_update_recipes_packet::ClientboundUpdateRecipesPacket;
 use crate::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 
 use crate::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
@@ -1015,6 +1016,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_commands::<ClientboundCommandsPacket>(),
             ClientboundCommandsPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_update_recipes::<ClientboundUpdateRecipesPacket>(),
+            ClientboundUpdateRecipesPacket::stream_codec(),
         );
     })
 }
