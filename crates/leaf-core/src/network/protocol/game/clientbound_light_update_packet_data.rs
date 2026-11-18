@@ -1,41 +1,34 @@
-//! `ClientboundLightUpdatePacketData` — данные обновления освещения.
+//! `ClientboundLightUpdatePacketData` — данные освещения для клиента.
 
-use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 
 /// `ClientboundLightUpdatePacketData`.
 #[derive(Clone, Debug)]
 pub struct ClientboundLightUpdatePacketData {
-    /// `skyYMask` — BitSet (Vec<i64>).
-    pub sky_y_mask: Vec<i64>,
-    /// `blockYMask`.
-    pub block_y_mask: Vec<i64>,
-    /// `emptySkyYMask`.
-    pub empty_sky_y_mask: Vec<i64>,
-    /// `emptyBlockYMask`.
-    pub empty_block_y_mask: Vec<i64>,
-    /// `skyUpdates` — `byte[2048]` массивы.
+    /// `skyYMask` — BitSet для sky light.
+    pub sky_y_mask: Vec<bool>,
+    /// `blockYMask` — BitSet для block light.
+    pub block_y_mask: Vec<bool>,
+    /// `emptySkyYMask` — BitSet для пустого sky light.
+    pub empty_sky_y_mask: Vec<bool>,
+    /// `emptyBlockYMask` — BitSet для пустого block light.
+    pub empty_block_y_mask: Vec<bool>,
+    /// `skyUpdates` — массивы данных sky light.
     pub sky_updates: Vec<Vec<u8>>,
-    /// `blockUpdates`.
+    /// `blockUpdates` — массивы данных block light.
     pub block_updates: Vec<Vec<u8>>,
-    /// `skyUpdateCount`.
-    pub sky_update_count: usize,
-    /// `blockUpdateCount`.
-    pub block_update_count: usize,
 }
 
 impl ClientboundLightUpdatePacketData {
-    /// `new` — из готовых данных.
+    /// `new(...)` — создаёт из light engine (упрощённо).
     pub fn new(
-        sky_y_mask: Vec<i64>,
-        block_y_mask: Vec<i64>,
-        empty_sky_y_mask: Vec<i64>,
-        empty_block_y_mask: Vec<i64>,
+        sky_y_mask: Vec<bool>,
+        block_y_mask: Vec<bool>,
+        empty_sky_y_mask: Vec<bool>,
+        empty_block_y_mask: Vec<bool>,
         sky_updates: Vec<Vec<u8>>,
         block_updates: Vec<Vec<u8>>,
     ) -> Self {
-        let sky_update_count = sky_updates.len();
-        let block_update_count = block_updates.len();
         Self {
             sky_y_mask,
             block_y_mask,
@@ -43,89 +36,75 @@ impl ClientboundLightUpdatePacketData {
             empty_block_y_mask,
             sky_updates,
             block_updates,
-            sky_update_count,
-            block_update_count,
         }
     }
 
-    /// `DATA_LAYER_STREAM_CODEC` — `ByteBufCodecs.byteArray(2048)`.
-    fn data_layer_stream_codec() -> impl StreamCodec<FriendlyByteBuf, Vec<u8>> + Send + Sync + 'static {
-        crate::network::codec::byte_buf_codecs::byte_array(2048)
-    }
-
-    /// `write` — запись в буфер.
-    pub fn write(&self, buffer: &mut FriendlyByteBuf) {
-        buffer.write_bit_set(&self.sky_y_mask);
-        buffer.write_bit_set(&self.block_y_mask);
-        buffer.write_bit_set(&self.empty_sky_y_mask);
-        buffer.write_bit_set(&self.empty_block_y_mask);
-        // skyUpdates
-        buffer.write_var_int(self.sky_update_count as i32);
-        for data in self.sky_updates.iter().take(self.sky_update_count) {
-            Self::data_layer_stream_codec().encode(buffer, data);
+    /// `write` — сериализация.
+    pub fn write(&self, buf: &mut FriendlyByteBuf) {
+        // BitSets — write as byte arrays
+        Self::write_bitset(buf, &self.sky_y_mask);
+        Self::write_bitset(buf, &self.block_y_mask);
+        Self::write_bitset(buf, &self.empty_sky_y_mask);
+        Self::write_bitset(buf, &self.empty_block_y_mask);
+        // Arrays — write count then each array
+        buf.write_var_int(self.sky_updates.len() as i32);
+        for arr in &self.sky_updates {
+            buf.write_var_int(arr.len() as i32);
+            buf.write_bytes(arr);
         }
-        // blockUpdates
-        buffer.write_var_int(self.block_update_count as i32);
-        for data in self.block_updates.iter().take(self.block_update_count) {
-            Self::data_layer_stream_codec().encode(buffer, data);
+        buf.write_var_int(self.block_updates.len() as i32);
+        for arr in &self.block_updates {
+            buf.write_var_int(arr.len() as i32);
+            buf.write_bytes(arr);
         }
     }
 
-    /// `read` — чтение из буфера.
-    pub fn read(buffer: &mut FriendlyByteBuf) -> Self {
-        let sky_y_mask = buffer.read_bit_set();
-        let block_y_mask = buffer.read_bit_set();
-        let empty_sky_y_mask = buffer.read_bit_set();
-        let empty_block_y_mask = buffer.read_bit_set();
-        // skyUpdates
-        let sky_count = buffer.read_var_int() as usize;
-        let mut sky_updates = Vec::with_capacity(sky_count);
-        for _ in 0..sky_count {
-            sky_updates.push(Self::data_layer_stream_codec().decode(buffer));
+    /// `read` — десериализация.
+    pub fn read(buf: &mut FriendlyByteBuf, _x: i32, _z: i32) -> Self {
+        let sky_y_mask = Self::read_bitset(buf);
+        let block_y_mask = Self::read_bitset(buf);
+        let empty_sky_y_mask = Self::read_bitset(buf);
+        let empty_block_y_mask = Self::read_bitset(buf);
+        let sky_updates = Self::read_byte_arrays(buf);
+        let block_updates = Self::read_byte_arrays(buf);
+        Self::new(sky_y_mask, block_y_mask, empty_sky_y_mask, empty_block_y_mask, sky_updates, block_updates)
+    }
+
+    fn write_bitset(buf: &mut FriendlyByteBuf, bits: &[bool]) {
+        // BitSet serialization — write as long array
+        let longs = (bits.len() + 63) / 64;
+        buf.write_var_int(longs as i32);
+        for i in 0..longs {
+            let mut val: i64 = 0;
+            for j in 0..64 {
+                let idx = i * 64 + j;
+                if idx < bits.len() && bits[idx] {
+                    val |= 1i64 << j;
+                }
+            }
+            buf.source.write_i64(val);
         }
-        // blockUpdates
-        let block_count = buffer.read_var_int() as usize;
-        let mut block_updates = Vec::with_capacity(block_count);
-        for _ in 0..block_count {
-            block_updates.push(Self::data_layer_stream_codec().decode(buffer));
+    }
+
+    fn read_bitset(buf: &mut FriendlyByteBuf) -> Vec<bool> {
+        let longs = buf.read_var_int();
+        let mut bits = Vec::new();
+        for _ in 0..longs {
+            let val = buf.source.read_i64();
+            for j in 0..64 {
+                bits.push((val >> j) & 1 == 1);
+            }
         }
-        Self::new(
-            sky_y_mask,
-            block_y_mask,
-            empty_sky_y_mask,
-            empty_block_y_mask,
-            sky_updates,
-            block_updates,
-        )
+        bits
     }
 
-    /// `getSkyYMask`.
-    pub fn get_sky_y_mask(&self) -> &[i64] {
-        &self.sky_y_mask
-    }
-
-    /// `getEmptySkyYMask`.
-    pub fn get_empty_sky_y_mask(&self) -> &[i64] {
-        &self.empty_sky_y_mask
-    }
-
-    /// `getSkyUpdates`.
-    pub fn get_sky_updates(&self) -> &[Vec<u8>] {
-        &self.sky_updates[..self.sky_update_count]
-    }
-
-    /// `getBlockYMask`.
-    pub fn get_block_y_mask(&self) -> &[i64] {
-        &self.block_y_mask
-    }
-
-    /// `getEmptyBlockYMask`.
-    pub fn get_empty_block_y_mask(&self) -> &[i64] {
-        &self.empty_block_y_mask
-    }
-
-    /// `getBlockUpdates`.
-    pub fn get_block_updates(&self) -> &[Vec<u8>] {
-        &self.block_updates[..self.block_update_count]
+    fn read_byte_arrays(buf: &mut FriendlyByteBuf) -> Vec<Vec<u8>> {
+        let count = buf.read_var_int();
+        let mut arrays = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let len = buf.read_var_int();
+            arrays.push(buf.read_bytes_vec(len as usize));
+        }
+        arrays
     }
 }

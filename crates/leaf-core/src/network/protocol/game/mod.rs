@@ -349,6 +349,8 @@ pub mod clientbound_debug_block_value_packet;
 pub mod clientbound_debug_chunk_value_packet;
 pub mod clientbound_debug_entity_value_packet;
 pub mod clientbound_debug_event_packet;
+pub mod clientbound_level_chunk_packet_data;
+pub mod clientbound_level_chunk_with_light_packet;
 pub mod clientbound_light_update_packet;
 pub mod clientbound_light_update_packet_data;
 pub mod clientbound_map_item_data_packet;

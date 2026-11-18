@@ -34,7 +34,7 @@ impl ClientboundLightUpdatePacket {
             |buf: &mut FriendlyByteBuf| {
                 let x = buf.read_var_int();
                 let z = buf.read_var_int();
-                let light_data = ClientboundLightUpdatePacketData::read(buf);
+                let light_data = ClientboundLightUpdatePacketData::read(buf, 0, 0);
                 Self::new(x, z, light_data)
             },
         )

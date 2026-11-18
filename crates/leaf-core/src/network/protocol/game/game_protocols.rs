@@ -77,6 +77,7 @@ use crate::network::protocol::game::clientbound_initialize_border_packet::Client
 use crate::network::protocol::game::clientbound_level_event_packet::ClientboundLevelEventPacket;
 use crate::network::protocol::game::clientbound_level_particles_packet::ClientboundLevelParticlesPacket;
 use crate::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
+use crate::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::network::protocol::game::clientbound_map_item_data_packet::ClientboundMapItemDataPacket;
 use crate::network::protocol::game::clientbound_merchant_offers_packet::ClientboundMerchantOffersPacket;
@@ -1035,6 +1036,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             common_types::clientbound_show_dialog::<ClientboundShowDialogPacket>(),
             ClientboundShowDialogPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_level_chunk_with_light::<ClientboundLevelChunkWithLightPacket>(),
+            ClientboundLevelChunkWithLightPacket::stream_codec(),
         );
     })
 }
