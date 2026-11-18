@@ -122,7 +122,7 @@ pub fn get_damage_protection(entity: &LivingEntity, damage_source: &DamageSource
                 continue;
             };
             for conditional in effects {
-                if !conditional.matches(&context) {
+                if !conditional.matches(&mut context) {
                     continue;
                 }
                 total += conditional
@@ -171,11 +171,11 @@ pub fn process_equipment_value_effects(
             else {
                 continue;
             };
-            let context = damage_source
+            let mut context = damage_source
                 .zip(tool)
                 .and_then(|(s, t)| damage_context(entity, s, t));
             for conditional in effects {
-                if let Some(ctx) = context.as_ref() {
+                if let Some(ctx) = context.as_mut() {
                     if !conditional.matches(ctx) {
                         continue;
                     }
@@ -190,4 +190,33 @@ pub fn process_equipment_value_effects(
         }
     }
     result
+}
+
+/// `EnchantmentHelper.getItemEnchantmentLevel(enchantment, stack)`.
+pub fn get_item_enchantment_level(
+    enchantment: &Holder<Enchantment>,
+    stack: &ItemStack,
+) -> i32 {
+    stack
+        .components
+        .get_by_id::<ItemEnchantments>(&Identifier::minecraft("enchantments"))
+        .map(|e| e.get_level(enchantment))
+        .unwrap_or(0)
+}
+
+/// `EnchantmentHelper.getEnchantmentLevel(enchantment, livingEntity)` —
+/// sum over all equipment slots.
+pub fn get_enchantment_level(
+    enchantment: &Holder<Enchantment>,
+    entity: &LivingEntity,
+) -> i32 {
+    let mut level = 0;
+    for slot in EquipmentSlot::VALUES {
+        let stack = entity.get_item_slot(slot);
+        if stack.is_empty() {
+            continue;
+        }
+        level += get_item_enchantment_level(enchantment, stack);
+    }
+    level
 }

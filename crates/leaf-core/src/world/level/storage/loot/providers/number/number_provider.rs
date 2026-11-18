@@ -4,7 +4,7 @@ use crate::world::level::storage::loot::loot_context::LootContext;
 use crate::world::level::storage::loot::providers::number::providers::*;
 
 /// `NumberProvider` — провайдер числа из loot-контекста.
-pub trait NumberProvider {
+pub trait NumberProvider: Send + Sync {
     /// `getFloat(lootContext)`.
     fn get_float(&self, loot_context: &mut LootContext) -> f32;
 

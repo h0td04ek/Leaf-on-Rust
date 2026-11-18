@@ -88,6 +88,11 @@ pub trait LevelReader {
         true
     }
 
+    /// `getGameTime()` — world time in ticks.
+    fn game_time(&self) -> i64 {
+        0
+    }
+
     /// `getScoreboard()` — scoreboard уровня (`None` пока нет
     /// реализации уровня).
     fn scoreboard(&self) -> Option<&crate::world::scores::scoreboard::Scoreboard> {

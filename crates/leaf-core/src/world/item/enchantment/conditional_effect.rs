@@ -17,7 +17,7 @@ impl<T> ConditionalEffect<T> {
     }
 
     /// `matches(lootContext)`.
-    pub fn matches(&self, context: &LootContext) -> bool {
+    pub fn matches(&self, context: &mut LootContext) -> bool {
         self.requirements
             .as_ref()
             .map(|c| c.test(context))
