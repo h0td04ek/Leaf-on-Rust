@@ -7,6 +7,8 @@ use crate::network::protocol::ping::ping_packet_types;
 use crate::network::protocol::protocol_info_builder;
 use crate::network::protocol::unbound_protocol::SimpleUnboundProtocol;
 use crate::network::protocol::game::game_packet_types::GamePacketTypes;
+use crate::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
+use crate::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 
 use crate::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
@@ -473,6 +475,12 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
 /// .
 pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
     protocol_info_builder::clientbound_protocol(ConnectionProtocol::Play, |b| {
+        b.with_bundle_packet(
+            GamePacketTypes::clientbound_bundle::<ClientboundBundlePacket>().erase(),
+            |packets| Box::new(ClientboundBundlePacket::new(packets)),
+            GamePacketTypes::clientbound_bundle_delimiter::<ClientboundBundleDelimiterPacket>().erase(),
+            || Box::new(ClientboundBundleDelimiterPacket),
+        );
         b.add_packet(
             GamePacketTypes::clientbound_add_entity::<ClientboundAddEntityPacket>(),
             ClientboundAddEntityPacket::stream_codec(),
