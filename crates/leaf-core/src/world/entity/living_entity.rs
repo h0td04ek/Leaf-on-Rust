@@ -1557,6 +1557,23 @@ impl LivingEntity {
     }
 
     /// `getVehicle()`.
+    /// `AbstractSchoolingFish.canBeFollowed()` — вожак стаи.
+    /// Default: false (рыба переопределяет).
+    pub fn mob_can_be_followed(&self) -> bool {
+        false
+    }
+
+    /// `AbstractSchoolingFish.isFollower()` — член стаи.
+    pub fn mob_is_follower(&self) -> bool {
+        false
+    }
+
+    /// `Player.hasInfiniteMaterials()` — креатив/спектатор для
+    /// RunAroundLikeCrazyGoal tame-check. Default: false.
+    pub fn player_has_infinite_materials(&self) -> bool {
+        false
+    }
+
     pub fn get_vehicle(&self) -> Option<Entity> {
         self.entity.get_vehicle().cloned()
     }

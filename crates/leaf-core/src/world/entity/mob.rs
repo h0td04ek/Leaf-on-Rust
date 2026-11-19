@@ -768,6 +768,94 @@ impl Mob {
     /// Default no-op для не-CopperGolem.
     pub fn copper_golem_set_antenna_flower(&mut self) {}
 
+    /// `Wolf.setIsInterested(offer)` — BegGoal визуальный флаг.
+    pub fn wolf_set_is_interested(&mut self, _interested: bool) {}
+
+    /// `Wolf.isFood(stack)` — еда для попрошайничества (кость или
+    /// обычная еда волка). Default: только `minecraft:bone`.
+    pub fn wolf_is_food(&self, stack: &crate::world::item::item_stack::ItemStack) -> bool {
+        stack.is(&crate::resources::identifier::Identifier::with_default_namespace("bone").unwrap())
+    }
+
+    /// `AbstractVillager.isTrading()` — LookAtTradingPlayerGoal.
+    pub fn villager_is_trading(&self) -> bool {
+        false
+    }
+
+    /// `AbstractVillager.getTradingPlayer()` — сущность торговца.
+    /// Default: нет (не-торговый моб).
+    pub fn villager_trading_player(&self) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+
+    /// `AbstractSchoolingFish.hasFollowers()` — FollowFlockLeaderGoal.
+    pub fn fish_has_followers(&self) -> bool {
+        false
+    }
+
+    /// `AbstractSchoolingFish.isFollower()`.
+    pub fn fish_is_follower(&self) -> bool {
+        false
+    }
+
+    /// `AbstractSchoolingFish.canBeFollowed()`.
+    pub fn fish_can_be_followed(&self) -> bool {
+        false
+    }
+
+    /// `AbstractSchoolingFish.addFollowers(stream)` — пометить
+    /// стаю последователями. Default no-op (школьная рыба
+    /// переопределяет через leader-ссылки).
+    pub fn fish_add_followers(&mut self, _followers: Vec<LivingEntity>) {}
+
+    /// `AbstractSchoolingFish.stopFollowing()`.
+    pub fn fish_stop_following(&mut self) {}
+
+    /// `AbstractSchoolingFish.inRangeOfLeader()`.
+    pub fn fish_in_range_of_leader(&self) -> bool {
+        true
+    }
+
+    /// `AbstractSchoolingFish.pathToLeader()`.
+    pub fn fish_path_to_leader(&mut self) {}
+
+    /// `AbstractHorse.isMobControlled()` — игрок управляет.
+    pub fn horse_is_mob_controlled(&self) -> bool {
+        false
+    }
+
+    /// `AbstractHorse.isTamed()`.
+    pub fn horse_is_tamed(&self) -> bool {
+        false
+    }
+
+    /// `AbstractHorse.getTemper()`.
+    pub fn horse_get_temper(&self) -> i32 {
+        0
+    }
+
+    /// `AbstractHorse.getMaxTemper()`.
+    pub fn horse_get_max_temper(&self) -> i32 {
+        0
+    }
+
+    /// `AbstractHorse.modifyTemper(delta)`.
+    pub fn horse_modify_temper(&mut self, _delta: i32) {}
+
+    /// `AbstractHorse.tameWithName(player)` — приручение с именем.
+    pub fn horse_tame_with_name(&mut self, _player: &Entity) {}
+
+    /// `Entity.ejectPassengers()`.
+    pub fn eject_passengers(&mut self) {}
+
+    /// `AbstractHorse.makeMad()` — TAMING_FAILED разъяривание.
+    pub fn horse_make_mad(&mut self) {}
+
+    /// `Player.hasInfiniteMaterials()` — креатив/спектатор.
+    pub fn player_has_infinite_materials(&self) -> bool {
+        false
+    }
+
     /// `Animal.getBreedOffspring`-совместимый хук: `Mob.ate()` —
     /// сущность съела блок (овца — отрастить шерсть).
     /// Наследники переопределяют.

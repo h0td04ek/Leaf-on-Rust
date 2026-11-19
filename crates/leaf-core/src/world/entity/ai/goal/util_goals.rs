@@ -1446,3 +1446,377 @@ impl Goal for OfferFlowerGoal {
         [GoalFlag::Move, GoalFlag::Look].into_iter().collect()
     }
 }
+
+/// `BegGoal` — волк выпрашивает еду/кость у ближайшего игрока
+/// (LOOK-флаг, lookTime = 40+rand(40), визуал `setIsInterested`).
+pub struct BegGoal {
+    /// `player` — цель попрошайничества (Entity-view).
+    pub player: Option<Entity>,
+    /// `lookDistance`.
+    pub look_distance: f32,
+    /// `lookTime`.
+    pub look_time: i32,
+    /// `begTargeting` — `forNonCombat().range(lookDistance)`.
+    pub beg_targeting:
+        crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions,
+}
+
+impl BegGoal {
+    /// `new(wolf, lookDistance)`.
+    pub fn new(look_distance: f32) -> Self {
+        let mut beg_targeting =
+            crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions::for_non_combat();
+        beg_targeting.range(look_distance as f64);
+        Self { player: None, look_distance, look_time: 0, beg_targeting }
+    }
+
+    /// `playerHoldingInteresting(player)` — кость или еда волка
+    /// в любой руке.
+    fn player_holding_interesting(&self, mob: &Mob, player: &LivingEntity) -> bool {
+        let bone =
+            crate::resources::identifier::Identifier::with_default_namespace("bone").unwrap();
+        let interesting = |stack: &crate::world::item::item_stack::ItemStack| {
+            stack.is(&bone) || mob.wolf_is_food(stack)
+        };
+        interesting(player.get_main_hand_item())
+            || interesting(player.get_offhand_item())
+    }
+}
+
+impl Goal for BegGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(level) = mob.level() else {
+            return false;
+        };
+        let pos = mob.position();
+        let Some(player_e) = level.nearest_player(pos, self.look_distance as f64) else {
+            return false;
+        };
+        let player = LivingEntity::from_entity(player_e.clone());
+        if !player_e.is_player()
+            || !self.beg_targeting.test(&level, Some(mob), &player)
+        {
+            return false;
+        }
+        if !self.player_holding_interesting(mob, &player) {
+            return false;
+        }
+        self.player = Some(player_e);
+        true
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(player) = self.player.clone() else {
+            return false;
+        };
+        let le = LivingEntity::from_entity(player);
+        if !le.is_alive() {
+            return false;
+        }
+        let d = mob.living.entity.distance_to_sqr(&le.entity);
+        if d > (self.look_distance as f64) * (self.look_distance as f64) {
+            return false;
+        }
+        if self.look_time <= 0 {
+            return false;
+        }
+        self.player_holding_interesting(mob, &le)
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        mob.wolf_set_is_interested(true);
+        self.look_time = self.adjusted_tick_delay(
+            40 + mob.random.borrow_mut().next_int_bound(40),
+        );
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.wolf_set_is_interested(false);
+        self.player = None;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(player) = self.player.clone() else {
+            return;
+        };
+        mob.look_control.set_look_at_deltas(
+            player.get_x(),
+            player.get_eye_y(),
+            player.get_z(),
+            10.0,
+            mob.get_max_head_x_rot(),
+        );
+        self.look_time -= 1;
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Look].into_iter().collect()
+    }
+}
+
+/// `LookAtTradingPlayerGoal` — житель смотрит на торговца
+/// (`villager.isTrading()` → `getTradingPlayer()`, dist 8).
+pub struct LookAtTradingPlayerGoal {
+    /// `lookAt` — Entity торговца.
+    pub look_at: Option<Entity>,
+    /// `lookDistance` = 8.0.
+    pub look_distance: f32,
+    /// `lookTime`.
+    pub look_time: i32,
+    /// `probability` = 0.02 (из `LookAtPlayerGoal(mob, Player, 8)`).
+    pub probability: f32,
+    /// `onlyHorizontal` = false.
+    pub only_horizontal: bool,
+}
+
+impl LookAtTradingPlayerGoal {
+    /// `new(villager)` — `super(villager, Player.class, 8.0F)`.
+    pub fn new() -> Self {
+        Self { look_at: None, look_distance: 8.0, look_time: 0, probability: 0.02, only_horizontal: false }
+    }
+}
+
+impl Default for LookAtTradingPlayerGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for LookAtTradingPlayerGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if !mob.villager_is_trading() {
+            return false;
+        }
+        self.look_at = mob.villager_trading_player();
+        self.look_at.is_some()
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(look_at) = &self.look_at else {
+            return false;
+        };
+        if look_at.is_removed() {
+            return false;
+        }
+        let d = mob.living.entity.distance_to_sqr(look_at);
+        if d > (self.look_distance as f64) * (self.look_distance as f64) {
+            return false;
+        }
+        if mob.random.borrow_mut().next_float() >= self.probability {
+            return false;
+        }
+        self.look_time = 40 + mob.random.borrow_mut().next_int_bound(40);
+        true
+    }
+
+    fn stop(&mut self, _mob: &mut Mob) {
+        self.look_at = None;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(look_at) = self.look_at.clone() else {
+            return;
+        };
+        self.look_time -= 1;
+        mob.look_control.set_look_at_deltas(
+            look_at.get_x(),
+            look_at.get_eye_y(),
+            look_at.get_z(),
+            10.0,
+            mob.get_max_head_x_rot(),
+        );
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Look].into_iter().collect()
+    }
+}
+
+/// `FollowFlockLeaderGoal` — школьная рыба следует за вожаком:
+/// `nextStartTick` 200+rand(200)%20, при активации стая
+/// регистрируется через `addFollowers`, путь к вожаку каждые
+/// 10 тиков (`pathToLeader`).
+pub struct FollowFlockLeaderGoal {
+    /// `timeToRecalcPath`.
+    pub time_to_recalc_path: i32,
+    /// `nextStartTick`.
+    pub next_start_tick: i32,
+}
+
+impl FollowFlockLeaderGoal {
+    /// `new(mob)`.
+    pub fn new() -> Self {
+        Self { time_to_recalc_path: 0, next_start_tick: 0 }
+    }
+
+    /// `nextStartTick(taskOwner)` — `reducedTickDelay(200 + rand(200)%20)`.
+    fn next_start_tick_of(&self, mob: &Mob) -> i32 {
+        Self::reduced_tick_delay_static(
+            200 + mob.random.borrow_mut().next_int_bound(200) % 20,
+        )
+    }
+}
+
+impl Default for FollowFlockLeaderGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for FollowFlockLeaderGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if mob.fish_has_followers() {
+            return false;
+        }
+        if mob.fish_is_follower() {
+            return true;
+        }
+        if self.next_start_tick > 0 {
+            self.next_start_tick -= 1;
+            return false;
+        }
+        self.next_start_tick = self.next_start_tick_of(mob);
+        let Some(level) = mob.level() else {
+            return false;
+        };
+        let box_ = mob.living.entity.get_bounding_box().inflate(8.0, 8.0, 8.0);
+        let own_uuid = mob.living.entity.uuid;
+        let mut followers: Vec<LivingEntity> = Vec::new();
+        for e in level.entities_in_box(&box_) {
+            if !e.is_living_entity() {
+                continue;
+            }
+            let le = LivingEntity::from_entity(e);
+            if le.entity.uuid == own_uuid {
+                continue;
+            }
+            let can_be_followed = le.mob_can_be_followed();
+            let is_follower = le.mob_is_follower();
+            if !can_be_followed && !is_follower {
+                continue;
+            }
+            if !is_follower {
+                followers.push(le);
+            }
+        }
+        mob.fish_add_followers(followers);
+        mob.fish_is_follower()
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        mob.fish_is_follower() && mob.fish_in_range_of_leader()
+    }
+
+    fn start(&mut self, _mob: &mut Mob) {
+        self.time_to_recalc_path = 0;
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.fish_stop_following();
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        self.time_to_recalc_path -= 1;
+        if self.time_to_recalc_path <= 0 {
+            self.time_to_recalc_path = self.adjusted_tick_delay(10);
+            mob.fish_path_to_leader();
+        }
+    }
+}
+
+/// `EntityEvent.TAMING_FAILED` (net.minecraft.world.entity.EntityEvent).
+pub const ENTITY_EVENT_TAMING_FAILED: u8 = 6;
+
+/// `RunAroundLikeCrazyGoal` — дикий (не прирученный) конь в
+/// повозке бегает кругами: moveTo случайной точке, каждые
+/// ~50 тиков ejectPassengers + makeMad + TAMING_FAILED(6).
+pub struct RunAroundLikeCrazyGoal {
+    /// `speedModifier`.
+    pub speed_modifier: f64,
+    /// `posX/Y/Z`.
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub pos_z: f64,
+}
+
+impl RunAroundLikeCrazyGoal {
+    /// `new(horse, speedModifier)` — MOVE-флаг.
+    pub fn new(speed_modifier: f64) -> Self {
+        Self { speed_modifier, pos_x: 0.0, pos_y: 0.0, pos_z: 0.0 }
+    }
+}
+
+impl Goal for RunAroundLikeCrazyGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if mob.horse_is_mob_controlled() || mob.horse_is_tamed() || !mob.living.entity.is_vehicle() {
+            return false;
+        }
+        let Some(pos) =
+            crate::world::entity::ai::util::default_random_pos::get_pos(mob, 5, 4)
+        else {
+            return false;
+        };
+        self.pos_x = pos.x;
+        self.pos_y = pos.y;
+        self.pos_z = pos.z;
+        true
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().move_to_pos(
+                mob,
+                self.pos_x,
+                self.pos_y,
+                self.pos_z,
+                self.speed_modifier,
+            );
+        }
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        !mob.horse_is_tamed()
+            && mob
+                .get_navigation()
+                .as_ref()
+                .map(|n| !n.borrow().is_done())
+                .unwrap_or(false)
+            && mob.living.entity.is_vehicle()
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        if mob.horse_is_tamed() {
+            return;
+        }
+        if mob.random.borrow_mut().next_int_bound(self.adjusted_tick_delay(50)) != 0 {
+            return;
+        }
+        let Some(first_passenger) = mob.living.entity.get_first_passenger().cloned() else {
+            return;
+        };
+        if first_passenger.is_player() {
+            let temper = mob.horse_get_temper();
+            let max_temper = mob.horse_get_max_temper();
+            // CraftBukkit EntityTameEvent / purpur alwaysTameInCreative
+            // — на уровне event-bus'а; здесь vanilla-логика:
+            // creative → мгновенное природжение, иначе rand(maxTemper)<temper.
+            let tame = LivingEntity::from_entity(first_passenger.clone()).player_has_infinite_materials()
+                || (max_temper > 0
+                    && mob.random.borrow_mut().next_int_bound(max_temper) < temper);
+            if tame {
+                mob.horse_tame_with_name(&first_passenger);
+                return;
+            }
+            mob.horse_modify_temper(5);
+        }
+        mob.eject_passengers();
+        mob.horse_make_mad();
+        if let Some(level) = mob.level() {
+            level.broadcast_entity_event(mob.living.entity.id, ENTITY_EVENT_TAMING_FAILED);
+        }
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Move].into_iter().collect()
+    }
+}
