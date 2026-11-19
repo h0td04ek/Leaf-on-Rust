@@ -220,3 +220,89 @@ pub fn get_enchantment_level(
     }
     level
 }
+
+
+// ---- Статические контексты `Enchantment` (damageContext, entityContext,
+// itemContext, locationContext, blockHitContext) ----
+
+use crate::world::phys::vec3::Vec3 as Vec3Type;
+
+/// `Enchantment.damageContext(level, enchantmentLevel, entity, damageSource)`.
+/// Параметры: THIS_ENTITY, ENCHANTMENT_LEVEL, ORIGIN,
+/// DAMAGE_SOURCE, ATTACKING_ENTITY?, DIRECT_ATTACKING_ENTITY?.
+pub fn damage_context_with_level(
+    entity: &LivingEntity,
+    enchantment_level: i32,
+    damage_source: &DamageSource,
+) -> Option<LootContext> {
+    let level = entity.entity.level.clone()?;
+    let mut params = LootParams::new()
+        .with_parameter(params::this_entity(), entity.entity.clone())
+        .with_parameter(params::enchantment_level(), enchantment_level)
+        .with_parameter(params::origin(), entity.entity.pos)
+        .with_parameter(params::damage_source(), damage_source.clone());
+    if let Some(att) = damage_source.get_causing_entity() {
+        params = params.with_optional_parameter(params::attacking_entity(), Some(att.clone()));
+    }
+    if let Some(direct) = damage_source.get_direct_entity() {
+        params = params.with_optional_parameter(params::direct_attacking_entity(), Some(direct.clone()));
+    }
+    Some(LootContext::new(params, crate::random::legacy::create_unique(), Some(level)))
+}
+
+/// `Enchantment.entityContext(level, enchantmentLevel, entity, origin)`.
+pub fn entity_context_with_level(
+    entity: &LivingEntity,
+    enchantment_level: i32,
+    origin: Vec3Type,
+) -> Option<LootContext> {
+    let level = entity.entity.level.clone()?;
+    let params = LootParams::new()
+        .with_parameter(params::this_entity(), entity.entity.clone())
+        .with_parameter(params::enchantment_level(), enchantment_level)
+        .with_parameter(params::origin(), origin);
+    Some(LootContext::new(params, crate::random::legacy::create_unique(), Some(level)))
+}
+
+/// `Enchantment.locationContext(level, enchantmentLevel, entity, active)`.
+pub fn location_context_with_level(
+    entity: &LivingEntity,
+    enchantment_level: i32,
+    pos: Vec3Type,
+) -> Option<LootContext> {
+    let level = entity.entity.level.clone()?;
+    let params = LootParams::new()
+        .with_parameter(params::this_entity(), entity.entity.clone())
+        .with_parameter(params::enchantment_level(), enchantment_level)
+        .with_parameter(params::origin(), pos)
+        .with_parameter(params::enchantment_active(), true);
+    Some(LootContext::new(params, crate::random::legacy::create_unique(), Some(level)))
+}
+
+/// `Enchantment.blockHitContext(level, enchantmentLevel, entity, origin, state)`.
+pub fn block_hit_context_with_level(
+    entity: &LivingEntity,
+    enchantment_level: i32,
+    origin: Vec3Type,
+    state: &crate::world::level::block::state::block_state::BlockState,
+) -> Option<LootContext> {
+    let level = entity.entity.level.clone()?;
+    let params = LootParams::new()
+        .with_parameter(params::this_entity(), entity.entity.clone())
+        .with_parameter(params::enchantment_level(), enchantment_level)
+        .with_parameter(params::origin(), origin)
+        .with_parameter(params::block_state(), state.clone());
+    Some(LootContext::new(params, crate::random::legacy::create_unique(), Some(level)))
+}
+
+/// `Enchantment.itemContext(level, enchantmentLevel, tool)` — без уровня
+/// (TOOL + ENCHANTMENT_LEVEL; уровень неизвестен → None).
+pub fn item_context(
+    enchantment_level: i32,
+    tool: &ItemStack,
+) -> Option<LootContext> {
+    let params = LootParams::new()
+        .with_parameter(params::tool(), tool.clone())
+        .with_parameter(params::enchantment_level(), enchantment_level);
+    Some(LootContext::new(params, crate::random::legacy::create_unique(), None))
+}

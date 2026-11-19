@@ -7,7 +7,7 @@
 
 pub use crate::random::positional::PositionalRandomFactory;
 
-pub trait RandomSource {
+pub trait RandomSource: Send + Sync {
     fn set_seed(&mut self, seed: i64);
 
     /// `fork()` — в Java потребляет nextLong() исходника.

@@ -19,6 +19,31 @@ impl BlockItemStateProperties {
         Self { properties }
     }
 
+    /// `apply(state)` — применяет свойства по имени к
+    /// `BlockState` (неизвестные имена игнорируются).
+    pub fn apply(
+        &self,
+        state: &crate::world::level::block::state::block_state::BlockState,
+    ) -> crate::world::level::block::state::block_state::BlockState {
+        use crate::world::level::block::state::property::StateValue;
+        let mut new_state = state.clone();
+        for (name, value) in &self.properties {
+            // Проверяем, что свойство существует в state.
+            if new_state.definition.get_property(name).is_none() {
+                continue;
+            }
+            let v = if let Ok(i) = value.parse::<i32>() {
+                StateValue::Int(i)
+            } else if let Ok(b) = value.parse::<bool>() {
+                StateValue::Bool(b)
+            } else {
+                StateValue::Str(value.clone())
+            };
+            new_state.values.set_erased(name, v);
+        }
+        new_state
+    }
+
     /// `STREAM_CODEC` — `ByteBufCodecs.map(Object2ObjectOpenHashMap,
     /// STRING_UTF8, STRING_UTF8)` — varint size + пары.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, BlockItemStateProperties> + Send + Sync + 'static {

@@ -211,6 +211,77 @@ pub trait LevelReader: Send + Sync {
         false
     }
 
+    /// `setBlock(pos, BlockState, flags)` — установка состояния
+    /// блока (enchantment effects: ReplaceBlock/ReplaceDisk/
+    /// SetBlockProperties). Default: через `set_block_by_id`.
+    fn set_block_state(
+        &self,
+        pos: BlockPos,
+        state: &crate::world::level::block::state::block_state::BlockState,
+    ) -> bool {
+        self.set_block_by_id(pos, &state.block.id)
+    }
+
+    /// `sendParticles(particle, x, y, z, count, dx, dy, dz, speed)`
+    /// (enchantment SpawnParticlesEffect). Default no-op.
+    fn send_particles(
+        &self,
+        _particle: &crate::core::particles::particle_options::ParticleOptions,
+        _x: f64,
+        _y: f64,
+        _z: f64,
+        _count: i32,
+        _dx: f64,
+        _dy: f64,
+        _dz: f64,
+        _speed: f64,
+    ) {
+    }
+
+    /// `explode(entity, damageSource, x, y, z, radius, fire,
+    /// interaction)` (ExplodeEffect). Default no-op.
+    #[allow(clippy::too_many_arguments)]
+    fn explode(
+        &self,
+        _entity: Option<crate::world::entity::entity::Entity>,
+        _damage_source: Option<crate::world::damagesource::damage_source::DamageSource>,
+        _pos: crate::world::phys::vec3::Vec3,
+        _radius: f32,
+        _create_fire: bool,
+        _interaction: crate::world::item::enchantment::effects::enchantment_entity_effect::ExplosionInteraction,
+        _knockback_multiplier: Option<f32>,
+    ) {
+    }
+
+    /// `gameEvent(holder, pos)` по holder'у (enchantment
+    /// triggerGameEvent). Default: резолвит value через `holder()`.
+    fn game_event_value(
+        &self,
+        _event: &crate::world::level::gameevent::game_event::GameEvent,
+        pos: BlockPos,
+    ) {
+    }
+
+    /// `runFunction(function, entity, pos)` — RunFunction effect.
+    /// Default no-op до порта command dispatcher.
+    fn run_function(
+        &self,
+        _function: Identifier,
+        _entity: &crate::world::entity::living_entity::LivingEntity,
+        _origin: crate::world::phys::vec3::Vec3,
+    ) {
+    }
+
+    /// `summonEntity(entityType holder, pos, joinTeam)` —
+    /// SummonEntityEffect. Default no-op до порта EntityType.create.
+    fn summon_entity(
+        &self,
+        _entity_type: &crate::core::holder::Holder<crate::world::entity::entity_type::EntityType>,
+        _pos: BlockPos,
+        _join_team: bool,
+    ) {
+    }
+
     /// `setBlock(pos, blockId)` — установка блока по registry-id
     /// (cobweb spawn WeavingMobEffect). Default no-op.
     fn set_block_by_id(&self, _pos: BlockPos, _block_id: &Identifier) -> bool {

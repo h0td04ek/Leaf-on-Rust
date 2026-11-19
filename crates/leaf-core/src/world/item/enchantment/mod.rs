@@ -10,3 +10,4 @@ pub mod repairable;
 
 pub use enchantment::{Enchantment, EnchantmentCost, EnchantmentDefinition};
 pub mod enchantment_helper;
+pub mod enchantment_methods;

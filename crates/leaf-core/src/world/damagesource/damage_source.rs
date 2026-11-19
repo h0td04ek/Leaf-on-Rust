@@ -292,6 +292,7 @@ impl Clone for crate::world::entity::entity::Entity {
             fall_distance: self.fall_distance,
             was_touching_water: self.was_touching_water,
             was_eye_in_water: self.was_eye_in_water,
+            random: self.random.clone(),
             no_gravity: self.no_gravity,
             is_mob: self.is_mob,
         }

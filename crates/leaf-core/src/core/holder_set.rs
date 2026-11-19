@@ -66,6 +66,23 @@ impl<T> HolderSet<T> {
         self.direct_holders().iter()
     }
 
+    /// `getRandomElement(random)` — случайный holder.
+    /// `Named` резолвится через реестр тегов — до его порта None.
+    pub fn get_random_element(
+        &self,
+        random: &mut dyn crate::random::RandomSource,
+    ) -> Option<Holder<T>>
+    where
+        T: Clone,
+    {
+        match self {
+            HolderSet::Direct(v) if !v.is_empty() => {
+                Some(v[random.next_int_bound(v.len() as i32) as usize].clone())
+            }
+            _ => None,
+        }
+    }
+
     /// `stream()`-эквивалент для Direct.
     pub fn as_direct(&self) -> Option<&[Holder<T>]> {
         match self {

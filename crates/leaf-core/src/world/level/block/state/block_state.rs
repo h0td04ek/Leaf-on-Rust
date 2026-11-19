@@ -108,6 +108,11 @@ impl BlockState {
         self.block.id == block.id
     }
 
+    /// `canBeReplaced()` — `properties.replaceable` блока.
+    pub fn can_be_replaced(&self) -> bool {
+        self.block.properties.replaceable
+    }
+
     /// `is(HolderSet<Block>)` — проверка вхождения блока в набор.
     pub fn is(&self, set: &HolderSet<Block>) -> bool {
         match set {

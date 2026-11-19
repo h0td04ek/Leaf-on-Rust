@@ -77,6 +77,8 @@ pub struct BlockProperties {
     /// `collisionShape` — форма коллизии блока
     /// (`None` → полный куб для твёрдых, пусто для air/liquid).
     pub collision_shape: Option<crate::world::phys::shapes::VoxelShape>,
+    /// `replaceable` — `BlockBehaviour.Properties.replaceable`.
+    pub replaceable: bool,
     // `isLitCampfire`-подобные блоки: `lit`-свойство читается
     // из `BlockState.values` (campfire/soul_campfire).
 }

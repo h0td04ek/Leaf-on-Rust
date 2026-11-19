@@ -153,6 +153,27 @@ impl FluidState {
     pub fn is_in_named_tag(&self, tag_location: &Identifier) -> bool {
         !self.is_empty() && crate::tags::is_fluid_in_named_tag(&self.fluid.id, tag_location)
     }
+
+    /// `is(HolderSet<Fluid>)` — вхождение жидкости в набор.
+    pub fn is(&self, set: &crate::core::holder_set::HolderSet<Fluid>) -> bool {
+        use crate::core::holder::Holder;
+        use crate::core::holder_set::HolderSet;
+        if self.is_empty() {
+            return false;
+        }
+        match set {
+            HolderSet::Direct(list) => list.iter().any(|h| match h {
+                Holder::Direct(f) => f.id == self.fluid.id,
+                Holder::Key(k) => k.id() == &self.fluid.id,
+                Holder::Reference(id) => fluid_registry()
+                    .read()
+                    .unwrap()
+                    .get(*id as usize)
+                    .is_some_and(|f| f.id == self.fluid.id),
+            }),
+            HolderSet::Named(tag) => self.is_in_named_tag(tag),
+        }
+    }
 }
 
 impl PartialEq for Fluid {

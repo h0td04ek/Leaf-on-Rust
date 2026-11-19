@@ -119,6 +119,10 @@ pub struct Entity {
     pub was_touching_water: bool,
     /// `wasEyeInWater` — глаз был в воде.
     pub was_eye_in_water: bool,
+    /// `random` — `Entity.random` (LegacyRandomSource).
+    /// `Arc<Mutex>` — `Entity` должен оставаться Send+Sync
+    /// (цели AI и сущности разделяются между потоками).
+    pub random: std::sync::Arc<std::sync::Mutex<Box<dyn crate::random::RandomSource>>>,
     /// `noGravity` — без гравитации.
     pub no_gravity: bool,
     /// Признак «сущность — Mob» (в Java — `instanceof Mob`;
@@ -171,6 +175,9 @@ impl Entity {
             fall_distance: 0.0,
             was_touching_water: false,
             was_eye_in_water: false,
+            random: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::random::legacy::create_unique(),
+            )),
             no_gravity: false,
             is_mob: false,
         }
@@ -592,6 +599,30 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `isCreative()` — creative-режим (Player; default false).
     pub fn is_creative(&self) -> bool { false }
+
+    /// `getLookAngle()` — единичный вектор взгляда.
+    pub fn get_look_angle(&self) -> Vec3 {
+        self.calculate_view_vector(self.get_x_rot(), self.get_y_rot())
+    }
+
+    /// `getKnownMovement()` — deltaMovement (известное движение).
+    pub fn get_known_movement(&self) -> Vec3 {
+        self.velocity
+    }
+
+    /// `getRandom()` — мутабельный доступ к `Entity.random`.
+    pub fn random_mut(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Box<dyn crate::random::RandomSource>> {
+        self.random.lock().expect("entity random poisoned")
+    }
+
+    /// `entityRandom()` — shared-доступ к `Entity.random`.
+    pub fn entity_random(
+        &self,
+    ) -> std::sync::Arc<std::sync::Mutex<Box<dyn crate::random::RandomSource>>> {
+        self.random.clone()
+    }
 
     /// `isCrouching()`.
     pub fn is_crouching(&self) -> bool { false }

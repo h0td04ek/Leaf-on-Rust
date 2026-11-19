@@ -6,3 +6,5 @@ pub mod placed_feature;
 pub use configured_feature::ConfiguredFeature;
 pub use feature::{Feature, FeaturePlaceContext};
 pub use placed_feature::PlacedFeature;
+
+pub mod stateproviders;

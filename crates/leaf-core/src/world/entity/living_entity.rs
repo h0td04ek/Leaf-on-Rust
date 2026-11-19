@@ -1840,6 +1840,11 @@ impl LivingEntity {
         self.set_item_slot(slot, stack);
     }
 
+    /// `getRandom()` — `Entity.random`.
+    pub fn entity_random(&self) -> std::sync::Arc<std::sync::Mutex<Box<dyn crate::random::RandomSource>>> {
+        self.entity.random.clone()
+    }
+
     /// `detectEquipmentUpdates`.
     pub fn detect_equipment_updates(&mut self) {
         self.effects_dirty = true;
