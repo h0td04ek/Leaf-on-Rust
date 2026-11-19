@@ -1,5 +1,6 @@
 //! `net.minecraft.world.entity.ai.goal` — система целей AI.
 
+pub mod cat_goals;
 pub mod combat;
 pub mod door_goals;
 pub mod goal;

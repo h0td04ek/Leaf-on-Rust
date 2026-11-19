@@ -322,8 +322,11 @@ pub struct MoveToBlockGoal {
     reached_target: bool,
     search_range: i32,
     vertical_search_range: i32,
-    vertical_search_start: i32,
+    pub(crate) vertical_search_start: i32,
     is_valid_target: Box<dyn Fn(&dyn LevelReader, BlockPos) -> bool>,
+    /// `nextStartTick(creature)`-переопределение наследников
+    /// (CatLieOnBedGoal → 40 вместо random 200+rand(200)).
+    pub(crate) next_start_tick_override: Option<i32>,
 }
 
 impl MoveToBlockGoal {
@@ -356,6 +359,7 @@ impl MoveToBlockGoal {
             vertical_search_range,
             vertical_search_start: 0,
             is_valid_target: Box::new(is_valid_target),
+            next_start_tick_override: None,
         }
     }
 
@@ -429,8 +433,10 @@ impl Goal for MoveToBlockGoal {
             self.next_start_tick -= 1;
             return false;
         }
-        self.next_start_tick = Self::reduced_tick_delay_static(200)
-            + mob.random.borrow_mut().next_int_bound(200);
+        self.next_start_tick = self.next_start_tick_override.unwrap_or_else(|| {
+            Self::reduced_tick_delay_static(200)
+                + mob.random.borrow_mut().next_int_bound(200)
+        });
         self.find_nearest_block(mob)
     }
 

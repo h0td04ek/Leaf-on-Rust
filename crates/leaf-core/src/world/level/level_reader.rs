@@ -309,6 +309,13 @@ pub trait LevelReader: Send + Sync {
     /// прогресс разрушения блока (BreakDoorGoal). Default no-op.
     fn destroy_block_progress(&self, _entity_id: i32, _pos: BlockPos, _progress: i32) {}
 
+    /// `ChestBlockEntity.getOpenCount(level, pos)` — число
+    /// открытых игроков у сундука (CatSitOnBlockGoal).
+    /// Default: 0 (закрыт).
+    fn container_open_count(&self, _pos: BlockPos) -> i32 {
+        0
+    }
+
     /// `BlockCollisions` — collision-AABB блоков в box
     /// (`CollisionGetter.getBlockCollisions`). Default-реализация
     /// итерирует `get_block_state` + `get_collision_shape`.

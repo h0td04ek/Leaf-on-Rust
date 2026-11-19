@@ -151,6 +151,8 @@ pub struct Mob {
     /// `movingTarget` — Paper-поле: текущая цель движения
     /// (`MoveToBlockGoal` выставляет).
     pub moving_target: Option<BlockPos>,
+    /// `Cat.isLying`/`setLying` — лежит ли кот.
+    pub lying: bool,
     // `wasExploding`? нет — `persistent` флаги в Entity.
     // `ambientSoundTime` уже есть; `idleAnimationState`?
     // `swinging` есть в LivingEntity.
@@ -191,6 +193,7 @@ impl Mob {
             charging_crossbow: false,
             swell_dir: -1,
             moving_target: None,
+            lying: false,
         };
         mob.living.entity.is_mob = true;
         mob
