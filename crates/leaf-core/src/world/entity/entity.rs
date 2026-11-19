@@ -769,6 +769,12 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isVehicle()`.
     pub fn is_vehicle(&self) -> bool { false }
 
+    /// `Entity.level().dimension()` — id измерения сущности.
+    /// Default: overworld-id (переопределяется через level).
+    pub fn dimension_id(&self) -> crate::resources::identifier::Identifier {
+        crate::resources::identifier::Identifier::with_default_namespace("overworld").unwrap()
+    }
+
     /// `Entity.isLeashed()` — на поводке (фенс или сущность).
     /// Default: false; leash-aware сущности переопределяют.
     pub fn is_leashed(&self) -> bool { false }

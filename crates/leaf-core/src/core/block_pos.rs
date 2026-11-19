@@ -280,6 +280,14 @@ impl BlockPos {
         }
     }
 
+    /// `distSqr(Vec3i)` — квадрат расстояния между позициями.
+    pub fn dist_sqr(&self, other: BlockPos) -> f64 {
+        let dx = (self.x - other.x) as f64;
+        let dy = (self.y - other.y) as f64;
+        let dz = (self.z - other.z) as f64;
+        dx * dx + dy * dy + dz * dz
+    }
+
     pub fn relative_n(&self, direction: Direction, distance: i32) -> Self {
         if distance == 0 {
             *self

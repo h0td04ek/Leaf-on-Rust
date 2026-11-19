@@ -1073,9 +1073,34 @@ impl Mob {
         false
     }
 
-    /// `Raider.hasActiveRaid()`.
+    /// `Mob.isPathFinding()` — `!navigation.isDone()` упрощённо
+    /// `navigation.isInProgress()`.
+    pub fn is_path_finding(&self) -> bool {
+        self.get_navigation()
+            .as_ref()
+            .map(|n| n.borrow().is_in_progress())
+            .unwrap_or(false)
+    }
+
+    /// `Raider.getCurrentRaid()` — рейд по `raider_current_raid_id`
+    /// через `level.raids()`. Default: нет.
+    pub fn get_current_raid(
+        &self,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<crate::world::entity::raid::Raid>>> {
+        let id = self.living.raider_current_raid_id();
+        if id < 0 {
+            return None;
+        }
+        self.level()
+            .and_then(|l| l.raids())
+            .and_then(|r| r.borrow().get(id))
+    }
+
+    /// `Raider.hasActiveRaid()` — currentRaid != null && isActive.
     pub fn has_active_raid(&self) -> bool {
-        false
+        self.get_current_raid()
+            .map(|r| r.borrow().is_active())
+            .unwrap_or(false)
     }
 
     /// `NeutralMob.forgetCurrentTargetAndRefreshUniversalAnger()`.

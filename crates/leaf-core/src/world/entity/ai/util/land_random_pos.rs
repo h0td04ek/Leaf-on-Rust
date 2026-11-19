@@ -118,3 +118,27 @@ pub fn generate_random_pos_toward_direction(
         Some(block_pos)
     }
 }
+
+/// `getPos(mob, radius, yRange, scorer)` — scorer вместо
+/// walkTargetValue (MoveThroughVillageGoal, StrollThroughVillageGoal).
+pub fn get_pos_scored(
+    mob: &Mob,
+    radius: i32,
+    vertical_range: i32,
+    mut scorer: impl FnMut(&Mob, BlockPos) -> f64,
+) -> Option<Vec3> {
+    let is_restricted = goal_utils::mob_restricted(mob, radius as f64);
+    let random = mob.random.clone();
+    random_pos::generate_random_pos_scored(
+        mob,
+        || {
+            let offset = {
+                let mut r = random.borrow_mut();
+                random_pos::generate_random_direction(&mut **r, radius, vertical_range)
+            };
+            let bp = generate_random_pos_toward_direction(mob, radius as f64, is_restricted, offset)?;
+            move_pos_up_out_of_solid(mob, bp)
+        },
+        |m, bp| scorer(m, bp),
+    )
+}

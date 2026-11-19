@@ -38,6 +38,11 @@ impl BlockTags {
     pub fn walls() -> Identifier {
         Identifier::minecraft("walls")
     }
+    /// `BlockTags.WOODEN_DOORS` — `minecraft:wooden_doors`.
+    pub fn wooden_doors() -> Identifier {
+        Identifier::minecraft("wooden_doors")
+    }
+
     /// `BlockTags.DOORS` — `minecraft:doors`.
     pub fn doors() -> Identifier {
         Identifier::minecraft("doors")
@@ -61,6 +66,16 @@ impl BlockTags {
 /// тегов (плоские списки id блоков).
 pub fn bootstrap() {
     use crate::resources::identifier::Identifier as Id;
+    let ids = |names: &[&str]| names.iter().map(|n| Id::minecraft(n)).collect::<Vec<_>>();
+    // wooden_doors = все деревянные двери (не iron/copper).
+    crate::tags::register_block_tag(
+        Id::minecraft("wooden_doors"),
+        ids(&[
+            "oak_door", "spruce_door", "birch_door", "jungle_door",
+            "acacia_door", "dark_oak_door", "mangrove_door", "cherry_door",
+            "bamboo_door", "bamboo_mosaic_door", "crimson_door", "warped_door",
+        ]),
+    );
     let ids = |names: &[&str]| {
         names.iter().map(|n| Id::with_default_namespace(n).unwrap()).collect::<Vec<_>>()
     };

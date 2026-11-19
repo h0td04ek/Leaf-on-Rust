@@ -27,6 +27,13 @@ pub trait MobNavigation {
         self.create_path_pos(mob, entity.block_position(), reach_range)
     }
 
+    /// `createPath(x, y, z, reachRange)` — Java-вариант с
+    /// координатами; по умолчанию `BlockPos.containing` →
+    /// `create_path_pos`.
+    fn create_path(&mut self, mob: &Mob, x: f64, y: f64, z: f64, reach_range: i32) -> Option<Path> {
+        self.create_path_pos(mob, BlockPos::containing(x, y, z), reach_range)
+    }
+
     /// `moveTo(path, speedModifier)`.
     fn move_to_path(&mut self, mob: &Mob, path: Option<Path>, speed_modifier: f64) -> bool;
 

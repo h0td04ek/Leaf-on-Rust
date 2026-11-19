@@ -18,3 +18,4 @@ pub mod item_entity;
 pub mod experience_orb;
 pub mod projectile;
 pub use living_entity::LivingEntity;
+pub mod raid;

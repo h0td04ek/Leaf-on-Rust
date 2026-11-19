@@ -134,3 +134,25 @@ pub fn generate_random_pos_toward_direction(
     }
     BlockPos::containing(x + mob.get_x(), pos.y as f64 + mob.get_y(), z + mob.get_z())
 }
+
+/// `generateRandomPos` с произвольной функцией оценки —
+/// вариант для `LandRandomPos.getPos(mob,r,y,scorer)`
+/// (village-POI скоринг в MoveThroughVillage/StrollThroughVillage).
+pub fn generate_random_pos_scored(
+    mob: &crate::world::entity::mob::Mob,
+    mut pos_supplier: impl FnMut() -> Option<BlockPos>,
+    mut scorer: impl FnMut(&crate::world::entity::mob::Mob, BlockPos) -> f64,
+) -> Option<Vec3> {
+    let mut best: Option<BlockPos> = None;
+    let mut best_value = f64::NEG_INFINITY;
+    for _ in 0..RANDOM_POS_ATTEMPTS {
+        if let Some(bp) = pos_supplier() {
+            let v = scorer(mob, bp);
+            if v > best_value {
+                best_value = v;
+                best = Some(bp);
+            }
+        }
+    }
+    best.map(|bp| bp.get_bottom_center())
+}

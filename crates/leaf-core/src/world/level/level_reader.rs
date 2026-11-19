@@ -184,6 +184,178 @@ pub trait LevelReader: Send + Sync {
         true
     }
 
+    // ---- Raid (`Raid.tick`/`Raids`) --------------------------
+
+    /// `ServerLevel.isVillage(pos)` — pos в пределах деревни.
+    fn is_village_at(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// `ServerLevel.isVillage(SectionPos)` — секция деревни.
+    fn is_village_section(
+        &self,
+        _section: crate::core::section_pos::SectionPos,
+    ) -> bool {
+        false
+    }
+
+    /// `ServerLevel.hasChunksAt(x1,z1,x2,z2)` — все чанки есть.
+    fn has_chunks_at_range(&self, _x1: i32, _z1: i32, _x2: i32, _z2: i32) -> bool {
+        true
+    }
+
+    /// `ServerLevel.isPositionEntityTicking(pos)`.
+    fn is_position_entity_ticking(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `SpawnPlacements` проверка для RAVAGER (EVENT-спавн).
+    fn ravager_spawn_position_ok(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `EntityType.create(level, EVENT)` → LivingEntity-view
+    /// свежесозданной сущности нужного типа. Default: нет спавна.
+    fn spawn_entity_of_type(
+        &self,
+        _type_id: &Identifier,
+        _pos: BlockPos,
+    ) -> Option<crate::world::entity::living_entity::LivingEntity> {
+        None
+    }
+
+    /// `raider.snapTo/finalizeSpawn/applyRaidBuffs/setOnGround/
+    /// addFreshEntityWithPassengers` — размещение рейдера в мире.
+    fn place_raider_at(
+        &self,
+        _raider: &mut crate::world::entity::living_entity::LivingEntity,
+        _pos: BlockPos,
+        _wave: i32,
+    ) {
+    }
+
+    /// `raider.startRiding(vehicle)` — посадить рейдера.
+    fn make_passenger(
+        &self,
+        _rider: &mut crate::world::entity::living_entity::LivingEntity,
+        _vehicle_uuid: crate::util::uuid::Uuid,
+    ) {
+    }
+
+    /// `Raid.playSound` — RAID_HORN звуковой пакет игрокам рейда.
+    fn play_raid_horn(&self, _pos: BlockPos, _random_seed: i64) {}
+
+    /// `Raid` victory: `addEffect(HERO_OF_THE_VILLAGE)` +
+    /// stats/criteria для heroesOfTheVillage.
+    fn grant_hero_of_the_village(
+        &self,
+        _entity: &crate::world::entity::entity::Entity,
+        _raid_omen_level: i32,
+    ) {
+    }
+
+    /// `ServerLevel.getRaids()` — доступ к `Raids` менеджеру.
+    /// Default: нет сохранённых рейдов.
+    fn raids(&self) -> Option<std::rc::Rc<std::cell::RefCell<crate::world::entity::raid::Raids>>> {
+        None
+    }
+
+    /// `level.getRaidAt(pos)` — рейд, чей center ближе всех.
+    fn raid_at(&self, _pos: BlockPos) -> Option<std::rc::Rc<std::cell::RefCell<crate::world::entity::raid::Raid>>> {
+        None
+    }
+
+    /// `GameRules.RAIDS` — рейды включены. Default: true.
+    fn raids_enabled(&self) -> bool {
+        true
+    }
+
+    /// `EnvironmentAttributes.CAN_START_RAID` — можно ли начать
+    /// рейд в pos. Default: true.
+    fn environment_attribute_can_start_raid(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `getPoiManager` village-POI центризация для
+    /// `createOrExtendRaid` (POI VILLAGE radius 64 → centroid).
+    /// Default: None → используется pos.
+    fn village_center_near(&self, _pos: BlockPos) -> Option<BlockPos> {
+        None
+    }
+
+    // ---- Village goals (`MoveThroughVillageGoal` и др.) ----
+
+    /// `ServerLevel.isCloseToVillage(pos, distance)`.
+    fn is_close_to_village(&self, _pos: BlockPos, _distance: i32) -> bool {
+        false
+    }
+
+    /// `ServerLevel.sectionsToVillage(sectionPos)` — расстояние
+    /// до ближайшей деревни в секциях (StrollThroughVillageGoal).
+    fn sections_to_village(
+        &self,
+        _section: crate::core::section_pos::SectionPos,
+    ) -> i32 {
+        i32::MAX
+    }
+
+    /// `BehaviorUtils.findSectionClosestToVillage(level, section,
+    /// range)` — ближайшая village-секция (MoveBackToVillageGoal).
+    fn find_section_closest_to_village(
+        &self,
+        _section: crate::core::section_pos::SectionPos,
+        _range: i32,
+    ) -> Option<crate::core::section_pos::SectionPos> {
+        None
+    }
+
+    /// `level.getHeightmapPos(HEIGHTMAP_TYPE, pos)` — pos с y
+    /// из heightmap (MOTION_BLOCKING_NO_LEAVES для stroll).
+    fn get_heightmap_pos(
+        &self,
+        ty: crate::world::level::levelgen::heightmap::HeightmapType,
+        pos: BlockPos,
+    ) -> BlockPos {
+        let h = self.get_height(ty, pos.x, pos.z);
+        BlockPos::new(pos.x, h, pos.z)
+    }
+
+    /// `getPoiManager().find(VILLAGE, predicate, center, range,
+    /// IS_OCCUPIED)` — ближайший village-POI, не входящий в
+    /// `exclude` (MoveThroughVillageGoal `hasNotVisited`).
+    fn village_poi_near(
+        &self,
+        _center: BlockPos,
+        _max_dist: i32,
+        _exclude: &[BlockPos],
+    ) -> Option<BlockPos> {
+        None
+    }
+
+    /// `getPoiManager().find(..., center=section.center(), range,
+    /// IS_OCCUPIED)` — POI внутри секции (radius `max_dist` от
+    /// центра), для `GolemRandomStrollInVillageGoal`.
+    fn poi_in_section(
+        &self,
+        _center: BlockPos,
+        _max_dist: i32,
+    ) -> Option<Vec<BlockPos>> {
+        None
+    }
+
+    /// `DoorBlock.isWoodenDoor(level, pos)` — `state.is(
+    /// WOODEN_DOORS)` (MoveThroughVillageGoal door-scan пути).
+    fn is_wooden_door(&self, pos: BlockPos) -> bool {
+        self.get_block_state(pos)
+            .map(|s| {
+                crate::tags::is_block_in_named_tag(
+                    &s.block.id,
+                    &crate::tags::block_tags::BlockTags::wooden_doors(),
+                )
+            })
+            .unwrap_or(false)
+    }
+
     /// `gameEvent(event, pos, context)` — гейм-эвент
     /// (sculk sensors, allays и т.п.). Default no-op до порта
     /// game-event диспетчера.

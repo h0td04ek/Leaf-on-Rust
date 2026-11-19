@@ -1594,6 +1594,54 @@ impl LivingEntity {
         false
     }
 
+    /// `Raider.canBeLeader()`.
+    pub fn raider_can_be_leader(&self) -> bool {
+        false
+    }
+
+    /// `Raider.setPatrolLeader(flag)`.
+    pub fn raider_set_patrol_leader(&mut self, _leader: bool) {}
+
+    /// `Raider.isPatrolLeader()`.
+    pub fn raider_is_patrol_leader(&self) -> bool {
+        false
+    }
+
+    /// `Raider.setCurrentRaid(raidId)` — id рейда или -1.
+    pub fn raider_set_current_raid_id(&mut self, _raid_id: i32) {}
+
+    /// `Raider.getCurrentRaid()` разрешается через level;
+    /// здесь храним id.
+    pub fn raider_current_raid_id(&self) -> i32 {
+        -1
+    }
+
+    /// `Raider.setWave(wave)` / `getWave()`.
+    pub fn raider_set_wave(&mut self, _wave: i32) {}
+    /// `Raider.getWave()`.
+    pub fn raider_wave(&self) -> i32 {
+        0
+    }
+
+    /// `Raider.setCanJoinRaid(flag)` / `canJoinRaid()`.
+    pub fn raider_set_can_join_raid(&mut self, _can: bool) {}
+    /// `Raider.canJoinRaid()`.
+    pub fn raider_can_join_raid(&self) -> bool {
+        false
+    }
+
+    /// `Raider.setTicksOutsideRaid` / `getTicksOutsideRaid`.
+    pub fn raider_set_ticks_outside_raid(&mut self, _ticks: i32) {}
+    /// `Raider.getTicksOutsideRaid()`.
+    pub fn raider_ticks_outside_raid(&self) -> i32 {
+        0
+    }
+
+    /// `Raider.getNoActionTime()` (как Mob, view-вариант).
+    pub fn get_no_action_time(&self) -> i32 {
+        0
+    }
+
     /// `Entity.hasMovedHorizontallyRecently()` — игрок в лодке
     /// недавно двигался (FollowBoatGoal). Default: false.
     pub fn player_moved_horizontally_recently(&self) -> bool {
@@ -2998,5 +3046,12 @@ impl LivingEntity {
             Some(inst) => inst.get_blend_factor(self, 0.0) as f64,
             None => 1.0,
         }
+    }
+
+    /// `Villager.wantsToSpawnGolem(gameTime)` — villager просит
+    /// голема (gossip + panic timer); default false, переопределяется
+    /// в `Villager`. Используется `GolemRandomStrollInVillageGoal`.
+    pub fn villager_wants_to_spawn_golem(&self, _game_time: i64) -> bool {
+        false
     }
 }
