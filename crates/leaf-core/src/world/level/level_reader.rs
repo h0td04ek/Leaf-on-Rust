@@ -305,6 +305,10 @@ pub trait LevelReader: Send + Sync {
     /// (ANIMATION_SPAWN_COBWEB=3018 и т.п.). Default no-op.
     fn level_event(&self, _event_id: i32, _pos: BlockPos, _data: i32) {}
 
+    /// `destroyBlockProgress(entityId, pos, progress)` —
+    /// прогресс разрушения блока (BreakDoorGoal). Default no-op.
+    fn destroy_block_progress(&self, _entity_id: i32, _pos: BlockPos, _progress: i32) {}
+
     /// `generate_loot`-эквивалент — наполнение `LootTable` предметами
     /// для `dropFromLootTable`. Default — пустой список до порта
     /// `LootTable`/`LootPool`.

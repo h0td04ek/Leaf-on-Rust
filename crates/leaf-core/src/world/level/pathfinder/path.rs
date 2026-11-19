@@ -21,6 +21,9 @@ pub struct Path {
     pub dist_to_target: f32,
     /// `reached`.
     pub reached: bool,
+    /// `isProcessed` — путь завершил асинхронную обработку
+    /// (Kaiiju async path processing); синхронно созданные = true.
+    pub processed: bool,
 }
 
 /// `Path.DebugData`.
@@ -48,6 +51,7 @@ impl Path {
             target,
             dist_to_target,
             reached,
+            processed: true,
         }
     }
 
@@ -194,6 +198,7 @@ impl Path {
             target: self.target,
             dist_to_target: self.dist_to_target,
             reached: self.reached,
+            processed: self.processed,
         }
     }
 
