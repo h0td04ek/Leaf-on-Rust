@@ -753,6 +753,19 @@ impl Mob {
         None
     }
 
+    /// `Animal.getBreedOffspring`-совместимый хук: `Mob.ate()` —
+    /// сущность съела блок (овца — отрастить шерсть).
+    /// Наследники переопределяют.
+    pub fn ate(&mut self) {}
+
+    /// `Mob.isLeashed()` — `leashData != null && leashHolder != null`.
+    pub fn is_leashed(&self) -> bool {
+        self.leash_data
+            .as_ref()
+            .map(|d| d.leash_holder_id.is_some())
+            .unwrap_or(false)
+    }
+
     /// `getAmbientStandInterval()` — интервал между попытками встать.
     pub fn horse_ambient_stand_interval(&self) -> i32 {
         0

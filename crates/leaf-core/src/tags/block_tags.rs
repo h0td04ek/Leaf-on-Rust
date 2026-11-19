@@ -51,4 +51,35 @@ impl BlockTags {
     pub fn beds() -> Identifier {
         Identifier::minecraft("beds")
     }
+    /// `BlockTags.EDIBLE_FOR_SHEEP` — растения, которые ест овца.
+    pub fn edible_for_sheep() -> Identifier {
+        Identifier::minecraft("edible_for_sheep")
+    }
+}
+
+/// `bootstrap()` — ванильное содержимое используемых блочных
+/// тегов (плоские списки id блоков).
+pub fn bootstrap() {
+    use crate::resources::identifier::Identifier as Id;
+    let ids = |names: &[&str]| {
+        names.iter().map(|n| Id::with_default_namespace(n).unwrap()).collect::<Vec<_>>()
+    };
+    let colors = [
+        "white", "orange", "magenta", "light_blue", "yellow", "lime",
+        "pink", "gray", "light_gray", "cyan", "purple", "blue",
+        "brown", "green", "red", "black",
+    ];
+    let beds: Vec<Id> = colors.iter().map(|c| Id::with_default_namespace(&format!("{c}_bed")).unwrap()).collect();
+    crate::tags::register_block_tag(Id::with_default_namespace("beds").unwrap(), beds);
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("edible_for_sheep").unwrap(),
+        ids(&["short_grass", "fern", "large_fern", "dead_bush", "seagrass", "tall_seagrass"]),
+    );
+}
+
+/// `bootstrap_once()` — идемпотентный bootstrap.
+pub fn bootstrap_once() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(bootstrap);
 }

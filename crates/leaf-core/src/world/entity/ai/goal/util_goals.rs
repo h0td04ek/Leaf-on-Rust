@@ -17,7 +17,7 @@ use crate::world::entity::ai::util::goal_utils;
 use crate::world::entity::ai::util::land_random_pos;
 use crate::world::entity::entity::Entity;
 use crate::world::entity::living_entity::LivingEntity;
-use crate::world::entity::mob::Mob;
+use crate::world::entity::mob::{Mob, MobPathing};
 use crate::world::item::item_stack::ItemStack;
 use crate::world::phys::vec3::Vec3;
 use crate::world::level::pathfinder::path::Path;
@@ -986,6 +986,243 @@ impl Goal for DolphinJumpGoal {
             let d = (delta.x * delta.x + delta.z * delta.z).sqrt();
             let d1 = (-delta.y).atan2(d) * 180.0 / std::f64::consts::PI;
             mob.living.entity.set_x_rot(d1 as f32);
+        }
+    }
+}
+
+/// `EntityEvent.EAT_GRASS` = 10.
+const ENTITY_EVENT_EAT_GRASS: u8 = 10;
+/// `LevelEvent.PARTICLES_DESTROY_BLOCK` = 2001.
+const LEVEL_EVENT_PARTICLES_DESTROY_BLOCK: i32 = 2001;
+
+/// `EatBlockGoal` — поедание травы/растений (овцы и др.).
+pub struct EatBlockGoal {
+    eat_animation_tick: i32,
+}
+
+impl EatBlockGoal {
+    /// `IS_EDIBLE` — `BlockTags.EDIBLE_FOR_SHEEP`.
+    fn is_edible(state: &crate::world::level::block::state::block_state::BlockState) -> bool {
+        state.is_block_tag(&crate::tags::block_tags::BlockTags::edible_for_sheep())
+    }
+}
+
+impl Goal for EatBlockGoal {
+    fn get_flags(&self) -> GoalFlagSet {
+        GoalFlagSet::from_iter([GoalFlag::Move, GoalFlag::Look, GoalFlag::Jump])
+    }
+
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let baby = mob.living.entity.is_baby();
+        let delay = if baby { 50 } else { 1000 };
+        if mob.random.borrow_mut().next_int_bound(self.adjusted_tick_delay(delay)) != 0 {
+            return false;
+        }
+        let Some(level) = mob.living.entity.level.clone() else {
+            return false;
+        };
+        let pos = mob.living.block_position();
+        let edible = level
+            .get_block_state(pos)
+            .map(|s| Self::is_edible(&s))
+            .unwrap_or(false);
+        edible
+            || level
+                .get_block_state(pos.below())
+                .map(|s| s.block.id.path == "grass_block")
+                .unwrap_or(false)
+    }
+
+    fn can_continue_to_use(&mut self, _mob: &mut Mob) -> bool {
+        self.eat_animation_tick > 0
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.eat_animation_tick = self.adjusted_tick_delay(40);
+        let id = mob.living.entity.id;
+        if let Some(level) = mob.living.entity.level.clone() {
+            level.broadcast_entity_event(id, ENTITY_EVENT_EAT_GRASS);
+        }
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+    }
+
+    fn stop(&mut self, _mob: &mut Mob) {
+        self.eat_animation_tick = 0;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        self.eat_animation_tick = (self.eat_animation_tick - 1).max(0);
+        if self.eat_animation_tick != self.adjusted_tick_delay(4) {
+            return;
+        }
+        let Some(level) = mob.living.entity.level.clone() else {
+            return;
+        };
+        let pos = mob.living.block_position();
+        let edible = level
+            .get_block_state(pos)
+            .map(|s| Self::is_edible(&s))
+            .unwrap_or(false);
+        if edible {
+            if level.mob_griefing() {
+                level.destroy_block(pos, false);
+            }
+            mob.ate();
+        } else {
+            let below = pos.below();
+            let is_grass = level
+                .get_block_state(below)
+                .map(|s| s.block.id.path == "grass_block")
+                .unwrap_or(false);
+            if is_grass {
+                if level.mob_griefing() {
+                    // `PARTICLES_DESTROY_BLOCK` + `setBlock(DIRT)`.
+                    let state_id = level
+                        .get_block_state(below)
+                        .map(|s| {
+                            crate::world::level::block::state::block_state_registry::block_state_id_map()
+                                .get_id(&s)
+                        })
+                        .unwrap_or(0);
+                    level.level_event(LEVEL_EVENT_PARTICLES_DESTROY_BLOCK, below, state_id);
+                    if let Some(dirt_block) = crate::world::level::block::block_by_identifier(
+                        &crate::resources::identifier::Identifier::minecraft("dirt"),
+                    ) {
+                        let dirt = crate::world::level::block::state::block_state::BlockState::new(
+                            dirt_block,
+                            crate::world::level::block::state::state_holder::StateHolder::default(),
+                        );
+                        level.set_block_state(below, &dirt);
+                    }
+                }
+                mob.ate();
+            }
+        }
+    }
+}
+
+/// `FollowMobGoal` — следование за другим мобом (кроме своего класса).
+pub struct FollowMobGoal {
+    speed_modifier: f64,
+    following: Option<LivingEntity>,
+    time_to_recalc_path: i32,
+    stop_distance: f32,
+    old_water_cost: f32,
+    area_size: f32,
+}
+
+impl FollowMobGoal {
+    /// `new(mob, speedModifier, stopDistance, areaSize)`.
+    pub fn new(_mob: &Mob, speed_modifier: f64, stop_distance: f32, area_size: f32) -> Self {
+        Self {
+            speed_modifier,
+            following: None,
+            time_to_recalc_path: 0,
+            stop_distance,
+            old_water_cost: 0.0,
+            area_size,
+        }
+    }
+}
+
+impl Goal for FollowMobGoal {
+    fn get_flags(&self) -> GoalFlagSet {
+        GoalFlagSet::from_iter([GoalFlag::Move, GoalFlag::Look])
+    }
+
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(level) = mob.living.entity.level.clone() else {
+            return false;
+        };
+        let bb = mob
+            .living
+            .entity
+            .get_bounding_box()
+            .inflate_all(self.area_size as f64);
+        // `getEntitiesOfClass(Mob, bb, mob.getClass() != other.getClass())`.
+        let mut candidates: Vec<crate::world::entity::entity::Entity> = Vec::new();
+        let own_type = mob.living.entity.entity_type.clone();
+        level.for_each_mob_in_box(&bb, &mut |m| {
+            if m.living.entity.entity_type != own_type {
+                candidates.push(m.living.entity.clone());
+            }
+        });
+        // Первый видимый кандидат.
+        for e in candidates {
+            if !e.is_invisible() {
+                self.following = Some(LivingEntity::from_entity(e));
+                return true;
+            }
+        }
+        false
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(f) = &self.following else {
+            return false;
+        };
+        !mob.navigation_is_done()
+            && mob.living.entity.distance_to_sqr(&f.entity)
+                > (self.stop_distance * self.stop_distance) as f64
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.time_to_recalc_path = 0;
+        self.old_water_cost = mob.get_pathfinding_malus(crate::world::level::pathfinder::path_type::PathType::Water);
+        mob.set_pathfinding_malus(crate::world::level::pathfinder::path_type::PathType::Water, 0.0);
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        self.following = None;
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+        mob.set_pathfinding_malus(crate::world::level::pathfinder::path_type::PathType::Water, self.old_water_cost);
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(f) = self.following.clone() else {
+            return;
+        };
+        if mob.is_leashed() {
+            return;
+        }
+        mob.look_control.set_look_at_entity_deltas(
+            &f.entity,
+            10.0,
+            mob.get_max_head_x_rot(),
+        );
+        self.time_to_recalc_path -= 1;
+        if self.time_to_recalc_path > 0 {
+            return;
+        }
+        self.time_to_recalc_path = self.adjusted_tick_delay(10);
+        let d = mob.living.entity.pos.x - f.entity.pos.x;
+        let d1 = mob.living.entity.pos.y - f.entity.pos.y;
+        let d2 = mob.living.entity.pos.z - f.entity.pos.z;
+        let d3 = d * d + d1 * d1 + d2 * d2;
+        if d3 > (self.stop_distance * self.stop_distance) as f64 {
+            if let Some(nav) = mob.get_navigation() {
+                nav.borrow_mut().move_to_entity(mob, &f, self.speed_modifier);
+            }
+        } else if let Some(nav) = mob.get_navigation() {
+            // `navigation.stop()` + отход от цели, если lookControl
+            // следящей сущности указывает на моба (view не имеет
+            // lookControl — упрощение: отход при d3 <= stopDistance).
+            nav.borrow_mut().stop(mob);
+            if d3 <= self.stop_distance as f64 {
+                let d4 = f.entity.pos.x - mob.living.entity.pos.x;
+                let d5 = f.entity.pos.z - mob.living.entity.pos.z;
+                nav.borrow_mut().move_to_pos(
+                    mob,
+                    mob.living.entity.pos.x - d4,
+                    mob.living.entity.pos.y,
+                    mob.living.entity.pos.z - d5,
+                    self.speed_modifier,
+                );
+            }
         }
     }
 }

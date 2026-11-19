@@ -316,6 +316,15 @@ pub trait LevelReader: Send + Sync {
         0
     }
 
+    /// `destroyBlock(pos, drop)` — разрушение блока (EatBlockGoal
+    /// и др.). Default: установить air.
+    fn destroy_block(&self, pos: BlockPos, _drop: bool) -> bool {
+        self.set_block_state(
+            pos,
+            &crate::world::level::block::state::block_state::BlockState::air(),
+        )
+    }
+
     /// `BlockCollisions` — collision-AABB блоков в box
     /// (`CollisionGetter.getBlockCollisions`). Default-реализация
     /// итерирует `get_block_state` + `get_collision_shape`.
