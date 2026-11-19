@@ -75,6 +75,9 @@ pub struct LivingEntity {
     pub last_hurt_by_player_memory_time: i32,
     /// `dead`.
     pub dead: bool,
+    /// `hurtMarked` — сущность получила урон в этом тике
+    /// (TradeWithPlayerGoal.canUse проверяет).
+    pub hurt_marked: bool,
     /// `noActionTime`.
     pub no_action_time: i32,
     /// `lastHurt`.
@@ -173,6 +176,7 @@ impl LivingEntity {
             y_head_rot_o: 0.0,
             last_hurt_by_player_memory_time: 0,
             dead: false,
+            hurt_marked: false,
             no_action_time: 0,
             last_hurt: 0.0,
             jumping: false,
@@ -1574,6 +1578,18 @@ impl LivingEntity {
         false
     }
 
+    /// `Entity.hasMovedHorizontallyRecently()` — игрок в лодке
+    /// недавно двигался (FollowBoatGoal). Default: false.
+    pub fn player_moved_horizontally_recently(&self) -> bool {
+        false
+    }
+
+    /// `Player.getAbilities().flying` — LandOnOwnersShoulderGoal.
+    /// Default: false.
+    pub fn entity_abilities_flying(&self) -> bool {
+        false
+    }
+
     pub fn get_vehicle(&self) -> Option<Entity> {
         self.entity.get_vehicle().cloned()
     }
@@ -2880,6 +2896,7 @@ impl Clone for LivingEntity {
             y_head_rot_o: self.y_head_rot_o,
             last_hurt_by_player_memory_time: self.last_hurt_by_player_memory_time,
             dead: self.dead,
+            hurt_marked: self.hurt_marked,
             no_action_time: self.no_action_time,
             last_hurt: self.last_hurt,
             jumping: self.jumping,

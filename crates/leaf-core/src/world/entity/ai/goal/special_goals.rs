@@ -504,3 +504,242 @@ impl Goal for MoveToBlockGoal {
     }
 }
 
+
+/// `RemoveBlockGoal` — моб (зомби-вариант) целенаправленно
+/// разрушает целевой блок: extends `MoveToBlockGoal`
+/// (searchRange=24, verticalSearchRange=ctor-arg), mobGriefing
+/// проверка, egg-bounce анимация при подходе, через 60 тиков
+/// `removeBlock` + 20 POOF-частиц.
+pub struct RemoveBlockGoal {
+    /// Встроенный `MoveToBlockGoal`.
+    goal: MoveToBlockGoal,
+    /// `blockToRemove` — id блока-цели.
+    pub block_to_remove: crate::resources::identifier::Identifier,
+    /// `ticksSinceReachedGoal`.
+    pub ticks_since_reached_goal: i32,
+}
+
+impl RemoveBlockGoal {
+    /// `new(blockToRemove, removerMob, speedModifier, searchRange)` —
+    /// `super(mob, speed, 24, searchRange)`.
+    pub fn new(
+        block_to_remove: crate::resources::identifier::Identifier,
+        mob: &Mob,
+        speed_modifier: f64,
+        search_range: i32,
+    ) -> Self {
+        let id = block_to_remove.clone();
+        let goal = MoveToBlockGoal::with_vertical(
+            mob,
+            speed_modifier,
+            24,
+            search_range,
+            move |level: &dyn LevelReader, pos: BlockPos| {
+                Self::is_valid_target_static(level, pos, &id)
+            },
+        );
+        Self { goal, block_to_remove, ticks_since_reached_goal: 0 }
+    }
+
+    /// `isValidTarget(level, pos)` — блок совпадает,
+    /// `above()` и `above(2)` — воздух.
+    fn is_valid_target_static(
+        level: &dyn LevelReader,
+        pos: BlockPos,
+        block_to_remove: &crate::resources::identifier::Identifier,
+    ) -> bool {
+        let Some(state) = level.get_block_state(pos) else {
+            return false;
+        };
+        if state.block.id != *block_to_remove {
+            return false;
+        }
+        level
+            .get_block_state(pos.above())
+            .map(|s| s.is_air())
+            .unwrap_or(false)
+            && level
+                .get_block_state(pos.above().above())
+                .map(|s| s.is_air())
+                .unwrap_or(false)
+    }
+
+    /// `getPosWithBlock(pos, level)` — сам pos или сосед
+    /// (below/west/east/north/south/below²) с целевым блоком.
+    fn get_pos_with_block(
+        &self,
+        pos: BlockPos,
+        level: &dyn LevelReader,
+    ) -> Option<BlockPos> {
+        let is_target = |p: BlockPos| {
+            level
+                .get_block_state(p)
+                .map(|s| s.block.id == self.block_to_remove)
+                .unwrap_or(false)
+        };
+        if is_target(pos) {
+            return Some(pos);
+        }
+        let below = pos.below();
+        for candidate in [
+            below,
+            pos.west(),
+            pos.east(),
+            pos.north(),
+            pos.south(),
+            below.below(),
+        ] {
+            if is_target(candidate) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    /// `playDestroyProgressSound` / `playBreakSound` —
+    /// в Java пустые override'ы; звуки добавляются наследниками.
+    pub fn play_destroy_progress_sound(&self, _level: &dyn LevelReader, _pos: BlockPos) {}
+
+    /// `playBreakSound`.
+    pub fn play_break_sound(&self, _level: &dyn LevelReader, _pos: BlockPos) {}
+}
+
+impl Goal for RemoveBlockGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let mob_griefing = mob.level().map(|l| l.mob_griefing()).unwrap_or(true);
+        if !mob_griefing {
+            return false;
+        }
+        if self.goal.next_start_tick > 0 {
+            self.goal.next_start_tick -= 1;
+            return false;
+        }
+        if self.goal.find_nearest_block(mob) {
+            self.goal.next_start_tick = Self::reduced_tick_delay_static(20);
+            return true;
+        }
+        self.goal.next_start_tick = Self::reduced_tick_delay_static(200)
+            + mob.random.borrow_mut().next_int_bound(200);
+        false
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        Goal::can_continue_to_use(&mut self.goal, mob)
+    }
+
+    fn is_interruptable(&self) -> bool {
+        self.goal.is_interruptable()
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        Goal::start(&mut self.goal, mob);
+        self.ticks_since_reached_goal = 0;
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        Goal::stop(&mut self.goal, mob);
+        mob.living.entity.fall_distance = 1.0;
+    }
+
+    fn requires_update_every_tick(&self) -> bool {
+        true
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        Goal::tick(&mut self.goal, mob);
+        let Some(level) = mob.level() else {
+            return;
+        };
+        let block_pos = mob.living.entity.block_position();
+        let level_ref: &dyn LevelReader = level.as_ref();
+        if !self.goal.is_reached_target() {
+            return;
+        }
+        let Some(pos_with_block) = self.get_pos_with_block(block_pos, level_ref) else {
+            return;
+        };
+        if self.ticks_since_reached_goal > 0 {
+            // Egg-bounce: подброс вверх каждые 2 тика, вниз на чётных.
+            let delta = mob.living.entity.get_delta_movement();
+            mob.living.entity.set_delta_movement(delta.x, 0.3, delta.z);
+            // ITEM(EGG)-частицы — только серверная сторона.
+            let egg = crate::resources::identifier::Identifier::with_default_namespace("egg")
+                .ok()
+                .and_then(|id| crate::world::item::item::item_by_identifier(&id))
+                .map(|item| {
+                    crate::world::item::item_stack::ItemStack::new(
+                        crate::core::holder::Holder::Direct(item.as_ref().clone()),
+                        1,
+                    )
+                });
+            if let Some(egg_stack) = egg {
+                if let Some(particle_type) =
+                    crate::core::particles::particle_types::particle_type_by_identifier(
+                        &crate::resources::identifier::Identifier::with_default_namespace("item")
+                            .unwrap(),
+                    )
+                {
+                    let options = crate::core::particles::particle_options::ParticleOptions {
+                        type_: particle_type,
+                        data: crate::core::particles::particle_options::ParticleOptionsData::Item(
+                            egg_stack,
+                        ),
+                    };
+                    let mut r = mob.random.borrow_mut();
+                    level.send_particles(
+                        &options,
+                        pos_with_block.x as f64 + 0.5,
+                        pos_with_block.y as f64 + 0.7,
+                        pos_with_block.z as f64 + 0.5,
+                        3,
+                        (r.next_float() - 0.5) as f64 * 0.08,
+                        (r.next_float() - 0.5) as f64 * 0.08,
+                        (r.next_float() - 0.5) as f64 * 0.08,
+                        0.15,
+                    );
+                }
+            }
+        }
+        if self.ticks_since_reached_goal % 2 == 0 {
+            let delta = mob.living.entity.get_delta_movement();
+            mob.living.entity.set_delta_movement(delta.x, -0.3, delta.z);
+            if self.ticks_since_reached_goal % 6 == 0 {
+                self.play_destroy_progress_sound(level_ref, self.goal.block_pos);
+            }
+        }
+        if self.ticks_since_reached_goal > 60 {
+            // CraftBukkit EntityInteractEvent — на уровне event-bus'а.
+            level.destroy_block(pos_with_block, false);
+            // 20 POOF-частиц.
+            if let Some(particle_type) =
+                crate::core::particles::particle_types::particle_type_by_identifier(
+                    &crate::resources::identifier::Identifier::with_default_namespace("poof")
+                        .unwrap(),
+                )
+            {
+                let options =
+                    crate::core::particles::particle_options::ParticleOptions::simple(particle_type);
+                let mut r = mob.random.borrow_mut();
+                for _ in 0..20 {
+                    level.send_particles(
+                        &options,
+                        pos_with_block.x as f64 + 0.5,
+                        pos_with_block.y as f64,
+                        pos_with_block.z as f64 + 0.5,
+                        1,
+                        r.next_gaussian() * 0.02,
+                        r.next_gaussian() * 0.02,
+                        r.next_gaussian() * 0.02,
+                        0.15,
+                    );
+                }
+            }
+            self.play_break_sound(level_ref, pos_with_block);
+        }
+        self.ticks_since_reached_goal += 1;
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        self.goal.get_flags()
+    }
+}

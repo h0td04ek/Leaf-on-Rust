@@ -695,6 +695,12 @@ impl Mob {
         });
     }
 
+    /// `TamableAnimal.isInSittingPose()` — pose == Sitting.
+    pub fn is_in_sitting_pose(&self) -> bool {
+        use crate::world::entity::pose::Pose;
+        self.living.entity.get_pose() == Pose::Sitting
+    }
+
     /// `TamableAnimal.unableToMoveToOwner()`.
     pub fn unable_to_move_to_owner(&self) -> bool {
         false
@@ -850,6 +856,56 @@ impl Mob {
 
     /// `AbstractHorse.makeMad()` — TAMING_FAILED разъяривание.
     pub fn horse_make_mad(&mut self) {}
+
+    /// `AbstractVillager.setTradingPlayer(player)` — TradeWithPlayerGoal.stop.
+    pub fn villager_set_trading_player(&mut self, _player: Option<Entity>) {}
+
+    /// `ShoulderRidingEntity.getOwner()` — владелец-попугайник
+    /// как Entity (ServerPlayer-view). Default: нет владельца.
+    pub fn parrot_owner(&self) -> Option<Entity> {
+        self.tamable_owner().map(|l| l.entity)
+    }
+
+    /// `ShoulderRidingEntity.canSitOnShoulder()`.
+    pub fn parrot_can_sit_on_shoulder(&self) -> bool {
+        false
+    }
+
+    /// `ShoulderRidingEntity.setEntityOnShoulder(player)` —
+    /// результат: встала ли на плечо. Default: false.
+    pub fn parrot_set_entity_on_shoulder(&mut self, _player: &Entity) -> bool {
+        false
+    }
+
+    /// `ShoulderRidingEntity.isOrderedToSit()` — ordered-to-sit
+    /// флаг попугая (отдельный от tamable).
+    pub fn parrot_is_ordered_to_sit(&self) -> bool {
+        self.tamable_is_ordered_to_sit()
+    }
+
+    /// `Player.getAbilities().flying` — для
+    /// LandOnOwnersShoulderGoal.canUse. Default: false.
+    pub fn entity_abilities_flying(&self) -> bool {
+        false
+    }
+
+    /// `Player.hasMovedHorizontallyRecently()` — FollowBoatGoal.
+    pub fn entity_moved_horizontally_recently(&self) -> bool {
+        false
+    }
+
+    /// `Entity.isBoat()` — для скана лодок в FollowBoatGoal.
+    /// Default: по entity-type тегам не определяем — false,
+    /// наследники (лодки) переопределяют.
+    pub fn entity_is_boat(&self) -> bool {
+        false
+    }
+
+    /// `AbstractBoat.getControllingPassenger()` — пассажир,
+    /// управляющий лодкой (для FollowBoatGoal). Default: нет.
+    pub fn boat_controlling_passenger(&self) -> Option<Entity> {
+        self.living.entity.get_controlling_passenger().cloned()
+    }
 
     /// `Player.hasInfiniteMaterials()` — креатив/спектатор.
     pub fn player_has_infinite_materials(&self) -> bool {

@@ -769,6 +769,11 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isVehicle()`.
     pub fn is_vehicle(&self) -> bool { false }
 
+    /// `Entity instanceof AbstractBoat`-проверка для
+    /// FollowBoatGoal (getEntitiesOfClass(AbstractBoat.class)).
+    /// Default: false — лодки переопределяют по типу.
+    pub fn is_boat(&self) -> bool { false }
+
     /// `getPassengers()`.
     pub fn get_passengers(&self) -> Vec<&Entity> { Vec::new() }
 

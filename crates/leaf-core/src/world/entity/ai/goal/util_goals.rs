@@ -1820,3 +1820,277 @@ impl Goal for RunAroundLikeCrazyGoal {
         [GoalFlag::Move].into_iter().collect()
     }
 }
+
+/// `LandOnOwnersShoulderGoal` — попугай садится на плечо
+/// владельца: canUse — owner ServerPlayer не спектатор/не летает/
+/// не в воде/не в powder snow + !orderedToSit + canSitOnShoulder;
+/// tick — пересечение BB с игроком → `setEntityOnShoulder`.
+pub struct LandOnOwnersShoulderGoal {
+    /// `isSittingOnShoulder`.
+    pub is_sitting_on_shoulder: bool,
+}
+
+impl LandOnOwnersShoulderGoal {
+    /// `new(entity)`.
+    pub fn new() -> Self {
+        Self { is_sitting_on_shoulder: false }
+    }
+}
+
+impl Default for LandOnOwnersShoulderGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for LandOnOwnersShoulderGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(owner) = mob.parrot_owner() else {
+            return false;
+        };
+        // ServerPlayer-проверки: !spectator && !flying &&
+        // !isInWater && !isInPowderSnow.
+        let owner_le = LivingEntity::from_entity(owner);
+        let flag = !owner_le.is_spectator()
+            && !owner_le.entity_abilities_flying()
+            && !owner_le.entity.is_in_water()
+            && !owner_le.entity.is_in_powder_snow();
+        !mob.parrot_is_ordered_to_sit() && flag && mob.parrot_can_sit_on_shoulder()
+    }
+
+    fn is_interruptable(&self) -> bool {
+        !self.is_sitting_on_shoulder
+    }
+
+    fn start(&mut self, _mob: &mut Mob) {
+        self.is_sitting_on_shoulder = false;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        if self.is_sitting_on_shoulder || mob.is_in_sitting_pose() || mob.is_leashed() {
+            return;
+        }
+        let Some(owner) = mob.parrot_owner() else {
+            return;
+        };
+        if mob
+            .living
+            .entity
+            .get_bounding_box()
+            .intersects(&owner.get_bounding_box())
+        {
+            self.is_sitting_on_shoulder = mob.parrot_set_entity_on_shoulder(&owner);
+        }
+    }
+}
+
+/// `BoatGoals` — внутренний enum FollowBoatGoal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoatGoalState {
+    /// `GO_TO_BOAT`.
+    GoToBoat,
+    /// `GO_IN_BOAT_DIRECTION`.
+    GoInBoatDirection,
+}
+
+/// `FollowBoatGoal` — сухопутная моба (кролик и т.п.) следует
+/// за игроком в лодке: подплывает к корме, затем идёт в
+/// направлении движения лодки.
+pub struct FollowBoatGoal {
+    /// `timeToRecalcPath`.
+    pub time_to_recalc_path: i32,
+    /// `following` — игрок (Entity-view).
+    pub following: Option<Entity>,
+    /// `currentGoal`.
+    pub current_goal: BoatGoalState,
+}
+
+impl FollowBoatGoal {
+    /// `new(mob)`.
+    pub fn new() -> Self {
+        Self {
+            time_to_recalc_path: 0,
+            following: None,
+            current_goal: BoatGoalState::GoToBoat,
+        }
+    }
+
+    /// Скан `getEntitiesOfClass(AbstractBoat, bb.inflate(5))` —
+    /// первая лодка с игроком-водителем, двигавшимся недавно.
+    fn find_following(&self, mob: &Mob) -> Option<Entity> {
+        let level = mob.level()?;
+        let box_ = mob.living.entity.get_bounding_box().inflate(5.0, 5.0, 5.0);
+        level
+            .entities_in_box(&box_)
+            .into_iter()
+            .find(|e| {
+                let is_moving_player_boat = e
+                    .get_controlling_passenger()
+                    .map(|p| {
+                        p.is_player()
+                            && LivingEntity::from_entity(p.clone())
+                                .player_moved_horizontally_recently()
+                    })
+                    .unwrap_or(false);
+                e.is_boat() && is_moving_player_boat
+            })
+            .and_then(|e| {
+                // В Java following = player (пассажир), не лодка.
+                e.get_controlling_passenger().cloned()
+            })
+    }
+}
+
+impl Default for FollowBoatGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for FollowBoatGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if let Some(f) = &self.following {
+            if LivingEntity::from_entity(f.clone()).player_moved_horizontally_recently() {
+                return true;
+            }
+        }
+        self.find_following(mob).is_some()
+    }
+
+    fn is_interruptable(&self) -> bool {
+        true
+    }
+
+    fn can_continue_to_use(&mut self, _mob: &mut Mob) -> bool {
+        let Some(f) = &self.following else {
+            return false;
+        };
+        let le = LivingEntity::from_entity(f.clone());
+        le.entity.is_passenger() && le.player_moved_horizontally_recently()
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.following = self.find_following(mob);
+        self.time_to_recalc_path = 0;
+        self.current_goal = BoatGoalState::GoToBoat;
+    }
+
+    fn stop(&mut self, _mob: &mut Mob) {
+        self.following = None;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(following) = self.following.clone() else {
+            return;
+        };
+        let speed = if self.current_goal == BoatGoalState::GoInBoatDirection {
+            0.01f32
+        } else {
+            0.015f32
+        };
+        // mob.moveRelative(f, new Vec3(xxa, yya, zza)) +
+        // mob.move(SELF, getDeltaMovement()).
+        let input = Vec3::new(
+            mob.living.xxa as f64,
+            mob.living.yya as f64,
+            mob.living.zza as f64,
+        );
+        mob.living.move_relative_friction(speed, input);
+        let delta = mob.living.entity.get_delta_movement();
+        mob.living.entity.r#move(delta);
+
+        self.time_to_recalc_path -= 1;
+        if self.time_to_recalc_path > 0 {
+            return;
+        }
+        self.time_to_recalc_path = self.adjusted_tick_delay(10);
+        if self.current_goal == BoatGoalState::GoToBoat {
+            // blockPosition().relative(following.getDirection().getOpposite()).below()
+            let dir = crate::core::direction::Direction::from_y_rot(
+                following.get_y_rot() as f64,
+            )
+            .get_opposite();
+            let mut pos = following.block_position().relative(dir);
+            pos = pos.below();
+            if let Some(nav) = mob.get_navigation() {
+                nav.borrow_mut().move_to_pos(
+                    mob,
+                    pos.x as f64,
+                    pos.y as f64,
+                    pos.z as f64,
+                    1.0,
+                );
+            }
+            if mob.living.entity.distance_to_sqr(&following) < 16.0 {
+                self.time_to_recalc_path = 0;
+                self.current_goal = BoatGoalState::GoInBoatDirection;
+            }
+        } else if self.current_goal == BoatGoalState::GoInBoatDirection {
+            // blockPosition().relative(getMotionDirection(), 10).below()-ish
+            let motion_dir = following.get_motion_direction();
+            let pos = following.block_position().relative_n(motion_dir, 10);
+            let pos = BlockPos::new(pos.x, pos.y - 1, pos.z);
+            if let Some(nav) = mob.get_navigation() {
+                nav.borrow_mut().move_to_pos(
+                    mob,
+                    pos.x as f64,
+                    pos.y as f64,
+                    pos.z as f64,
+                    1.0,
+                );
+            }
+            if mob.living.entity.distance_to_sqr(&following) > 144.0 {
+                self.time_to_recalc_path = 0;
+                self.current_goal = BoatGoalState::GoToBoat;
+            }
+        }
+    }
+}
+
+/// `TradeWithPlayerGoal` — житель не двигается во время торговли:
+/// canUse — жив, не в воде, onGround, !hurtMarked, tradingPlayer
+/// в 16 блоках; start — nav.stop; stop — setTradingPlayer(null).
+pub struct TradeWithPlayerGoal;
+
+impl TradeWithPlayerGoal {
+    /// `new(villager)` — флаги JUMP+MOVE.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TradeWithPlayerGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for TradeWithPlayerGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if !mob.living.is_alive()
+            || mob.living.is_in_water()
+            || !mob.living.entity.on_ground()
+            || mob.living.hurt_marked
+        {
+            return false;
+        }
+        let Some(player) = mob.villager_trading_player() else {
+            return false;
+        };
+        mob.living.entity.distance_to_sqr(&player) <= 16.0
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.villager_set_trading_player(None);
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Jump, GoalFlag::Move].into_iter().collect()
+    }
+}
