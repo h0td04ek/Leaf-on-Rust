@@ -110,10 +110,27 @@ impl ItemStack {
         crate::nbt::tag::Tag::Compound(tag)
     }
 
-    /// `getUseDuration(entity)` — `Item.getUseDuration(stack, entity)`
-    /// базовая реализация: `consumable.consumeTicks()`, иначе 72000
-    /// при `blocks_attacks`/`kinetic_weapon`, иначе 0.
+    /// `getUseDuration(entity)` — `Item.getUseDuration(stack, entity)`.
+    /// Предметные переопределения (Bow/Crossbow/Trident → 72000,
+    /// Brush → 200, Spyglass → 1200, EnderEye → 0, Instrument →
+    /// `instrument.useDuration * 20`), иначе `consumable.consumeTicks()`,
+    /// иначе 72000 при `blocks_attacks`/`kinetic_weapon`, иначе 0.
     pub fn get_use_duration_ticks(&self) -> i32 {
+        if let Some(id) = self.item_identifier() {
+            let path = id.get_path();
+            match path {
+                "bow" | "crossbow" | "trident" => return 72000,
+                "brush" => return 200,
+                "spyglass" => return 1200,
+                "ender_eye" => return 0,
+                _ => {}
+            }
+        }
+        if let Some(i) = self.get_component::<crate::world::item::component::instrument_component::InstrumentComponent>(
+            &crate::resources::identifier::Identifier::minecraft("instrument"),
+        ) {
+            return (i.instrument.value().map(|v| v.use_duration).unwrap_or(0.0) * 20.0).floor() as i32;
+        }
         if let Some(c) = self.get_component::<crate::world::item::component::consumable::Consumable>(
             &Identifier::minecraft("consumable"),
         ) {

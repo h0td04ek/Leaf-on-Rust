@@ -336,6 +336,22 @@ where
     }
 }
 
+/// `EnchantmentHelper.modifyCrossbowChargingTime(stack, entity, base)` —
+/// модификация времени зарядки арбалета чарами на стеке.
+pub fn modify_crossbow_charging_time(
+    stack: &ItemStack,
+    entity: &mut LivingEntity,
+    base: f32,
+) -> f32 {
+    let mut value = base;
+    let random = entity.entity_random();
+    run_iteration_on_item(stack, |enchantment, level| {
+        let mut guard = random.lock().expect("entity random poisoned");
+        enchantment.modify_crossbow_charge_time(&mut **guard, level, &mut value);
+    });
+    value.max(0.0)
+}
+
 /// `EnchantmentHelper.modifyDamage(level, tool, entity, source, damage)`.
 /// `entity` — цель (victim), не атакующий.
 pub fn modify_damage(

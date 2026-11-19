@@ -21,3 +21,5 @@ pub use rarity::Rarity;
 pub mod instrument;
 pub mod jukebox_song;
 pub mod swing_animation_type;
+pub mod bow_item;
+pub mod crossbow_item;

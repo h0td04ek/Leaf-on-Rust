@@ -31,6 +31,15 @@ impl<T> EitherHolder<T> {
         Self { contents: Either::Right(key) }
     }
 
+    /// `value()` — значение для holder-варианта; для прямого
+    /// `ResourceKey` требуется реестр — возвращаем None.
+    pub fn value(&self) -> Option<&T> {
+        match &self.contents {
+            Either::Left(h) => h.value(),
+            Either::Right(_) => None,
+        }
+    }
+
     /// `key()` — `Optional<ResourceKey>`: для Left возвращает
     /// ключ registry-holder'а (у нас `Reference` хранит только id
     /// без привязки к реестру → None до порта реестров).

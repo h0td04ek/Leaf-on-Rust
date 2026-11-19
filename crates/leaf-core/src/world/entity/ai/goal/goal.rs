@@ -56,8 +56,10 @@ impl GoalFlagSet {
     }
 }
 
-/// `Goal` — цель AI (аналог abstract class).
-pub trait Goal: Send + Sync {
+/// `Goal` — цель AI (аналог abstract class). Без `Send + Sync`:
+/// `Mob` сам однопоточный (`Rc<RefCell>` random/navigation),
+/// цели не покидают поток владельца — как в Java.
+pub trait Goal {
     /// `canUse()` — можно ли начать. `mob` — как `this.mob`
     /// в Java (цели получают моба параметром, т.к. не могут
     /// хранить ссылку на владеющий их GoalSelector моб).

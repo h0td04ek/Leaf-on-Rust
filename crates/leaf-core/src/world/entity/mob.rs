@@ -142,6 +142,9 @@ pub struct Mob {
     pub no_action_time: i32,
     /// `ambientSoundInterval`-поля (для наследников).
     pub spawn_anim: bool,
+    /// `chargingCrossbow` — флаг анимации перезарядки арбалета
+    /// (`CrossbowAttackMob.setChargingCrossbow`).
+    pub charging_crossbow: bool,
     // `wasExploding`? нет — `persistent` флаги в Entity.
     // `ambientSoundTime` уже есть; `idleAnimationState`?
     // `swinging` есть в LivingEntity.
@@ -179,9 +182,21 @@ impl Mob {
             home_radius: -1,
             no_action_time: 0,
             spawn_anim: false,
+            charging_crossbow: false,
         };
         mob.living.entity.is_mob = true;
         mob
+    }
+
+    /// `setChargingCrossbow`/`isChargingCrossbow`
+    /// (`CrossbowAttackMob`).
+    pub fn set_charging_crossbow(&mut self, charging: bool) {
+        self.charging_crossbow = charging;
+    }
+
+    /// `isChargingCrossbow`.
+    pub fn is_charging_crossbow(&self) -> bool {
+        self.charging_crossbow
     }
 
     /// `createNavigation` — дефолт `GroundPathNavigation`

@@ -273,11 +273,29 @@ impl LivingEntity {
         !self.use_item.is_empty() && self.use_item_remaining > 0
     }
 
-    /// `startUsingItem(hand)`.
+    /// `startUsingItem(hand)` — берёт предмет из руки, запускает
+    /// использование на `getUseDuration` тиков.
     pub fn start_using_item(&mut self, hand: HumanoidArm) {
-        self.swinging_arm = hand;
-        self.swinging = true;
-        self.swing_time = 0;
+        let item = self
+            .get_item_by_slot(hand.as_equipment_slot())
+            .clone();
+        if !item.is_empty() && !self.is_using_item() {
+            self.use_item_remaining = item.get_use_duration_ticks();
+            self.use_item = item;
+            self.swinging_arm = hand;
+            self.swinging = true;
+            self.swing_time = 0;
+        }
+    }
+
+    /// `isHolding(item)` — предмет в основной или второй руке.
+    pub fn is_holding_item(&self, item_id: &crate::resources::identifier::Identifier) -> bool {
+        self.is_holding(|stack| stack.is(item_id))
+    }
+
+    /// `isHolding(Predicate<ItemStack>)`.
+    pub fn is_holding(&self, predicate: impl Fn(&ItemStack) -> bool) -> bool {
+        predicate(self.get_main_hand_item()) || predicate(self.get_offhand_item())
     }
 
     /// `swing(hand)`.
@@ -2315,6 +2333,28 @@ impl LivingEntity {
     /// `getAttackAnim`.
     pub fn get_attack_anim(&self, _partial_tick: f32) -> f32 {
         self.attack_anim
+    }
+
+    /// `getAttackSpeed()` — скорость атаки из атрибута `attack_speed`.
+    pub fn get_attack_speed(&mut self) -> f32 {
+        self.get_attribute_value_by_id(&attribute_ids::attack_speed()) as f32
+    }
+
+    /// `getMaxAttackStrength()` — максимум шкалы атаки (= attack speed).
+    pub fn get_max_attack_strength(&mut self) -> f32 {
+        self.get_attack_speed()
+    }
+
+    /// `getAttackStrengthScale(partialTick)` — прогресс перезарядки
+    /// атаки в [0, 1].
+    pub fn get_attack_strength_scale(&mut self, partial_tick: f32) -> f32 {
+        let speed = self.get_max_attack_strength();
+        ((self.attack_strength_ticker as f32 + partial_tick) / speed).clamp(0.0, 1.0)
+    }
+
+    /// `canPerformAttack()` — готова ли сущность к следующей атаке.
+    pub fn can_perform_attack(&mut self) -> bool {
+        self.get_attack_strength_scale(0.5) > 0.9
     }
 
     /// `getSwingProgress`.

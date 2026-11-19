@@ -510,6 +510,14 @@ impl Entity {
         dx * dx + dy * dy + dz * dz
     }
 
+    /// `distanceToSqr(x, y, z)` — расстояние до точки.
+    pub fn distance_to_sqr_pos(&self, x: f64, y: f64, z: f64) -> f64 {
+        let dx = self.pos.x - x;
+        let dy = self.pos.y - y;
+        let dz = self.pos.z - z;
+        dx * dx + dy * dy + dz * dz
+    }
+
     /// `isAliveAndWell()`.
         /// `spawnAtLocation(stack)` — создание `ItemEntity` в позиции
     /// сущности и `addFreshEntity` в уровень (vanilla `Entity`).
@@ -653,6 +661,11 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `getVehicle()`.
     pub fn get_vehicle(&self) -> Option<&Entity> { None }
+
+    /// `getControlledVehicle()` — сущность, которой управляет эта
+    /// сущность (у `Entity` всегда null; переопределяется в
+    /// `Boat`/`AbstractMinecart`).
+    pub fn get_controlled_vehicle(&self) -> Option<Entity> { None }
 
     /// `onGround()`.
     pub fn on_ground(&self) -> bool { self.on_ground }
