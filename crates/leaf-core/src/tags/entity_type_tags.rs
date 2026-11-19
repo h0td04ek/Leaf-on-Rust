@@ -68,6 +68,16 @@ pub mod keys {
     pub fn powder_snow_walkable_mobs() -> TagKey<EntityType> {
         tag("powder_snow_walkable_mobs")
     }
+
+    /// `EntityTypeTags.CANDIDATE_FOR_IRON_GOLEM_GIFT`.
+    pub fn candidate_for_iron_golem_gift() -> TagKey<EntityType> {
+        tag("candidate_for_iron_golem_gift")
+    }
+
+    /// `EntityTypeTags.ACCEPTS_IRON_GOLEM_GIFT`.
+    pub fn accepts_iron_golem_gift() -> TagKey<EntityType> {
+        tag("accepts_iron_golem_gift")
+    }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых тегов
@@ -139,6 +149,16 @@ pub fn bootstrap() {
     register_entity_type_tag(
         Id::with_default_namespace("powder_snow_walkable_mobs").unwrap(),
         ids(&["polar_bear", "strider"]),
+    );
+    // candidate_for_iron_golem_gift = [villager, wandering_trader]
+    register_entity_type_tag(
+        Id::with_default_namespace("candidate_for_iron_golem_gift").unwrap(),
+        ids(&["villager", "wandering_trader"]),
+    );
+    // accepts_iron_golem_gift = [copper_golem]
+    register_entity_type_tag(
+        Id::with_default_namespace("accepts_iron_golem_gift").unwrap(),
+        ids(&["copper_golem"]),
     );
 }
 

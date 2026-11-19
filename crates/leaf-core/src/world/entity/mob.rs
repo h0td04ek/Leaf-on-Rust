@@ -753,6 +753,21 @@ impl Mob {
         None
     }
 
+    /// `IronGolem.offerFlower(offer)` — визуальный флаг протягивания
+    /// цветка (OfferFlowerGoal). Наследники переопределяют.
+    pub fn golem_offer_flower(&mut self, _offer: bool) {}
+
+    /// `CopperGolem.EQUIPMENT_SLOT_ANTENNA`-проверка: пуст ли слот
+    /// антенны (OfferFlowerGoal.stop). Default: нет слота → false.
+    pub fn copper_golem_antenna_empty(&self) -> bool {
+        false
+    }
+
+    /// Выдать поппи в антенну медного голема
+    /// (`OfferFlowerGoal.stop` → `setItemSlot`+`setGuaranteedDrop`).
+    /// Default no-op для не-CopperGolem.
+    pub fn copper_golem_set_antenna_flower(&mut self) {}
+
     /// `Animal.getBreedOffspring`-совместимый хук: `Mob.ate()` —
     /// сущность съела блок (овца — отрастить шерсть).
     /// Наследники переопределяют.

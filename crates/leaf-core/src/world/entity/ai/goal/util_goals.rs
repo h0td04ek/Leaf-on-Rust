@@ -1226,3 +1226,223 @@ impl Goal for FollowMobGoal {
         }
     }
 }
+
+/// `OcelotAttackGoal` — цилотатакующий: преследует `mob.target`,
+/// дистанционный множитель скорости (0.8/1.33/0.6 по d3),
+/// `doHurtTarget` каждые 20 тиков в melee-радиусе.
+#[derive(Default)]
+pub struct OcelotAttackGoal {
+    /// `attackTime`.
+    pub attack_time: i32,
+}
+
+impl OcelotAttackGoal {
+    /// `new(mob)` — флаги MOVE+LOOK (в `setFlags`, сохраняем).
+    pub fn new() -> Self {
+        Self { attack_time: 0 }
+    }
+}
+
+impl Goal for OcelotAttackGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        mob.get_target().is_some()
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(target) = mob.get_target().cloned() else {
+            return false;
+        };
+        if !target.is_alive()
+            || mob.living.entity.distance_to_sqr(&target.entity) > 225.0
+        {
+            return false;
+        }
+        let nav_done = mob
+            .get_navigation()
+            .as_ref()
+            .map(|n| n.borrow().is_done())
+            .unwrap_or(true);
+        if nav_done {
+            return self.can_use(mob);
+        }
+        true
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.attack_time = 0;
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+    }
+
+    fn requires_update_every_tick(&self) -> bool {
+        true
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Move, GoalFlag::Look].into_iter().collect()
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(target) = mob.get_target().cloned() else {
+            return;
+        };
+        mob.look_control
+            .set_look_at_entity_deltas(&target.entity, 30.0, 30.0);
+        let width = mob.get_bb_width() as f64;
+        let d = width * 2.0 * width * 2.0;
+        let d1 = mob
+            .living
+            .entity
+            .distance_to_sqr_pos(
+                target.entity.get_x(),
+                target.entity.get_y(),
+                target.entity.get_z(),
+            );
+        let speed = if d1 > d && d1 < 16.0 {
+            1.33
+        } else if d1 < 225.0 {
+            0.6
+        } else {
+            0.8
+        };
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().move_to_entity(mob, &target, speed);
+        }
+        self.attack_time = (self.attack_time - 1).max(0);
+        if d1 <= d && self.attack_time <= 0 {
+            self.attack_time = 20;
+            let mut t = target.clone();
+            mob.do_hurt_target(&mut t);
+        }
+    }
+}
+
+/// `OfferFlowerGoal` — железный голем протягивает мак (poppy)
+/// ближайшему кандидату `#candidate_for_iron_golem_gift`
+/// каждые ~8000 тиков; на stop дарит цветок медному голему
+/// (`#accepts_iron_golem_gift`, слот антенны).
+pub struct OfferFlowerGoal {
+    /// `entity` — кандидат на подарок.
+    pub entity: Option<LivingEntity>,
+    /// `tick` — оставшиеся тики жеста.
+    pub tick: i32,
+}
+
+impl OfferFlowerGoal {
+    /// `new(golem)`.
+    pub fn new() -> Self {
+        Self { entity: None, tick: 0 }
+    }
+}
+
+impl Default for OfferFlowerGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Goal for OfferFlowerGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(level) = mob.level() else {
+            return false;
+        };
+        if !level.is_bright_outside() {
+            return false;
+        }
+        if mob.random.borrow_mut().next_int_bound(8000) != 0 {
+            return false;
+        }
+        let box_ = mob
+            .living
+            .entity
+            .get_bounding_box()
+            .inflate(6.0, 2.0, 6.0);
+        let mut conditions =
+            crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions::for_non_combat();
+        conditions.range(6.0);
+        let own_uuid = mob.living.entity.uuid;
+        let found = level
+            .entities_in_box(&box_)
+            .into_iter()
+            .filter(|e| {
+                e.is_living_entity()
+                    && e.entity_type
+                        .value()
+                        .map(|t| {
+                            crate::tags::entity_type_tags::entity_type_is(
+                                t,
+                                crate::tags::entity_type_tags::keys::candidate_for_iron_golem_gift(),
+                            )
+                        })
+                        .unwrap_or(false)
+            })
+            .map(|e| LivingEntity::from_entity(e))
+            .find(|le| {
+                le.entity.uuid != own_uuid && conditions.test(&level, Some(mob), le)
+            });
+        self.entity = found;
+        self.entity.is_some()
+    }
+
+    fn can_continue_to_use(&mut self, _mob: &mut Mob) -> bool {
+        self.tick > 0
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.tick = self.adjusted_tick_delay(400);
+        mob.golem_offer_flower(true);
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.golem_offer_flower(false);
+        let gift = if self.tick == 0 {
+            self.entity.as_ref().and_then(|entity| {
+                let accepts = entity
+                    .entity
+                    .entity_type
+                    .value()
+                    .map(|t| {
+                        crate::tags::entity_type_tags::entity_type_is(
+                            t,
+                            crate::tags::entity_type_tags::keys::accepts_iron_golem_gift(),
+                        )
+                    })
+                    .unwrap_or(false);
+                if accepts
+                    && mob.copper_golem_antenna_empty()
+                    && mob
+                        .living
+                        .entity
+                        .get_bounding_box()
+                        .intersects(&entity.entity.get_bounding_box())
+                {
+                    Some(())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        if gift.is_some() {
+            mob.copper_golem_set_antenna_flower();
+        }
+        self.entity = None;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        if let Some(entity) = &self.entity {
+            mob.look_control
+                .set_look_at_entity_deltas(&entity.entity, 30.0, 30.0);
+        }
+        self.tick -= 1;
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Move, GoalFlag::Look].into_iter().collect()
+    }
+}
