@@ -62,7 +62,7 @@ pub trait EntityPredicateTarget {
         false
     }
     /// `getVehicle()`.
-    fn target_vehicle(&self) -> Option<&Entity> {
+    fn target_vehicle(&self) -> Option<Entity> {
         None
     }
     /// `getPassengers()`.
@@ -1075,7 +1075,7 @@ impl EntityPredicate {
         if let Some(vehicle) = &self.vehicle {
             let ok = entity
                 .target_vehicle()
-                .map(|v| vehicle.matches_entity(level, position, v))
+                .map(|v| vehicle.matches_entity(level, position, &v))
                 .unwrap_or(false);
             if !ok {
                 return false;
@@ -1189,7 +1189,7 @@ impl<'a> EntityPredicateTarget for EntityAsTarget<'a> {
     fn target_is_flying(&self) -> bool {
         false
     }
-    fn target_vehicle(&self) -> Option<&Entity> {
+    fn target_vehicle(&self) -> Option<Entity> {
         self.0.get_vehicle()
     }
     fn target_passengers(&self) -> Vec<&Entity> {
@@ -1265,7 +1265,7 @@ impl<'a> EntityPredicateTarget for LivingEntityAsTarget<'a> {
     fn target_is_flying(&self) -> bool {
         self.0.entity.is_flying()
     }
-    fn target_vehicle(&self) -> Option<&Entity> {
+    fn target_vehicle(&self) -> Option<Entity> {
         self.0.entity.get_vehicle()
     }
     fn target_passengers(&self) -> Vec<&Entity> {

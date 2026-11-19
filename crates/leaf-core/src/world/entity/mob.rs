@@ -553,6 +553,18 @@ impl Mob {
         false
     }
     pub fn block_position(&self) -> BlockPos { self.living.entity.block_position() }
+
+    /// `getLookControl().setLookAt(pos)` — LookAtTargetSink.
+    pub fn look_control_set_look_at(&mut self, pos: crate::world::phys::vec3::Vec3) {
+        let mut lc = std::mem::take(&mut self.look_control);
+        lc.set_look_at_vec(self, pos);
+        self.look_control = lc;
+    }
+
+    /// `getJumpControl().jump()` — Swim.
+    pub fn jump_control_jump(&mut self) {
+        self.jump_control.jump();
+    }
     pub fn level(&self) -> Option<Arc<dyn LevelReader>> { self.living.entity.level.clone() }
     pub fn get_speed(&self) -> f32 { self.living.get_speed() }
     pub fn get_bb_width(&self) -> f32 { self.living.get_bb_width() }

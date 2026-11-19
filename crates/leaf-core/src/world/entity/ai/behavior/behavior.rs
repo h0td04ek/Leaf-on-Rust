@@ -62,7 +62,7 @@ pub trait BehaviorControl {
     }
 
     /// `checkExtraStartConditions(level, owner)` — default true.
-    fn check_extra_start_conditions(&mut self, _level: &Arc<dyn LevelReader>, _mob: &Mob) -> bool {
+    fn check_extra_start_conditions(&mut self, _level: &Arc<dyn LevelReader>, _mob: &mut Mob) -> bool {
         true
     }
 
@@ -181,50 +181,99 @@ impl BehaviorBase {
     }
 }
 
-/// `ShufflingList<E>` — список с перемешиванием (GateBehavior,
-/// random behavior selection). Порт Fisher-Yates на Vec.
+/// `ShufflingList.WeightedEntry` — (data, weight, randWeight).
+#[derive(Clone)]
+pub struct WeightedEntry<T> {
+    /// `data`.
+    pub data: T,
+    /// `weight`.
+    pub weight: i32,
+    /// `randWeight` — вычисляется в shuffle.
+    rand_weight: f64,
+}
+
+impl<T> WeightedEntry<T> {
+    fn new(data: T, weight: i32) -> Self {
+        Self { data, weight, rand_weight: 0.0 }
+    }
+
+    /// `setRandom(chance)` — `-chance^(1/weight)`.
+    fn set_random(&mut self, chance: f32) {
+        self.rand_weight = -(chance as f64).powf(1.0 / self.weight as f64);
+    }
+}
+
+/// `ShufflingList<E>` — weighted-список с shuffle по
+/// `-rand^(1/weight)` (vanilla-алгоритм, не Fisher-Yates).
 pub struct ShufflingList<T> {
-    items: Vec<T>,
+    entries: Vec<WeightedEntry<T>>,
+    /// Собственный `RandomSource` (как в Java).
+    random: Box<dyn crate::random::RandomSource>,
 }
 
 impl<T> ShufflingList<T> {
-    /// `new(Collection)`.
-    pub fn new(items: Vec<T>) -> Self {
-        Self { items }
-    }
-
-    /// `shuffle(RandomSource)` — Fisher-Yates.
-    pub fn shuffle(&mut self, random: &mut dyn crate::random::RandomSource) {
-        let n = self.items.len();
-        for i in (1..n).rev() {
-            let j = random.next_int_bound((i + 1) as i32) as usize;
-            self.items.swap(i, j);
+    /// `new()` — пустой список со своим random.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            random: crate::random::legacy::create_unique(),
         }
     }
 
-    /// `get(index)`.
-    pub fn get(&self, index: usize) -> Option<&T> {
-        self.items.get(index)
+    /// `add(data, weight)`.
+    pub fn add(&mut self, data: T, weight: i32) -> &mut Self {
+        self.entries.push(WeightedEntry::new(data, weight));
+        self
+    }
+
+    /// `shuffle()` — каждому entry `setRandom(nextFloat)`,
+    /// сортировка по randWeight по возрастанию.
+    pub fn shuffle(&mut self) {
+        for entry in &mut self.entries {
+            let chance = self.random.next_float();
+            entry.set_random(chance);
+        }
+        self.entries
+            .sort_by(|a, b| a.rand_weight.partial_cmp(&b.rand_weight).unwrap_or(std::cmp::Ordering::Equal));
+    }
+
+    /// `stream()` — итератор по data в текущем порядке.
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.entries.iter().map(|e| &e.data)
     }
 
     /// `size()`.
     pub fn size(&self) -> usize {
-        self.items.len()
+        self.entries.len()
     }
 
     /// `isEmpty()`.
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        self.entries.is_empty()
     }
 
-    /// Доступ к внутреннему Vec.
-    pub fn as_slice(&self) -> &[T] {
-        &self.items
+    /// Доступ к записям (data+weight).
+    pub fn entries(&self) -> &[WeightedEntry<T>] {
+        &self.entries
     }
 
-    /// Внутренний Vec (mut).
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        &mut self.items
+    /// Mut-доступ к записям.
+    pub fn entries_mut(&mut self) -> &mut [WeightedEntry<T>] {
+        &mut self.entries
+    }
+}
+
+impl<T> Default for ShufflingList<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> IntoIterator for ShufflingList<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter().map(|e| e.data).collect::<Vec<_>>().into_iter()
     }
 }
 

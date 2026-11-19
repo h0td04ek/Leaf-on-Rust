@@ -93,6 +93,19 @@ pub trait LevelReader: Send + Sync {
         0
     }
 
+    /// `loadedAndEntityCanStandOn(pos, entity)` — позиция
+    /// загружена и сущность может стоять (InsideBrownianWalk).
+    /// Default: true.
+    fn loaded_and_entity_can_stand_on(&self, _pos: BlockPos, _mob: &crate::world::entity::mob::Mob) -> bool {
+        true
+    }
+
+    /// `GameRules.FORGIVE_DEAD_PLAYERS` — прощать мёртвых
+    /// игроков (StopBeingAngryIfTargetDead). Default: true.
+    fn forgive_dead_players(&self) -> bool {
+        true
+    }
+
     /// `isBrightOutside()` — `dimensionType.hasSkyLight() &&
     /// isDay()`. Default: false (переопределяется уровнем).
     fn is_bright_outside(&self) -> bool {

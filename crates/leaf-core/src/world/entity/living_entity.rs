@@ -1659,7 +1659,7 @@ impl LivingEntity {
     }
 
     pub fn get_vehicle(&self) -> Option<Entity> {
-        self.entity.get_vehicle().cloned()
+        self.entity.get_vehicle()
     }
 
     /// `isPassengerOfSameVehicle(entity)`.
@@ -3137,6 +3137,18 @@ impl LivingEntity {
     /// `Warden.canTargetEntity(entity)` — фильтр WardenEntitySensor.
     pub fn warden_can_target_entity(&self, _entity: &LivingEntity) -> bool {
         true
+    }
+
+    /// `canUseNonMeleeWeapon(stack)` — может ли использовать
+    /// не-melee оружие (лук/арбалет). Default: false.
+    pub fn can_use_non_melee_weapon(&self) -> bool {
+        false
+    }
+
+    /// `ProjectileWeaponItem.getDefaultProjectileRange()` —
+    /// дальность не-melee оружия в руках. Default: 0.
+    pub fn non_melee_weapon_range(&self) -> f64 {
+        0.0
     }
 
     /// `getLastDamageSource()`.

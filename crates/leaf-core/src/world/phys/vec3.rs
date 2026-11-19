@@ -230,3 +230,16 @@ impl Vec3 {
         )
     }
 }
+
+impl Vec3 {
+    /// `directionFromRotation(pitch, yaw)` — единичный вектор
+    /// направления взгляда (градусы).
+    pub fn direction_from_rotation(pitch: f32, yaw: f32) -> Self {
+        let pitch_r = (pitch as f64).to_radians();
+        let yaw_r = (yaw as f64).to_radians();
+        let x = -yaw_r.sin() * pitch_r.cos();
+        let y = -pitch_r.sin();
+        let z = yaw_r.cos() * pitch_r.cos();
+        Self::new(x, y, z)
+    }
+}

@@ -130,6 +130,8 @@ pub struct Entity {
     pub persistence_required: bool,
     /// `fallDistance` — дистанция падения.
     pub fall_distance: f32,
+    /// `vehicle` — UUID транспортного средства (None = не пассажир).
+    pub vehicle_uuid: Option<crate::util::uuid::Uuid>,
     /// `airSupply` — запас воздуха под водой.
     pub air_supply: i32,
     /// `remainingFireTicks` — остаток тиков горения.
@@ -209,6 +211,7 @@ impl Entity {
             tags: Vec::new(),
             persistence_required: false,
             fall_distance: 0.0,
+            vehicle_uuid: None,
             air_supply: 300,
             remaining_fire_ticks: 0,
             remaining_fire_ticks_before_death: 0,
@@ -779,7 +782,8 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn is_sleeping(&self) -> bool { false }
 
     /// `isPassenger()`.
-    pub fn is_passenger(&self) -> bool { false }
+    /// `isPassenger()` — есть ли vehicle.
+    pub fn is_passenger(&self) -> bool { self.vehicle_uuid.is_some() }
 
     /// `isVehicle()`.
     pub fn is_vehicle(&self) -> bool { false }
@@ -810,7 +814,21 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn get_passengers(&self) -> Vec<&Entity> { Vec::new() }
 
     /// `getVehicle()`.
-    pub fn get_vehicle(&self) -> Option<&Entity> { None }
+    /// `getVehicle()` — резолв транспорта через level.entity_by_uuid.
+    pub fn get_vehicle(&self) -> Option<Entity> {
+        let uuid = self.vehicle_uuid?;
+        self.level.as_ref()?.entity_by_uuid(uuid)
+    }
+
+    /// `startRiding(entity)` — записать vehicle.
+    pub fn start_riding(&mut self, vehicle: &Entity) {
+        self.vehicle_uuid = Some(vehicle.uuid);
+    }
+
+    /// `stopRiding()` — сбросить vehicle.
+    pub fn stop_riding(&mut self) {
+        self.vehicle_uuid = None;
+    }
 
     /// `getControlledVehicle()` — сущность, которой управляет эта
     /// сущность (у `Entity` всегда null; переопределяется в
@@ -832,6 +850,22 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isInWater()` — `wasTouchingWater`-флаг этого тика
     /// (полная проверка через fluid state — при порте tick).
     pub fn is_in_water(&self) -> bool { self.was_touching_water }
+
+    /// `getFluidHeight(FluidTags.WATER)` — высота воды в хитбоксе.
+    pub fn fluid_height_water(&self) -> f64 { 0.0 }
+
+    /// `getFluidJumpThreshold()` — порог для выпрыгивания из жидкости.
+    pub fn fluid_jump_threshold(&self) -> f64 { 0.0 }
+
+    /// `closerThan(entity, distance)` — distSqr <= distance².
+    pub fn closer_than_sqr(&self, other: &Entity, distance_sqr: f64) -> bool {
+        self.distance_to_sqr(other) <= distance_sqr
+    }
+
+    /// `closerThan(entity, distance)` — dist <= distance.
+    pub fn closer_than(&self, other: &Entity, distance: f64) -> bool {
+        self.position().distance_to(&other.position()) <= distance
+    }
 
     /// `isImmobile()` — сущность обездвижена (sleeping/vehicle).
     pub fn is_immobile(&self) -> bool { false }
@@ -1212,7 +1246,7 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn get_root_vehicle(&self) -> Entity {
         let mut current = self.clone();
         while current.is_passenger() {
-            match current.get_vehicle().cloned() {
+            match current.get_vehicle() {
                 Some(v) => current = v,
                 None => break,
             }

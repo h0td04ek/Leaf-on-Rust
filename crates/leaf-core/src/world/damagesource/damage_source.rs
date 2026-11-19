@@ -297,6 +297,7 @@ impl Clone for crate::world::entity::entity::Entity {
             tags: self.tags.clone(),
             persistence_required: self.persistence_required,
             fall_distance: self.fall_distance,
+            vehicle_uuid: self.vehicle_uuid,
             air_supply: self.air_supply,
             remaining_fire_ticks: self.remaining_fire_ticks,
             remaining_fire_ticks_before_death: self.remaining_fire_ticks_before_death,
