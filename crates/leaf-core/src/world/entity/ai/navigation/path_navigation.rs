@@ -879,6 +879,9 @@ impl MobNavigation for PathNavigation {
     fn set_can_pass_doors(&mut self, v: bool) {
         self.node_evaluator.borrow_mut().set_can_pass_doors(v);
     }
+    fn set_avoid_sun(&mut self, v: bool) {
+        self.set_avoid_sun(v);
+    }
 
     fn can_navigate_ground(&self) -> bool {
         self.can_navigate_ground_impl()

@@ -290,11 +290,17 @@ impl Clone for crate::world::entity::entity::Entity {
             tags: self.tags.clone(),
             persistence_required: self.persistence_required,
             fall_distance: self.fall_distance,
+            air_supply: self.air_supply,
+            remaining_fire_ticks: self.remaining_fire_ticks,
+            remaining_fire_ticks_before_death: self.remaining_fire_ticks_before_death,
+            ticks_frozen: self.ticks_frozen,
+            percent_frozen: self.percent_frozen,
             was_touching_water: self.was_touching_water,
             was_eye_in_water: self.was_eye_in_water,
             random: self.random.clone(),
             no_gravity: self.no_gravity,
             is_mob: self.is_mob,
+            is_living: self.is_living,
         }
     }
 }

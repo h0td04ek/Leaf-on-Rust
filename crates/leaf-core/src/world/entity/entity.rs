@@ -115,6 +115,16 @@ pub struct Entity {
     pub persistence_required: bool,
     /// `fallDistance` — дистанция падения.
     pub fall_distance: f32,
+    /// `airSupply` — запас воздуха под водой.
+    pub air_supply: i32,
+    /// `remainingFireTicks` — остаток тиков горения.
+    pub remaining_fire_ticks: i32,
+    /// `remainingFireTicksBeforeDeath` — счётчик до смерти от огня.
+    pub remaining_fire_ticks_before_death: i32,
+    /// `ticksFrozen` — тики заморозки.
+    pub ticks_frozen: i32,
+    /// `percentFrozen` — доля заморозки [0,1].
+    pub percent_frozen: f32,
     /// `wasTouchingWater` — касался ли воды в прошлом тике.
     pub was_touching_water: bool,
     /// `wasEyeInWater` — глаз был в воде.
@@ -129,6 +139,10 @@ pub struct Entity {
     /// выставляется конструктором `Mob`, т.к. у нас композиция,
     /// а не наследование).
     pub is_mob: bool,
+    /// Признак «сущность — LivingEntity» (в Java —
+    /// `instanceof LivingEntity`; выставляется конструктором
+    /// `LivingEntity`).
+    pub is_living: bool,
 }
 
 impl Entity {
@@ -173,6 +187,11 @@ impl Entity {
             tags: Vec::new(),
             persistence_required: false,
             fall_distance: 0.0,
+            air_supply: 300,
+            remaining_fire_ticks: 0,
+            remaining_fire_ticks_before_death: 0,
+            ticks_frozen: 0,
+            percent_frozen: 0.0,
             was_touching_water: false,
             was_eye_in_water: false,
             random: std::sync::Arc::new(std::sync::Mutex::new(
@@ -180,6 +199,7 @@ impl Entity {
             )),
             no_gravity: false,
             is_mob: false,
+            is_living: false,
         }
     }
 
@@ -597,7 +617,8 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn is_pickable(&self) -> bool { true }
 
     /// `isLivingEntity()` — `true` для LivingEntity-наследников.
-    pub fn is_living_entity(&self) -> bool { false }
+    /// `isLivingEntity()`.
+    pub fn is_living_entity(&self) -> bool { self.is_living }
 
     /// `getMainHandItem()` — предмет в основной руке (`None` у базовой Entity).
     pub fn get_main_hand_item(&self) -> Option<crate::world::item::item_stack::ItemStack> { None }
@@ -669,6 +690,22 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `onGround()`.
     pub fn on_ground(&self) -> bool { self.on_ground }
+
+    /// `getAirSupply()`.
+    pub fn get_air_supply(&self) -> i32 { self.air_supply }
+
+    /// `setAirSupply(air)`.
+    pub fn set_air_supply(&mut self, air: i32) { self.air_supply = air; }
+
+    /// `getMaxAirSupply()` — дефолт 300 (Player переопределяет).
+    pub fn get_max_air_supply(&self) -> i32 { 300 }
+
+    /// `isInWater()` — `wasTouchingWater`-флаг этого тика
+    /// (полная проверка через fluid state — при порте tick).
+    pub fn is_in_water(&self) -> bool { self.was_touching_water }
+
+    /// `isImmobile()` — сущность обездвижена (sleeping/vehicle).
+    pub fn is_immobile(&self) -> bool { false }
 
     /// `setOnGround(onGround)`.
     pub fn set_on_ground(&mut self, on_ground: bool) { self.on_ground = on_ground; }
@@ -769,10 +806,27 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn set_no_gravity(&mut self, no_gravity: bool) { self.no_gravity = no_gravity; }
 
     /// `isOnFire()`.
-    pub fn is_on_fire(&self) -> bool { false }
+    pub fn is_on_fire(&self) -> bool { self.remaining_fire_ticks > 0 }
 
-    /// `isInWater()`.
-    pub fn is_in_water(&self) -> bool { false }
+    /// `setRemainingFireTicks(ticks)`.
+    pub fn set_remaining_fire_ticks(&mut self, ticks: i32) {
+        self.remaining_fire_ticks = ticks;
+    }
+
+    /// `getRemainingFireTicks()`.
+    pub fn get_remaining_fire_ticks(&self) -> i32 {
+        self.remaining_fire_ticks
+    }
+
+    /// `clearFire()`.
+    pub fn clear_fire(&mut self) {
+        self.remaining_fire_ticks = 0;
+    }
+
+    /// `igniteForTicks(ticks)` — поджечь на N тиков.
+    pub fn ignite_for_ticks(&mut self, ticks: i32) {
+        self.remaining_fire_ticks = ticks.max(self.remaining_fire_ticks);
+    }
 
     /// `isBaby()` — false для базовой entity (как в Java).
     pub fn is_baby(&self) -> bool { false }

@@ -93,6 +93,19 @@ pub trait LevelReader: Send + Sync {
         0
     }
 
+    /// `isBrightOutside()` — `dimensionType.hasSkyLight() &&
+    /// isDay()`. Default: false (переопределяется уровнем).
+    fn is_bright_outside(&self) -> bool {
+        false
+    }
+
+    /// Purpur/Leaf `purpurConfig.creeperEncircleTarget` —
+    /// обход цели во время вздутия крипера (SwellGoal).
+    /// Default: false.
+    fn purpur_creeper_encircle_target(&self) -> bool {
+        false
+    }
+
     /// `getScoreboard()` — scoreboard уровня (`None` пока нет
     /// реализации уровня).
     fn scoreboard(&self) -> Option<&crate::world::scores::scoreboard::Scoreboard> {

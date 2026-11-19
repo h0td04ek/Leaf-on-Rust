@@ -11,7 +11,7 @@ use crate::world::level::pathfinder::path::Path;
 
 /// `EntitySelector.NO_CREATIVE_OR_SPECTATOR` — false только для
 /// игрока в spectator/creative.
-fn no_creative_or_spectator(target: Option<&LivingEntity>) -> bool {
+pub(crate) fn no_creative_or_spectator(target: Option<&LivingEntity>) -> bool {
     match target {
         Some(t) => {
             !(t.entity.is_player()

@@ -132,7 +132,8 @@ impl LivingEntity {
 
     /// `new(EntityType, Level)`.
     pub fn new(entity_type: Holder<EntityType>, level: Option<std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>>) -> Self {
-        let entity = Entity::new(entity_type.clone(), level);
+        let mut entity = Entity::new(entity_type.clone(), level);
+        entity.is_living = true;
         let combat_tracker = CombatTracker::new(entity.clone());
         let type_id = match &entity_type {
             Holder::Direct(t) => Some(t.id.clone()),
@@ -2261,38 +2262,49 @@ impl LivingEntity {
     }
 
     /// `setRemainingFireTicks`.
-    pub fn set_remaining_fire_ticks(&mut self, _ticks: i32) {}
+    pub fn set_remaining_fire_ticks(&mut self, ticks: i32) {
+        self.entity.set_remaining_fire_ticks(ticks);
+    }
 
     /// `getRemainingFireTicks`.
     pub fn get_remaining_fire_ticks(&self) -> i32 {
-        0
+        self.entity.get_remaining_fire_ticks()
     }
 
-    /// `isFreezing`.
+    /// `isFreezing` — `ticksFrozen >= getTicksRequiredToFreeze`.
     pub fn is_freezing(&self) -> bool {
-        false
+        self.entity.ticks_frozen >= self.get_ticks_required_to_freeze()
     }
 
     /// `getTicksFrozen`.
     pub fn get_ticks_frozen(&self) -> i32 {
-        0
+        self.entity.ticks_frozen
     }
 
     /// `setTicksFrozen`.
-    pub fn set_ticks_frozen(&mut self, _ticks: i32) {}
+    pub fn set_ticks_frozen(&mut self, ticks: i32) {
+        self.entity.ticks_frozen = ticks;
+    }
 
-    /// `isFullyFrozen`.
+    /// `isFullyFrozen` — `percentFrozen >= 0.99F`.
     pub fn is_fully_frozen(&self) -> bool {
-        false
+        self.entity.percent_frozen >= 0.99
     }
 
     /// `getPercentFrozen`.
     pub fn get_percent_frozen(&self) -> f32 {
-        0.0
+        self.entity.percent_frozen
     }
 
     /// `setPercentFrozen`.
-    pub fn set_percent_frozen(&mut self, _percent: f32) {}
+    pub fn set_percent_frozen(&mut self, percent: f32) {
+        self.entity.percent_frozen = percent.clamp(0.0, 1.0);
+    }
+
+    /// `getTicksRequiredToFreeze` — 140 тиков (vanilla default).
+    pub fn get_ticks_required_to_freeze(&self) -> i32 {
+        140
+    }
 
     /// `onClimbable`.
     pub fn on_climbable(&self) -> bool {
@@ -2885,6 +2897,7 @@ impl LivingEntity {
     pub fn from_entity(entity: Entity) -> Self {
         let mut le = Self::new(entity.entity_type.clone(), entity.level.clone());
         le.entity = entity;
+        le.entity.is_living = true;
         le
     }
 

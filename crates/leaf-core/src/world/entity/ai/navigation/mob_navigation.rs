@@ -84,6 +84,10 @@ pub trait MobNavigation {
     fn set_can_open_doors(&mut self, v: bool);
     fn set_can_pass_doors(&mut self, v: bool);
 
+    /// `setAvoidSun` — `GroundPathNavigation`-специфично
+    /// (`RestrictSunGoal`); default no-op для остальных типов.
+    fn set_avoid_sun(&mut self, _v: bool) {}
+
     /// `canNavigateGround`.
     fn can_navigate_ground(&self) -> bool;
 

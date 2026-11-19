@@ -145,6 +145,9 @@ pub struct Mob {
     /// `chargingCrossbow` — флаг анимации перезарядки арбалета
     /// (`CrossbowAttackMob.setChargingCrossbow`).
     pub charging_crossbow: bool,
+    /// `swellDir` — направление вздутия крипера
+    /// (`SwellGoal`; -1 = не вздут, 1 = вздутие).
+    pub swell_dir: i32,
     // `wasExploding`? нет — `persistent` флаги в Entity.
     // `ambientSoundTime` уже есть; `idleAnimationState`?
     // `swinging` есть в LivingEntity.
@@ -183,6 +186,7 @@ impl Mob {
             no_action_time: 0,
             spawn_anim: false,
             charging_crossbow: false,
+            swell_dir: -1,
         };
         mob.living.entity.is_mob = true;
         mob
@@ -198,6 +202,23 @@ impl Mob {
     pub fn is_charging_crossbow(&self) -> bool {
         self.charging_crossbow
     }
+
+    /// `getSwellDir`/`setSwellDir` (Creeper).
+    pub fn get_swell_dir(&self) -> i32 {
+        self.swell_dir
+    }
+    pub fn set_swell_dir(&mut self, dir: i32) {
+        self.swell_dir = dir;
+    }
+
+    /// `isWithinHome()` — собственная позиция.
+    pub fn is_within_home_pos(&self) -> bool {
+        let pos = self.living.entity.block_position();
+        self.is_within_home(pos)
+    }
+
+    /// `getHomePosition()` — уже есть в `restrict_to`-блоке
+    /// (BlockPos — наш Vec3i-эквивалент).
 
     /// `createNavigation` — дефолт `GroundPathNavigation`
     /// (переопределяется наследниками: Ghast → Flying и т.д.).
