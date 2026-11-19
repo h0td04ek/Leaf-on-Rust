@@ -271,6 +271,7 @@ impl Clone for crate::world::entity::entity::Entity {
             forced_age: self.forced_age,
             forced_age_timer: self.forced_age_timer,
             in_love: self.in_love,
+            was_in_powder_snow: self.was_in_powder_snow,
             love_cause: self.love_cause,
             horizontal_collision: self.horizontal_collision,
             vertical_collision: self.vertical_collision,

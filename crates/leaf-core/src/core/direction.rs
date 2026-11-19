@@ -420,6 +420,34 @@ impl Direction {
         Self::from_2d_data_value(mth::floor(y_rot / 90.0 + 0.5) & 3)
     }
 
+    /// `Direction.getNearest(x, z, yRot)` — ближайшее
+    /// горизонтальное направление к вектору (x, z),
+    /// повёрнутому на `-yRot` (yaw сущности).
+    pub fn get_nearest_horizontal(x: f64, z: f64, y_rot: f64) -> Direction {
+        let f = (x * x + z * z) as f32;
+        if f < 1.0e-5 {
+            return Self::from_y_rot(y_rot);
+        }
+        let inv = 1.0 / f.sqrt();
+        let f2 = (x as f32) * inv;
+        let f3 = (z as f32) * inv;
+        let yaw_rad = (y_rot as f32) * (std::f32::consts::PI / 180.0);
+        let f4 = yaw_rad.sin();
+        let f5 = yaw_rad.cos();
+        // Поворот нормированного вектора на -yaw (как getInputVector).
+        let f6 = f2 * f5 - f3 * f4;
+        let f7 = f3 * f5 + f2 * f4;
+        let flag1 = f6 < 0.0;
+        let flag2 = f7 < 0.0;
+        if flag1 {
+            if flag2 { Direction::WEST } else { Direction::NORTH }
+        } else if flag2 {
+            Direction::SOUTH
+        } else {
+            Direction::EAST
+        }
+    }
+
     pub fn from_axis_and_direction(axis: Axis, direction: AxisDirection) -> Direction {
         match axis {
             Axis::X => {

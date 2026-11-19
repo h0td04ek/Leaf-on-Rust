@@ -77,6 +77,8 @@ pub struct Entity {
     pub forced_age_timer: i32,
     /// `inLove` — `Animal.inLove` (тики влюблённости).
     pub in_love: i32,
+    /// `wasInPowderSnow` — был ли в рыхлом снегу на прошлом тике.
+    pub was_in_powder_snow: bool,
     /// `loveCause` — `Animal.loveCause` (UUID игрока; EntityReference
     /// нельзя — рекурсия Entity↔EntityReference).
     pub love_cause: Option<Uuid>,
@@ -181,6 +183,7 @@ impl Entity {
             forced_age: 0,
             forced_age_timer: 0,
             in_love: 0,
+            was_in_powder_snow: false,
             love_cause: None,
             horizontal_collision: false,
             vertical_collision: false,
@@ -1140,8 +1143,32 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isInClouds()`.
     pub fn is_in_clouds(&self) -> bool { false }
 
-    /// `isInPowderSnow()`.
-    pub fn is_in_powder_snow(&self) -> bool { false }
+    /// `isInPowderSnow()` — блок под ногами `powder_snow`.
+    pub fn is_in_powder_snow(&self) -> bool {
+        let Some(level) = &self.level else {
+            return false;
+        };
+        level
+            .get_block_state(self.block_position())
+            .map(|s| s.block.id.path == "powder_snow")
+            .unwrap_or(false)
+    }
+
+    /// `Entity.wasInPowderSnow` — флаг прошлого тика.
+    pub fn set_was_in_powder_snow(&mut self, v: bool) {
+        self.was_in_powder_snow = v;
+    }
+
+    /// `getMotionDirection()` — направление движения
+    /// (`Direction.getNearest(delta.x, delta.z, yRot)`).
+    pub fn get_motion_direction(&self) -> crate::core::direction::Direction {
+        let d = self.get_delta_movement();
+        crate::core::direction::Direction::get_nearest_horizontal(
+            d.x,
+            d.z,
+            self.get_y_rot() as f64,
+        )
+    }
 
     /// `isPassengerOfSameVehicle(other)`.
     pub fn is_passenger_of_same_vehicle(&self, _other: &Entity) -> bool { false }

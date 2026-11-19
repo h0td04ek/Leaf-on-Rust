@@ -64,6 +64,10 @@ pub mod keys {
     pub fn illager() -> TagKey<EntityType> { tag("illager") }
     /// `RAIDERS`.
     pub fn raiders() -> TagKey<EntityType> { tag("raiders") }
+    /// `POWDER_SNOW_WALKABLE_MOBS`.
+    pub fn powder_snow_walkable_mobs() -> TagKey<EntityType> {
+        tag("powder_snow_walkable_mobs")
+    }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых тегов
@@ -130,6 +134,11 @@ pub fn bootstrap() {
     register_entity_type_tag(
         Id::with_default_namespace("freeze_hurts_extra_types").unwrap(),
         ids(&["strider", "blaze", "magma_cube"]),
+    );
+    // powder_snow_walkable_mobs = [polar_bear, strider]
+    register_entity_type_tag(
+        Id::with_default_namespace("powder_snow_walkable_mobs").unwrap(),
+        ids(&["polar_bear", "strider"]),
     );
 }
 

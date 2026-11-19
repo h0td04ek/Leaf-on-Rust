@@ -791,3 +791,201 @@ impl Goal for BreathAirGoal {
         mob.living.entity.r#move(delta);
     }
 }
+
+/// `ClimbOnTopOfPowderSnowGoal` — прыжок из рыхлого снега наверх
+/// (POWDER_SNOW_WALKABLE_MOBS: polar_bear, strider).
+pub struct ClimbOnTopOfPowderSnowGoal;
+
+impl ClimbOnTopOfPowderSnowGoal {
+    /// `getType().is(POWDER_SNOW_WALKABLE_MOBS)` — через entity_type
+    /// holder (Direct) и tag-реестр.
+    fn is_walkable_mob(mob: &Mob) -> bool {
+        let Some(t) = (match &mob.living.entity.entity_type {
+            crate::core::holder::Holder::Direct(t) => Some(t),
+            _ => None,
+        }) else {
+            return false;
+        };
+        crate::tags::entity_type_tags::is_entity_type_in_tag(
+            t,
+            &crate::tags::entity_type_tags::keys::powder_snow_walkable_mobs(),
+        )
+    }
+}
+
+impl Goal for ClimbOnTopOfPowderSnowGoal {
+    fn get_flags(&self) -> GoalFlagSet {
+        GoalFlagSet::from_iter([GoalFlag::Jump])
+    }
+
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        let e = &mob.living.entity;
+        let flag = e.was_in_powder_snow || e.is_in_powder_snow();
+        if !(flag && Self::is_walkable_mob(mob)) {
+            return false;
+        }
+        let Some(level) = e.level.clone() else {
+            return false;
+        };
+        let block_pos = e.block_position().above();
+        let Some(state) = level.get_block_state(block_pos) else {
+            return false;
+        };
+        state.block.id.path == "powder_snow"
+            || state.collision_shape_unleveled().is_empty()
+    }
+
+    fn requires_update_every_tick(&self) -> bool {
+        true
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        mob.jump_control.jump();
+    }
+}
+
+/// `DolphinJumpGoal extends JumpGoal` — выпрыгивание дельфина
+/// из воды (проверка свободного пути + звуки/питч).
+pub struct DolphinJumpGoal {
+    interval: i32,
+    breached: bool,
+}
+
+/// `STEPS_TO_CHECK` — дистанции проверки пути.
+const DOLPHIN_STEPS_TO_CHECK: [i32; 6] = [0, 1, 4, 5, 6, 7];
+
+impl DolphinJumpGoal {
+    /// `new(dolphin, interval)` — `reducedTickDelay(interval)`.
+    pub fn new(_mob: &Mob, interval: i32) -> Self {
+        Self {
+            interval: Self::reduced_tick_delay_static(interval),
+            breached: false,
+        }
+    }
+
+    /// `waterIsClear` — жидкость WATER и нет блокирующего блока.
+    fn water_is_clear(
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        pos: BlockPos,
+        dx: i32,
+        dz: i32,
+        scale: i32,
+    ) -> bool {
+        let p = BlockPos::new(
+            pos.x + dx * scale,
+            pos.y,
+            pos.z + dz * scale,
+        );
+        let water = level
+            .get_fluid_state(p)
+            .map(|f| {
+                f.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+            })
+            .unwrap_or(false);
+        let clear = level
+            .get_block_state(p)
+            .map(|s| !s.blocks_motion())
+            .unwrap_or(false);
+        water && clear
+    }
+
+    /// `surfaceIsClear` — воздух на +1 и +2 над водой.
+    fn surface_is_clear(
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        pos: BlockPos,
+        dx: i32,
+        dz: i32,
+        scale: i32,
+    ) -> bool {
+        let p1 = BlockPos::new(pos.x + dx * scale, pos.y + 1, pos.z + dz * scale);
+        let p2 = BlockPos::new(pos.x + dx * scale, pos.y + 2, pos.z + dz * scale);
+        level
+            .get_block_state(p1)
+            .map(|s| s.is_air())
+            .unwrap_or(false)
+            && level
+                .get_block_state(p2)
+                .map(|s| s.is_air())
+                .unwrap_or(false)
+    }
+}
+
+impl Goal for DolphinJumpGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if mob.random.borrow_mut().next_int_bound(self.interval) != 0 {
+            return false;
+        }
+        let Some(level) = mob.living.entity.level.clone() else {
+            return false;
+        };
+        let dir = mob.living.entity.get_motion_direction();
+        let (dx, dz) = (dir.get_step_x(), dir.get_step_z());
+        let pos = mob.living.block_position();
+        for &i in &DOLPHIN_STEPS_TO_CHECK {
+            if !Self::water_is_clear(&level, pos, dx, dz, i)
+                || !Self::surface_is_clear(&level, pos, dx, dz, i)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let e = &mob.living.entity;
+        let d = e.get_delta_movement().y;
+        let cond = !(d * d < 0.03)
+            || e.get_x_rot() == 0.0
+            || e.get_x_rot().abs() >= 10.0
+            || !e.is_in_water();
+        cond && !e.on_ground()
+    }
+
+    fn is_interruptable(&self) -> bool {
+        false
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        let dir = mob.living.entity.get_motion_direction();
+        let cur = mob.living.entity.get_delta_movement();
+        mob.living.entity.set_delta_movement(
+            cur.x + dir.get_step_x() as f64 * 0.6,
+            cur.y + 0.7,
+            cur.z + dir.get_step_z() as f64 * 0.6,
+        );
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.living.entity.set_x_rot(0.0);
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let was = self.breached;
+        if !was {
+            let level = mob.living.entity.level.clone();
+            let pos = mob.living.block_position();
+            self.breached = level
+                .and_then(|l| l.get_fluid_state(pos))
+                .map(|f| {
+                    f.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::water())
+                })
+                .unwrap_or(false);
+        }
+        if self.breached && !was {
+            let sound = crate::sounds::sound_events::dolphin_jump();
+            mob.living.entity.play_sound(Some(&sound), 1.0, 1.0);
+        }
+        let delta = mob.living.entity.get_delta_movement();
+        if delta.y * delta.y < 0.03 && mob.living.entity.get_x_rot() != 0.0 {
+            let xrot = crate::util::mth::rot_lerp_f32(0.2, mob.living.entity.get_x_rot(), 0.0);
+            mob.living.entity.set_x_rot(xrot);
+        } else if delta.length() > 1.0e-5 {
+            let d = (delta.x * delta.x + delta.z * delta.z).sqrt();
+            let d1 = (-delta.y).atan2(d) * 180.0 / std::f64::consts::PI;
+            mob.living.entity.set_x_rot(d1 as f32);
+        }
+    }
+}
