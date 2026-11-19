@@ -379,6 +379,12 @@ pub trait LevelReader: Send + Sync {
         None
     }
 
+    /// `PoiManager.getRandom(HOME, ..., radius, random)` — случайный
+    /// HOME-POI в radius (LocateHidingPlace). Default: ближайший.
+    fn random_home_poi_near(&self, center: BlockPos, radius: i32) -> Option<BlockPos> {
+        self.home_poi_near(center, radius)
+    }
+
     /// `PoiManager.find(HOME, ..., IS_OCCUPIED)` — ближайший
     /// HOME-POI (NearestBedSensor; AcquirePoi-путь — упрощённо
     /// до ближайшего POI без path-проверки до порта PoiManager).

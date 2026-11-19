@@ -209,3 +209,32 @@ pub fn find_section_closest_to_village(
 pub fn is_breeding(entity: &LivingEntity) -> bool {
     entity.brain_has(&keys::breed_target())
 }
+
+/// `BehaviorUtils.lockGazeAndWalkToEachOther(entity, target,
+/// speedModifier, closeEnoughDistance)` — LOOK_TARGET друг на друга
+/// + WALK_TARGET каждый к другому.
+pub fn lock_gaze_and_walk_to_each_other_living(
+    entity: &LivingEntity,
+    target: &LivingEntity,
+    speed_modifier: f32,
+    close_enough_distance: i32,
+) {
+    entity.brain_set_value(&keys::look_target(), tracker_entity(target, true));
+    target.brain_set_value(&keys::look_target(), tracker_entity(entity, true));
+    entity.brain_set_value(
+        &keys::walk_target(),
+        WalkTarget::of_tracker(tracker_entity(target, false), speed_modifier, close_enough_distance),
+    );
+    target.brain_set_value(
+        &keys::walk_target(),
+        WalkTarget::of_tracker(tracker_entity(entity, false), speed_modifier, close_enough_distance),
+    );
+}
+
+fn tracker_entity(
+    e: &LivingEntity,
+    track_eye_height: bool,
+) -> std::rc::Rc<dyn crate::world::entity::ai::memory::memory::PositionTracker> {
+    std::rc::Rc::new(EntityTracker::new(e.entity.clone(), track_eye_height))
+        as std::rc::Rc<dyn crate::world::entity::ai::memory::memory::PositionTracker>
+}
