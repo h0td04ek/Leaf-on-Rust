@@ -8,6 +8,7 @@ use crate::resources::identifier::Identifier;
 use crate::world::level::block::entity::block_entity::BlockEntityAccess;
 use crate::world::level::block::state::block_state::BlockState;
 use crate::world::level::block::state::fluid_state::FluidState;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// `LevelReader` — минимальный read-интерфейс уровня.
@@ -91,6 +92,31 @@ pub trait LevelReader: Send + Sync {
     /// `getGameTime()` — world time in ticks.
     fn game_time(&self) -> i64 {
         0
+    }
+
+    /// `getDayTime()` — day time (0..24000 цикл) для
+    /// schedule/behavior'ов. По умолчанию = game_time.
+    fn day_time(&self) -> i64 {
+        self.game_time()
+    }
+
+    /// `getPoiManager()` — POI-менеджер уровня.
+    /// `None` до порта `PoiManager` на ServerLevel.
+    fn poi_manager(
+        &self,
+    ) -> Option<Rc<dyn crate::world::entity::ai::village::poi::poi_manager::PoiManager>> {
+        None
+    }
+
+    /// `spawnGolemIfNeeded`-уровень: спавн IronGolem рядом с
+    /// villager'ом при выполнении условий. Default no-op до
+    /// порта IronGolem entity.
+    fn spawn_golem_if_needed(
+        &self,
+        _villager: &crate::world::entity::entity::Entity,
+        _game_time: i64,
+        _min_villager_amount: i32,
+    ) {
     }
 
     /// `isVillage(pos)` — алиас is_village_at для behavior-классов.

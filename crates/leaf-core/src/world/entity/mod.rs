@@ -15,6 +15,7 @@ pub mod drop_chances;
 pub mod leash_data;
 pub mod living_entity;
 pub mod mob;
+pub mod npc;
 pub mod item_entity;
 pub mod experience_orb;
 pub mod projectile;

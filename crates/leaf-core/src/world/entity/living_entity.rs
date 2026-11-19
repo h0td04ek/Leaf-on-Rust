@@ -3129,6 +3129,23 @@ impl LivingEntity {
     }
 
     /// `brain.hasMemoryValue(type)`.
+    /// `brain.getActiveNonCoreActivity()`.
+    pub fn brain_get_active_non_core_activity(
+        &self,
+    ) -> Option<std::sync::Arc<crate::entity::schedule::activity::Activity>> {
+        self.brain.as_ref().and_then(|b| b.get_active_non_core_activity())
+    }
+
+    /// `brain.getActiveActivity()`.
+    pub fn brain_get_active_activity(
+        &self,
+    ) -> Option<std::sync::Arc<crate::entity::schedule::activity::Activity>> {
+        self.brain.as_ref().and_then(|b| {
+            let active = b.get_active_activities();
+            active.into_iter().next()
+        })
+    }
+
     pub fn brain_has(&self, ty: &crate::world::entity::ai::memory::memory::MemoryModuleType) -> bool {
         self.brain.as_ref().map(|b| b.has_memory_value(ty)).unwrap_or(false)
     }

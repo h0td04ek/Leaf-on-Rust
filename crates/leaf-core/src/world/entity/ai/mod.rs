@@ -10,3 +10,4 @@ pub mod navigation;
 pub mod sensing;
 pub mod targeting;
 pub mod util;
+pub mod village;

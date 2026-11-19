@@ -1017,6 +1017,8 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `isBaby()` — AgeableMob: `getAge() &lt; 0`.
     pub fn is_baby(&self) -> bool { self.get_age() < 0 }
+    /// `isAdult()`.
+    pub fn is_adult(&self) -> bool { !self.is_baby() }
 
     /// `AgeableMob.getAge()` — серверная ветка (client DATA_BABY_ID
     /// не используется — ядро серверное).

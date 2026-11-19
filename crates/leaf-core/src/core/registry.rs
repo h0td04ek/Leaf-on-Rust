@@ -344,6 +344,12 @@ pub mod registries {
     pub fn point_of_interest_type() -> Identifier {
         Identifier::minecraft("point_of_interest_type")
     }
+    pub fn villager_type() -> Identifier {
+        Identifier::minecraft("villager_type")
+    }
+    pub fn villager_profession() -> Identifier {
+        Identifier::minecraft("villager_profession")
+    }
     pub fn memory_module_type() -> Identifier {
         Identifier::minecraft("memory_module_type")
     }

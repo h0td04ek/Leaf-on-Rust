@@ -153,6 +153,29 @@ pub struct Mob {
     pub moving_target: Option<BlockPos>,
     /// `Cat.isLying`/`setLying` — лежит ли кот.
     pub lying: bool,
+    /// Villager-поля (`AbstractVillager`/`Villager` в Java):
+    /// `None` для не-жителей.
+    pub villager_data: Option<crate::world::entity::npc::villager::villager_data::VillagerData>,
+    /// `villagerXp`.
+    pub villager_xp: i32,
+    /// `gossips` — только у жителей/торговцев.
+    pub gossips: Option<crate::world::entity::ai::gossip::gossip::GossipContainer>,
+    /// `offers` — торговые предложения.
+    pub offers: Option<crate::world::item::trading::merchant_offers::MerchantOffers>,
+    /// `assignProfessionWhenSpawned`.
+    pub assign_profession_when_spawned: bool,
+    /// `numberOfRestocksToday`.
+    pub number_of_restocks_today: i32,
+    /// `tradingPlayer` UUID.
+    pub trading_player: Option<crate::util::uuid::Uuid>,
+    /// `lastRestockGameTime`.
+    pub last_restock_game_time: i64,
+    /// `demands` — спрос по предметам.
+    pub demands: std::collections::HashMap<crate::resources::identifier::Identifier, i32>,
+    /// `goalPackages` — провайдер VillagerGoalPackages
+    /// (вызывается из refresh_brain).
+    pub goal_packages:
+        Option<std::rc::Rc<dyn Fn(&std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>, &mut Mob, &crate::world::entity::ai::brain::Brain)>>,
     // `wasExploding`? нет — `persistent` флаги в Entity.
     // `ambientSoundTime` уже есть; `idleAnimationState`?
     // `swinging` есть в LivingEntity.
@@ -194,6 +217,16 @@ impl Mob {
             swell_dir: -1,
             moving_target: None,
             lying: false,
+            villager_data: None,
+            villager_xp: 0,
+            gossips: None,
+            offers: None,
+            assign_profession_when_spawned: false,
+            number_of_restocks_today: 0,
+            trading_player: None,
+            last_restock_game_time: 0,
+            demands: std::collections::HashMap::new(),
+            goal_packages: None,
         };
         mob.living.entity.is_mob = true;
         mob
