@@ -309,6 +309,63 @@ pub trait LevelReader: Send + Sync {
     /// прогресс разрушения блока (BreakDoorGoal). Default no-op.
     fn destroy_block_progress(&self, _entity_id: i32, _pos: BlockPos, _progress: i32) {}
 
+    /// `BlockCollisions` — collision-AABB блоков в box
+    /// (`CollisionGetter.getBlockCollisions`). Default-реализация
+    /// итерирует `get_block_state` + `get_collision_shape`.
+    fn block_collisions_in_box(
+        &self,
+        bb: &crate::world::phys::aabb::Aabb,
+    ) -> Vec<crate::world::phys::aabb::Aabb> {
+        use crate::core::block_pos::BlockPos;
+        let mut out = Vec::new();
+        let min_x = bb.min_x.floor() as i32;
+        let min_y = bb.min_y.floor() as i32;
+        let min_z = bb.min_z.floor() as i32;
+        let max_x = bb.max_x.floor() as i32;
+        let max_y = bb.max_y.floor() as i32;
+        let max_z = bb.max_z.floor() as i32;
+        for x in min_x..=max_x {
+            for y in min_y..=max_y {
+                for z in min_z..=max_z {
+                    let pos = BlockPos::new(x, y, z);
+                    let Some(state) = self.get_block_state(pos) else {
+                        continue;
+                    };
+                    if !state.block.properties.has_collision {
+                        continue;
+                    }
+                    let shape = state.collision_shape_unleveled();
+                    if shape.is_empty() {
+                        continue;
+                    }
+                    let (fx, fy, fz) = (x as f64, y as f64, z as f64);
+                    for a in shape.to_aabbs() {
+                        out.push(crate::world::phys::aabb::Aabb::new(
+                            fx + a.min_x,
+                            fy + a.min_y,
+                            fz + a.min_z,
+                            fx + a.max_x,
+                            fy + a.max_y,
+                            fz + a.max_z,
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `EntityCollisions` — collision-AABB других сущностей
+    /// (`CollisionGetter.getEntityCollisions`). Default: нет
+    /// (ServerLevel переопределит по entity-списку).
+    fn entity_collisions(
+        &self,
+        _bb: &crate::world::phys::aabb::Aabb,
+        _ignore: &crate::world::entity::entity::Entity,
+    ) -> Vec<crate::world::phys::aabb::Aabb> {
+        Vec::new()
+    }
+
     /// `generate_loot`-эквивалент — наполнение `LootTable` предметами
     /// для `dropFromLootTable`. Default — пустой список до порта
     /// `LootTable`/`LootPool`.

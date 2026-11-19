@@ -1702,6 +1702,23 @@ impl LivingEntity {
     /// `travel`.
     pub fn travel(&mut self, _travel_vector: Vec3) {}
 
+    /// `LivingEntity.moveRelative(friction, movementInput)` —
+    /// `getInputVector(input, 1, yRot)` + `deltaMovement.add(input*friction)`.
+    /// Входной вектор поворачивается на `-yaw` (как `Vec3.yRot`).
+    pub fn move_relative_friction(&mut self, friction: f32, input: Vec3) {
+        let yaw = -(self.entity.get_y_rot() as f64) * std::f64::consts::PI / 180.0;
+        let (sin, cos) = yaw.sin_cos();
+        // `Vec3.yRot(angle)`: x' = x*cos + z*sin; z' = -x*sin + z*cos.
+        let ix = input.x * cos + input.z * sin;
+        let iz = -input.x * sin + input.z * cos;
+        let cur = self.entity.get_delta_movement();
+        self.entity.set_delta_movement(
+            cur.x + ix * friction as f64,
+            cur.y + input.y * friction as f64,
+            cur.z + iz * friction as f64,
+        );
+    }
+
     /// `getJumpPower()`.
     pub fn get_jump_power(&self) -> f32 {
         0.42

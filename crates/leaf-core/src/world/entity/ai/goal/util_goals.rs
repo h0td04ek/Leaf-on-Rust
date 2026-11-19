@@ -689,3 +689,105 @@ impl Goal for FleeSunGoal {
         [GoalFlag::Move].into_iter().collect()
     }
 }
+
+/// `BreathAirGoal` — поиск воздуха и всплытие (утонувшие мобы).
+pub struct BreathAirGoal;
+
+impl BreathAirGoal {
+    /// `givesAir(level, pos)` — нет жидкости (или bubble_column)
+    /// и блок проходим для LAND-pathfinding.
+    fn gives_air(
+        level: &std::sync::Arc<dyn crate::world::level::level_reader::LevelReader>,
+        pos: BlockPos,
+    ) -> bool {
+        let Some(state) = level.get_block_state(pos) else {
+            return false;
+        };
+        let fluid_empty = level
+            .get_fluid_state(pos)
+            .map(|f| f.is_empty())
+            .unwrap_or(true);
+        let bubble = state.block.id.path == "bubble_column";
+        if !fluid_empty && !bubble {
+            return false;
+        }
+        state.is_pathfindable(
+            level.as_ref(),
+            pos,
+            crate::world::level::pathfinder::path_computation_type::PathComputationType::Land,
+        )
+    }
+
+    /// `findAirPosition` — спиральный поиск дающего воздух блока
+    /// в Box(x±1, y..y+8, z±1), fallback — y+8.
+    fn find_air_position(&mut self, mob: &mut Mob) {
+        let Some(level) = mob.living.entity.level.clone() else {
+            return;
+        };
+        let e = &mob.living.entity;
+        let min_x = mth::floor(e.pos.x - 1.0) as i32;
+        let min_y = e.get_block_y();
+        let min_z = mth::floor(e.pos.z - 1.0) as i32;
+        let max_x = mth::floor(e.pos.x + 1.0) as i32;
+        let max_y = mth::floor(e.pos.y + 8.0) as i32;
+        let max_z = mth::floor(e.pos.z + 1.0) as i32;
+        let mut found: Option<BlockPos> = None;
+        'outer: for x in min_x..=max_x {
+            for y in min_y..=max_y {
+                for z in min_z..=max_z {
+                    let pos = BlockPos::new(x, y, z);
+                    if Self::gives_air(&level, pos) {
+                        found = Some(pos);
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let target = found.unwrap_or_else(|| {
+            BlockPos::containing(e.pos.x, e.pos.y + 8.0, e.pos.z)
+        });
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().move_to_pos(
+                mob,
+                target.x as f64,
+                target.y as f64 + 1.0,
+                target.z as f64,
+                1.0,
+            );
+        }
+    }
+}
+
+impl Goal for BreathAirGoal {
+    fn get_flags(&self) -> GoalFlagSet {
+        GoalFlagSet::from_iter([GoalFlag::Move, GoalFlag::Look])
+    }
+
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        mob.living.entity.get_air_supply() < 140
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        self.can_use(mob)
+    }
+
+    fn is_interruptable(&self) -> bool {
+        false
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        self.find_air_position(mob);
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        self.find_air_position(mob);
+        let input = Vec3::new(
+            mob.living.xxa as f64,
+            mob.living.yya as f64,
+            mob.living.zza as f64,
+        );
+        mob.living.move_relative_friction(0.02, input);
+        let delta = mob.living.entity.get_delta_movement();
+        mob.living.entity.r#move(delta);
+    }
+}

@@ -219,6 +219,27 @@ impl BlockState {
         crate::world::phys::shapes::VoxelShape::block()
     }
 
+    /// `getCollisionShape` без `level` — для `LevelReader::
+    /// block_collisions_in_box`, где `&dyn LevelReader` недоступен
+    /// (`Self` unsized). Текущие формы не зависят от level.
+    pub fn collision_shape_unleveled(&self) -> crate::world::phys::shapes::VoxelShape {
+        if !self.block.properties.has_collision {
+            return crate::world::phys::shapes::VoxelShape::empty();
+        }
+        self.block_shape_static()
+    }
+
+    /// Общая форма блока без level-контекста.
+    fn block_shape_static(&self) -> crate::world::phys::shapes::VoxelShape {
+        if let Some(shape) = &self.block.properties.collision_shape {
+            return shape.clone();
+        }
+        if self.is_air() || self.block.properties.liquid {
+            return crate::world::phys::shapes::VoxelShape::empty();
+        }
+        crate::world::phys::shapes::VoxelShape::block()
+    }
+
     /// `isCollisionShapeFullBlock(level, pos)` —
     /// `Block.isShapeFullBlock(getCollisionShape)`.
     pub fn is_collision_shape_full_block(

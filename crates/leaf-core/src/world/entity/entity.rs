@@ -250,6 +250,76 @@ impl Entity {
         self.update_bounding_box();
     }
 
+    /// `Entity.move(MoverType.SELF, movement)` — перемещение с
+    /// коллизиями: swept-сбор block/entity collision-AABB,
+    /// поосевое ограничение движения, step-up (`maxUpStep`),
+    /// collision-флаги. `noPhysics` — хук для сущностей без физики.
+    pub fn r#move(&mut self, movement: Vec3) {
+        if self.is_passenger() || self.no_physics {
+            return;
+        }
+        let old_pos = self.pos;
+        let old_bb = self.bounding_box.clone();
+
+        // `getBlockCollisions`/`getEntityCollisions` в swept-объёме.
+        let swept = crate::world::phys::aabb::Aabb::minmax(
+            &old_bb,
+            &old_bb.move_vec(&movement),
+        );
+        let mut boxes = Vec::new();
+        if let Some(level) = &self.level {
+            boxes.extend(level.block_collisions_in_box(&swept));
+            boxes.extend(level.entity_collisions(&old_bb, self));
+        }
+
+        let mut result = collide_movement(&old_bb, movement, &boxes);
+
+        // Step-up: `maxUpStep` при горизонтальной блокировке на земле.
+        let step = self.max_up_step() as f64;
+        let h_blocked = (result.x - movement.x).abs() > f64::EPSILON
+            || (result.z - movement.z).abs() > f64::EPSILON;
+        if step > 0.0 && self.on_ground && h_blocked {
+            let diag = collide_movement(
+                &old_bb,
+                Vec3::new(movement.x, step, movement.z),
+                &boxes,
+            );
+            if diag.y > 0.0 {
+                let bb_up = old_bb.move_vec(&diag);
+                let down = collide_movement(
+                    &bb_up,
+                    Vec3::new(0.0, -step, 0.0),
+                    &boxes,
+                );
+                let alt = Vec3::new(
+                    diag.x + down.x,
+                    diag.y + down.y,
+                    diag.z + down.z,
+                );
+                // Принимаем step-вариант, если он даёт бо́льший
+                // горизонтальный прогресс к запрошенному движению.
+                let cur_h = (result.x - movement.x).powi(2)
+                    + (result.z - movement.z).powi(2);
+                let alt_h = (alt.x - movement.x).powi(2)
+                    + (alt.z - movement.z).powi(2);
+                if alt_h < cur_h {
+                    result = alt;
+                }
+            }
+        }
+
+        let new_pos = Vec3::new(
+            old_pos.x + result.x,
+            old_pos.y + result.y,
+            old_pos.z + result.z,
+        );
+        self.set_pos(new_pos.x, new_pos.y, new_pos.z);
+        self.horizontal_collision = (result.x - movement.x).abs() > f64::EPSILON
+            || (result.z - movement.z).abs() > f64::EPSILON;
+        self.vertical_collision = (result.y - movement.y).abs() > f64::EPSILON;
+        self.on_ground = result.y != movement.y && movement.y < 0.0;
+    }
+
     /// `getX()`, `getY()`, `getZ()`.
     /// `getBlockX/Y/Z`.
     pub fn get_block_x(&self) -> i32 { crate::util::mth::floor(self.pos.x) as i32 }
@@ -1093,4 +1163,48 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `getControllingPassenger()`.
     pub fn get_controlling_passenger(&self) -> Option<&Entity> { None }
+}
+
+/// `CollisionGetter.collide`-эквивалент: ограничивает вектор
+/// движения по каждому из боксов (поосевое зажатие, как
+/// `Shapes.collide` в vanilla — ближайшая грань по каждой оси).
+fn collide_movement(bb: &Aabb, movement: Vec3, boxes: &[Aabb]) -> Vec3 {
+    use crate::core::direction::Axis;
+    let mut out = movement;
+    for axis in Axis::VALUES {
+        let (m, o1, o2) = match axis {
+            Axis::X => (movement.x, Axis::Y, Axis::Z),
+            Axis::Y => (movement.y, Axis::X, Axis::Z),
+            Axis::Z => (movement.z, Axis::X, Axis::Y),
+        };
+        if m == 0.0 {
+            continue;
+        }
+        let mut allowed = m;
+        for b in boxes {
+            // Пересечение по двум перпендикулярным осям.
+            if bb.min_axis(o1) < b.max_axis(o1)
+                && bb.max_axis(o1) > b.min_axis(o1)
+                && bb.min_axis(o2) < b.max_axis(o2)
+                && bb.max_axis(o2) > b.min_axis(o2)
+            {
+                let bound = if m > 0.0 {
+                    b.min_axis(axis) - bb.max_axis(axis)
+                } else {
+                    b.max_axis(axis) - bb.min_axis(axis)
+                };
+                allowed = if m > 0.0 {
+                    allowed.min(bound.max(0.0))
+                } else {
+                    allowed.max(bound.min(0.0))
+                };
+            }
+        }
+        match axis {
+            Axis::X => out.x = allowed,
+            Axis::Y => out.y = allowed,
+            Axis::Z => out.z = allowed,
+        }
+    }
+    out
 }
