@@ -178,6 +178,12 @@ pub trait LevelReader: Send + Sync {
         true
     }
 
+    /// `level.purpurConfig.llamaJoinCaravans` — Purpur-конфиг
+    /// караванов лам. Default: true.
+    fn llama_caravans_enabled(&self) -> bool {
+        true
+    }
+
     /// `gameEvent(event, pos, context)` — гейм-эвент
     /// (sculk sensors, allays и т.п.). Default no-op до порта
     /// game-event диспетчера.

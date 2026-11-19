@@ -2094,3 +2094,470 @@ impl Goal for TradeWithPlayerGoal {
         [GoalFlag::Jump, GoalFlag::Move].into_iter().collect()
     }
 }
+
+/// `LlamaFollowCaravanGoal` — лама присоединяется к каравану:
+/// ищет ближайшую ламу в караване без хвоста (или на поводке),
+/// `joinCaravan`, следует за головой каравана с ростом
+/// speedModifier при удалении >26 блоков (до 3.0, затем
+/// distCheckCounter 40 тиков).
+pub struct LlamaFollowCaravanGoal {
+    /// `speedModifier`.
+    pub speed_modifier: f64,
+    /// `distCheckCounter`.
+    pub dist_check_counter: i32,
+}
+
+/// `CARAVAN_LIMIT` — макс. глубина цепочки leash-проверки.
+const CARAVAN_LIMIT: i32 = 8;
+
+impl LlamaFollowCaravanGoal {
+    /// `new(llama, speedModifier)` — MOVE-флаг.
+    pub fn new(speed_modifier: f64) -> Self {
+        Self { speed_modifier, dist_check_counter: 0 }
+    }
+
+    /// `firstIsLeashed(llama, pos)` — рекурсивная проверка
+    /// цепочки каравана (≤8 звеньев).
+    fn first_is_leashed(mob: &Mob, llama: &Entity, pos: i32) -> bool {
+        if pos > CARAVAN_LIMIT {
+            return false;
+        }
+        // inCaravan + (head.isLeashed || recurse(head, pos+1))
+        let le = LivingEntity::from_entity(llama.clone());
+        if !le.mob_in_caravan() {
+            return false;
+        }
+        let Some(head) = le.mob_get_caravan_head() else {
+            return false;
+        };
+        if head.is_leashed() {
+            return true;
+        }
+        Self::first_is_leashed(mob, &head, pos + 1)
+    }
+
+    /// Проверка типа llama/trader_llama по entity-type id.
+    fn is_llama_type(e: &Entity) -> bool {
+        crate::world::entity::entity_type::holder_type_id(&e.entity_type)
+            .map(|id| {
+                id == crate::resources::identifier::Identifier::with_default_namespace("llama").unwrap()
+                    || id
+                        == crate::resources::identifier::Identifier::with_default_namespace(
+                            "trader_llama",
+                        )
+                        .unwrap()
+            })
+            .unwrap_or(false)
+    }
+}
+
+impl Goal for LlamaFollowCaravanGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        // purpurConfig.llamaJoinCaravans — config-хук.
+        if !mob.level().map(|l| l.llama_caravans_enabled()).unwrap_or(true) {
+            return false;
+        }
+        if !mob.llama_should_join_caravan() {
+            return false;
+        }
+        if mob.is_leashed() || mob.llama_in_caravan() {
+            return false;
+        }
+        let Some(level) = mob.level() else {
+            return false;
+        };
+        let box_ = mob.living.entity.get_bounding_box().inflate(9.0, 4.0, 9.0);
+        let own_uuid = mob.living.entity.uuid;
+        let entities: Vec<Entity> = level
+            .entities_in_box(&box_)
+            .into_iter()
+            .filter(|e| e.uuid != own_uuid && Self::is_llama_type(e))
+            .collect();
+        let mut best: Option<Entity> = None;
+        let mut best_d = f64::MAX;
+        // Фаза 1: в караване без хвоста.
+        for e in &entities {
+            let le = LivingEntity::from_entity(e.clone());
+            let in_caravan = le.mob_in_caravan();
+            let has_tail = le.mob_llama_has_caravan_tail();
+            if in_caravan && !has_tail {
+                let d = mob.living.entity.distance_to_sqr(e);
+                if d <= best_d {
+                    best_d = d;
+                    best = Some(e.clone());
+                }
+            }
+        }
+        // Фаза 2: на поводке без хвоста.
+        if best.is_none() {
+            for e in &entities {
+                let le = LivingEntity::from_entity(e.clone());
+                if e.is_leashed() && !le.mob_llama_has_caravan_tail() {
+                    let d = mob.living.entity.distance_to_sqr(e);
+                    if d <= best_d {
+                        best_d = d;
+                        best = Some(e.clone());
+                    }
+                }
+            }
+        }
+        let Some(head) = best else {
+            return false;
+        };
+        if best_d < 4.0 {
+            return false;
+        }
+        let head_le = LivingEntity::from_entity(head.clone());
+        if !head.is_leashed()
+            && !Self::first_is_leashed(mob, &head, 1)
+        {
+            return false;
+        }
+        mob.llama_join_caravan(&head);
+        let _ = head_le;
+        true
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        if !mob.llama_should_join_caravan() {
+            return false;
+        }
+        if mob.llama_in_caravan() {
+            let Some(head) = mob.llama_get_caravan_head() else {
+                return false;
+            };
+            if !head.is_alive() {
+                return false;
+            }
+            if !Self::first_is_leashed(mob, &mob.living.entity.clone(), 0) {
+                return false;
+            }
+            let d = mob.living.entity.distance_to_sqr(&head);
+            if d > 676.0 {
+                if self.speed_modifier <= 3.0 {
+                    self.speed_modifier *= 1.2;
+                    self.dist_check_counter = Self::reduced_tick_delay_static(40);
+                    return true;
+                }
+                if self.dist_check_counter == 0 {
+                    return false;
+                }
+            }
+            if self.dist_check_counter > 0 {
+                self.dist_check_counter -= 1;
+            }
+            return true;
+        }
+        false
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        mob.llama_leave_caravan();
+        self.speed_modifier = 2.1;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        if !mob.llama_in_caravan() {
+            return;
+        }
+        // !(getLeashHolder instanceof LeashFenceKnotEntity)
+        let is_fence_knot = mob
+            .llama_get_leash_holder()
+            .map(|h| {
+                crate::world::entity::entity_type::holder_type_id(&h.entity_type)
+                    .map(|id| {
+                        id == crate::resources::identifier::Identifier::with_default_namespace(
+                            "leash_knot",
+                        )
+                        .unwrap()
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if is_fence_knot {
+            return;
+        }
+        let Some(head) = mob.llama_get_caravan_head() else {
+            return;
+        };
+        let d = mob.living.distance_to(&head);
+        let f = 2.0f64;
+        // vec3 = (head.pos - pos).normalize().scale(max(d-2,0))
+        let hx = head.get_x() - mob.get_x();
+        let hy = head.get_y() - mob.get_y();
+        let hz = head.get_z() - mob.get_z();
+        let len = (hx * hx + hy * hy + hz * hz).sqrt();
+        let scale = if len > 0.0 { (d - 2.0).max(0.0) / len } else { 0.0 };
+        let tx = mob.get_x() + hx * scale;
+        let ty = mob.get_y() + hy * scale;
+        let tz = mob.get_z() + hz * scale;
+        let _ = f;
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().move_to_pos(mob, tx, ty, tz, self.speed_modifier);
+        }
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Move].into_iter().collect()
+    }
+}
+
+/// `SpearUseGoal.SpearUseState` — состояние копейщика:
+/// engageTime (длительность замаха), fleeingTime,
+/// awayPos (точка отхода), done.
+pub struct SpearUseState {
+    /// `engageTime` — -1 до начала замаха.
+    pub engage_time: i32,
+    /// `fleeingTime`.
+    pub fleeing_time: i32,
+    /// `awayPos`.
+    pub away_pos: Option<Vec3>,
+    /// `done`.
+    pub done: bool,
+}
+
+impl SpearUseState {
+    /// `new` (state создаётся в `start()`).
+    pub fn new() -> Self {
+        Self { engage_time: -1, fleeing_time: -1, away_pos: None, done: false }
+    }
+
+    /// `notEngagedYet()`.
+    pub fn not_engaged_yet(&self) -> bool {
+        self.engage_time < 0
+    }
+
+    /// `startEngagement(engageTime)`.
+    pub fn start_engagement(&mut self, engage_time: i32) {
+        self.engage_time = engage_time;
+    }
+
+    /// `tickAndCheckEngagement()` — true когда замах завершён.
+    pub fn tick_and_check_engagement(&mut self) -> bool {
+        if self.engage_time > 0 {
+            self.engage_time -= 1;
+            if self.engage_time == 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `tickAndCheckFleeing()` — true когда побег завершён/таймаут.
+    pub fn tick_and_check_fleeing(&mut self) -> bool {
+        if self.fleeing_time > 0 {
+            self.fleeing_time += 1;
+            if self.fleeing_time as f64 > SpearUseGoal::MAX_FLEEING_TIME {
+                self.done = true;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl Default for SpearUseState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `SpearUseGoal` — монстр с кинетическим оружием (spear/breeze
+/// rod): подходит до approachDistance, начинает use-item
+/// (KINETIC_WEAPON), после замаха отходит на 6-11 блоков,
+/// возвращается и повторяет; побег ограничен MAX_FLEEING_TIME.
+pub struct SpearUseGoal {
+    /// `speedModifierWhenCharging`.
+    pub speed_modifier_when_charging: f64,
+    /// `speed_modifierWhenRepositioning`.
+    pub speed_modifier_when_repositioning: f64,
+    /// `approachDistanceSq`.
+    pub approach_distance_sq: f32,
+    /// `targetInRangeRadiusSq`.
+    pub target_in_range_radius_sq: f32,
+    /// `state`.
+    pub state: Option<SpearUseState>,
+}
+
+/// `MAX_FLEEING_TIME` — `reducedTickDelay(100)` = 50.
+const MAX_FLEEING_TIME: f64 = 50.0;
+
+impl SpearUseGoal {
+    /// `MAX_FLEEING_TIME` как в Java static.
+    pub const MAX_FLEEING_TIME: f64 = MAX_FLEEING_TIME;
+
+    /// `MIN_REPOSITION_DISTANCE`/`MAX_REPOSITION_DISTANCE`/
+    /// `MIN_COOLDOWN_DISTANCE`/`MAX_COOLDOWN_DISTANCE` — константы
+    /// из Java (используются при расчёте awayPos через i).
+    pub const MIN_REPOSITION_DISTANCE: i32 = 6;
+    pub const MAX_REPOSITION_DISTANCE: i32 = 7;
+    pub const MIN_COOLDOWN_DISTANCE: i32 = 9;
+    pub const MAX_COOLDOWN_DISTANCE: i32 = 11;
+
+    /// `new(mob, charging, repositioning, approachDistance,
+    /// targetInRangeRadius)` — MOVE+LOOK флаги.
+    pub fn new(
+        speed_modifier_when_charging: f64,
+        speed_modifier_when_repositioning: f64,
+        approach_distance: f32,
+        target_in_range_radius: f32,
+    ) -> Self {
+        Self {
+            speed_modifier_when_charging,
+            speed_modifier_when_repositioning,
+            approach_distance_sq: approach_distance * approach_distance,
+            target_in_range_radius_sq: target_in_range_radius * target_in_range_radius,
+            state: None,
+        }
+    }
+
+    /// `ableToAttack()` — target != null && main hand имеет
+    /// KINETIC_WEAPON.
+    fn able_to_attack(mob: &Mob) -> bool {
+        mob.get_target().is_some()
+            && mob
+                .living
+                .get_main_hand_item()
+                .has_component(&crate::resources::identifier::Identifier::minecraft(
+                    "kinetic_weapon",
+                ))
+    }
+
+    /// `getKineticWeaponUseDuration()` —
+    /// `reducedTickDelay(delayTicks + damageConditions.maxDurationTicks)`.
+    fn get_kinetic_weapon_use_duration(mob: &Mob) -> i32 {
+        let stack = mob.living.get_main_hand_item();
+        let i: i32 = stack
+            .get_component::<crate::world::item::component::kinetic_weapon::KineticWeapon>(
+                &crate::resources::identifier::Identifier::minecraft("kinetic_weapon"),
+            )
+            .map(|kw| {
+                kw.delay_ticks
+                    + kw.damage_conditions
+                        .map(|c| c.max_duration_ticks)
+                        .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        Self::reduced_tick_delay_static(i)
+    }
+}
+
+impl Goal for SpearUseGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        Self::able_to_attack(mob) && !mob.living.is_using_item()
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        self.state
+            .as_ref()
+            .map(|s| !s.done)
+            .unwrap_or(false)
+            && Self::able_to_attack(mob)
+    }
+
+    fn start(&mut self, mob: &mut Mob) {
+        mob.set_aggressive(true);
+        self.state = Some(SpearUseState::new());
+    }
+
+    fn stop(&mut self, mob: &mut Mob) {
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().stop(mob);
+        }
+        mob.set_aggressive(false);
+        self.state = None;
+        mob.living.stop_using_item();
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        let Some(target) = mob.get_target().cloned() else {
+            return;
+        };
+        let d = mob
+            .living
+            .entity
+            .distance_to_sqr_pos(target.entity.get_x(), target.entity.get_y(), target.entity.get_z());
+        // rootVehicle instanceof Mob → chargeSpeedModifier, иначе 1.0.
+        let root = mob.living.entity.get_root_vehicle();
+        let f = root.entity_charge_speed_modifier();
+        let i = if mob.living.entity.is_passenger() { 2 } else { 0 };
+        mob.look_at(&target.entity, 30.0, 30.0);
+        mob.look_control
+            .set_look_at_entity_deltas(&target.entity, 30.0, 30.0);
+        if state.not_engaged_yet() {
+            if d > self.approach_distance_sq as f64 {
+                if let Some(nav) = mob.get_navigation() {
+                    nav.borrow_mut().move_to_entity(mob, &target, f as f64 * self.speed_modifier_when_repositioning);
+                }
+                return;
+            }
+            let duration = Self::get_kinetic_weapon_use_duration(mob);
+            state.start_engagement(duration);
+            mob.living.start_using_item(crate::entity::humanoid_arm::HumanoidArm::Right);
+        }
+        if state.tick_and_check_engagement() {
+            mob.living.stop_using_item();
+            let square_root = d.sqrt();
+            state.away_pos = crate::world::entity::ai::util::land_random_pos::get_pos_away_min(
+                mob,
+                (9.0 + i as f64 - square_root).max(0.0),
+                (11.0 + i as f64 - square_root).max(1.0),
+                7,
+                target.position(),
+            );
+            state.fleeing_time = 1;
+        }
+        if !state.tick_and_check_fleeing() {
+            if let Some(away) = state.away_pos {
+                if let Some(nav) = mob.get_navigation() {
+                    nav.borrow_mut().move_to_pos(
+                        mob,
+                        away.x,
+                        away.y,
+                        away.z,
+                        f as f64 * self.speed_modifier_when_repositioning,
+                    );
+                }
+                let nav_done = mob
+                    .get_navigation()
+                    .as_ref()
+                    .map(|n| n.borrow().is_done())
+                    .unwrap_or(true);
+                if nav_done {
+                    if state.fleeing_time > 0 {
+                        state.done = true;
+                        return;
+                    }
+                    state.away_pos = None;
+                }
+            } else {
+                if let Some(nav) = mob.get_navigation() {
+                    nav.borrow_mut().move_to_entity(mob, &target, f as f64 * self.speed_modifier_when_charging);
+                }
+                if d < self.target_in_range_radius_sq as f64
+                    || mob
+                        .get_navigation()
+                        .as_ref()
+                        .map(|n| n.borrow().is_done())
+                        .unwrap_or(true)
+                {
+                    let square_root = d.sqrt();
+                    state.away_pos = crate::world::entity::ai::util::land_random_pos::get_pos_away_min(
+                        mob,
+                        6.0 + i as f64 - square_root,
+                        7.0 + i as f64 - square_root,
+                        7,
+                        target.position(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn get_flags(&self) -> GoalFlagSet {
+        [GoalFlag::Move, GoalFlag::Look].into_iter().collect()
+    }
+}

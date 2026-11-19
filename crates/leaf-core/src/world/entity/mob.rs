@@ -912,6 +912,44 @@ impl Mob {
         false
     }
 
+    /// `Mob.chargeSpeedModifier()` — модификатор скорости при
+    /// движении с зарядкой (SpearUseGoal). Default: 1.0.
+    pub fn charge_speed_modifier(&self) -> f32 {
+        1.0
+    }
+
+    /// `Llama.shouldJoinCaravan` — флаг API (Purpur).
+    /// Default: false.
+    pub fn llama_should_join_caravan(&self) -> bool {
+        false
+    }
+
+    /// `Llama.inCaravan()`.
+    pub fn llama_in_caravan(&self) -> bool {
+        false
+    }
+
+    /// `Llama.hasCaravanTail()`.
+    pub fn llama_has_caravan_tail(&self) -> bool {
+        false
+    }
+
+    /// `Llama.getCaravanHead()` — голова каравана (Entity-view).
+    pub fn llama_get_caravan_head(&self) -> Option<Entity> {
+        None
+    }
+
+    /// `Llama.getLeashHolder()` — держатель поводка.
+    pub fn llama_get_leash_holder(&self) -> Option<Entity> {
+        None
+    }
+
+    /// `Llama.joinCaravan(head)`.
+    pub fn llama_join_caravan(&mut self, _head: &Entity) {}
+
+    /// `Llama.leaveCaravan()`.
+    pub fn llama_leave_caravan(&mut self) {}
+
     /// `Animal.getBreedOffspring`-совместимый хук: `Mob.ate()` —
     /// сущность съела блок (овца — отрастить шерсть).
     /// Наследники переопределяют.

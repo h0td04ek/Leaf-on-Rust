@@ -769,6 +769,17 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isVehicle()`.
     pub fn is_vehicle(&self) -> bool { false }
 
+    /// `Entity.isLeashed()` — на поводке (фенс или сущность).
+    /// Default: false; leash-aware сущности переопределяют.
+    pub fn is_leashed(&self) -> bool { false }
+
+    /// `Mob.chargeSpeedModifier()` для rootVehicle instanceof Mob
+    /// в SpearUseGoal. Default: 1.0 (Mob-подклассы переопределяют
+    /// через переопределение EntityView там, где доступен Mob).
+    pub fn entity_charge_speed_modifier(&self) -> f32 {
+        1.0
+    }
+
     /// `Entity instanceof AbstractBoat`-проверка для
     /// FollowBoatGoal (getEntitiesOfClass(AbstractBoat.class)).
     /// Default: false — лодки переопределяют по типу.
@@ -1173,6 +1184,19 @@ pub fn is_alive_and_well(&self) -> bool {
             d.z,
             self.get_y_rot() as f64,
         )
+    }
+
+    /// `getRootVehicle()` — верхний транспорт цепочки
+    /// пассажиров (self, если не пассажир).
+    pub fn get_root_vehicle(&self) -> Entity {
+        let mut current = self.clone();
+        while current.is_passenger() {
+            match current.get_vehicle().cloned() {
+                Some(v) => current = v,
+                None => break,
+            }
+        }
+        current
     }
 
     /// `isPassengerOfSameVehicle(other)`.

@@ -1578,6 +1578,22 @@ impl LivingEntity {
         false
     }
 
+    /// `Llama.inCaravan()` — view-хук для FollowCaravanGoal
+    /// (LlamaFollowCaravanGoal работает по Entity/LivingEntity-view).
+    pub fn mob_in_caravan(&self) -> bool {
+        false
+    }
+
+    /// `Llama.getCaravanHead()` — view-хук.
+    pub fn mob_get_caravan_head(&self) -> Option<Entity> {
+        None
+    }
+
+    /// `Llama.hasCaravanTail()` — view-хук.
+    pub fn mob_llama_has_caravan_tail(&self) -> bool {
+        false
+    }
+
     /// `Entity.hasMovedHorizontallyRecently()` — игрок в лодке
     /// недавно двигался (FollowBoatGoal). Default: false.
     pub fn player_moved_horizontally_recently(&self) -> bool {
