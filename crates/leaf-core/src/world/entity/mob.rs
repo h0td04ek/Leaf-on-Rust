@@ -542,6 +542,16 @@ impl Mob {
     pub fn get_y(&self) -> f64 { self.living.entity.get_y() }
     pub fn get_z(&self) -> f64 { self.living.entity.get_z() }
     pub fn position(&self) -> Vec3 { self.living.entity.position() }
+
+    /// `wantsToPickUp(level, itemStack)` — моб хочет подобрать
+    /// предмет (для NearestItemSensor). Default false.
+    pub fn wants_to_pick_up(
+        &self,
+        _level: &Arc<dyn crate::world::level::level_reader::LevelReader>,
+        _stack: &crate::world::item::item_stack::ItemStack,
+    ) -> bool {
+        false
+    }
     pub fn block_position(&self) -> BlockPos { self.living.entity.block_position() }
     pub fn level(&self) -> Option<Arc<dyn LevelReader>> { self.living.entity.level.clone() }
     pub fn get_speed(&self) -> f32 { self.living.get_speed() }

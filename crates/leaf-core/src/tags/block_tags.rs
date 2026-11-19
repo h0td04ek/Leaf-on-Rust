@@ -60,6 +60,15 @@ impl BlockTags {
     pub fn edible_for_sheep() -> Identifier {
         Identifier::minecraft("edible_for_sheep")
     }
+
+    /// `BlockTags.PIGLIN_REPELLENTS` — soul_* блоки.
+    pub fn piglin_repellents() -> Identifier {
+        Identifier::minecraft("piglin_repellents")
+    }
+    /// `BlockTags.HOGLIN_REPELLENTS` — warped/portal/anchor.
+    pub fn hoglin_repellents() -> Identifier {
+        Identifier::minecraft("hoglin_repellents")
+    }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых блочных
@@ -89,6 +98,16 @@ pub fn bootstrap() {
     crate::tags::register_block_tag(
         Id::with_default_namespace("edible_for_sheep").unwrap(),
         ids(&["short_grass", "fern", "large_fern", "dead_bush", "seagrass", "tall_seagrass"]),
+    );
+    // piglin_repellents (data/minecraft/tags/block/piglin_repellents.json)
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("piglin_repellents").unwrap(),
+        ids(&["soul_fire", "soul_torch", "soul_lantern", "soul_wall_torch", "soul_campfire"]),
+    );
+    // hoglin_repellents
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("hoglin_repellents").unwrap(),
+        ids(&["warped_fungus", "potted_warped_fungus", "nether_portal", "respawn_anchor"]),
     );
 }
 

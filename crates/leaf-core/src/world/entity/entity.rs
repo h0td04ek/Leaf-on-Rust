@@ -718,6 +718,21 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isSpectator()`.
     pub fn is_spectator(&self) -> bool { false }
 
+    /// `getType() == EntityType.X` — проверка типа по registry-id
+    /// (`minecraft:item` и т.д.).
+    pub fn entity_type_is_id(&self, id: &str) -> bool {
+        let want = crate::resources::identifier::Identifier::minecraft(id);
+        crate::world::entity::entity_type::holder_type_id(&self.entity_type)
+            .map(|t| t == want)
+            .unwrap_or(false)
+    }
+
+    /// `ItemEntity.getItem()` — стек для item-сущностей;
+    /// default None (переопределяется ItemEntity).
+    pub fn item_entity_stack(&self) -> Option<crate::world::item::item_stack::ItemStack> {
+        None
+    }
+
     /// `isCreative()` — creative-режим (Player; default false).
     pub fn is_creative(&self) -> bool { false }
 

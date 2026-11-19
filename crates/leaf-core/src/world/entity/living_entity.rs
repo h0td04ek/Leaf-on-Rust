@@ -111,6 +111,9 @@ pub struct LivingEntity {
     pub fall_fly_ticks: i32,
     /// `lastPos`.
     pub last_pos: Option<BlockPos>,
+    /// `brain` — Brain AI (None для не-Brain мобов; Rc т.к.
+    /// Brain тикается через &self + RefCell-поля).
+    pub brain: Option<std::rc::Rc<crate::world::entity::ai::brain::Brain>>,
     /// `lastDamageSource`, `lastDamageStamp`.
     pub last_damage_source: Option<DamageSource>,
     pub last_damage_stamp: i64,
@@ -195,6 +198,7 @@ impl LivingEntity {
             use_item_remaining: 0,
             fall_fly_ticks: 0,
             last_pos: None,
+            brain: None,
             last_damage_source: None,
             last_damage_stamp: 0,
             auto_spin_attack_ticks: 0,
@@ -2979,6 +2983,7 @@ impl Clone for LivingEntity {
             use_item_remaining: self.use_item_remaining,
             fall_fly_ticks: self.fall_fly_ticks,
             last_pos: self.last_pos,
+            brain: self.brain.clone(),
             last_damage_source: self.last_damage_source.clone(),
             last_damage_stamp: self.last_damage_stamp,
             auto_spin_attack_ticks: self.auto_spin_attack_ticks,
@@ -3053,5 +3058,158 @@ impl LivingEntity {
     /// в `Villager`. Используется `GolemRandomStrollInVillageGoal`.
     pub fn villager_wants_to_spawn_golem(&self, _game_time: i64) -> bool {
         false
+    }
+
+    /// `Brain`-хелперы: getMemory/setMemory/eraseMemory/
+    /// hasMemoryValue/checkMemory/isMemoryValue через
+    /// `self.brain` (None → Java-эквивалент "нет brain").
+    pub fn brain_get<T: Clone + 'static>(
+        &self,
+        ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+    ) -> Option<T> {
+        self.brain.as_ref()?.get_memory(ty)
+    }
+
+    /// `brain.setMemory(type, value)`.
+    pub fn brain_set<T: 'static>(
+        &self,
+        ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+        value: Option<T>,
+    ) {
+        if let Some(b) = &self.brain {
+            b.set_memory(ty, value);
+        }
+    }
+
+    /// `brain.setMemoryWithExpiry`.
+    pub fn brain_set_with_expiry<T: 'static>(
+        &self,
+        ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+        value: T,
+        ttl: i64,
+    ) {
+        if let Some(b) = &self.brain {
+            b.set_memory_with_expiry(ty, value, ttl);
+        }
+    }
+
+    /// `brain.eraseMemory(type)`.
+    pub fn brain_erase(&self, ty: &crate::world::entity::ai::memory::memory::MemoryModuleType) {
+        if let Some(b) = &self.brain {
+            b.erase_memory(ty);
+        }
+    }
+
+    /// `brain.hasMemoryValue(type)`.
+    pub fn brain_has(&self, ty: &crate::world::entity::ai::memory::memory::MemoryModuleType) -> bool {
+        self.brain.as_ref().map(|b| b.has_memory_value(ty)).unwrap_or(false)
+    }
+
+    /// `brain.checkMemory(type, status)`.
+    pub fn brain_check(
+        &self,
+        ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+        status: crate::world::entity::ai::memory::memory::MemoryStatus,
+    ) -> bool {
+        self.brain.as_ref().map(|b| b.check_memory(ty, status)).unwrap_or(false)
+    }
+
+    /// `brain.setMemory(type, value)` — не-Option перегрузка.
+    pub fn brain_set_value<T: 'static>(
+        &self,
+        ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+        value: T,
+    ) {
+        self.brain_set(ty, Some(value));
+    }
+
+    /// `entity.getType()` — EntityType за Holder (None если
+    /// holder пуст — эквивалент отсутствия типа).
+    pub fn entity_type_value(&self) -> Option<&crate::world::entity::entity_type::EntityType> {
+        self.entity.entity_type.value()
+    }
+
+    /// `Animal.isFood(stack)` — food-тест для TEMPT-целей.
+    pub fn animal_is_food(&self, _stack: &crate::world::item::item_stack::ItemStack) -> bool {
+        false
+    }
+
+    /// `Warden.canTargetEntity(entity)` — фильтр WardenEntitySensor.
+    pub fn warden_can_target_entity(&self, _entity: &LivingEntity) -> bool {
+        true
+    }
+
+    /// `getLastDamageSource()`.
+    pub fn get_last_damage_source(&self) -> Option<DamageSource> {
+        self.last_damage_source.clone()
+    }
+
+    /// `isAdult()` — AgeableMob-эквивалент (`!isBaby`).
+    pub fn is_adult(&self) -> bool {
+        !self.entity.is_baby()
+    }
+
+    /// `Hoglin.canBeHunted()` — охотничий режим хоглина.
+    pub fn can_be_hunted(&self) -> bool {
+        false
+    }
+
+    /// `Armadillo.isScaredBy(entity)`.
+    pub fn armadillo_is_scared_by(&self, _entity: &LivingEntity) -> bool {
+        false
+    }
+
+    /// `Armadillo.canStayRolledUp()`.
+    pub fn armadillo_can_stay_rolled_up(&self) -> bool {
+        true
+    }
+
+    /// `Frog.canEat(entity)` — лягушка может съесть цель.
+    pub fn frog_can_eat(&self, _target: &LivingEntity) -> bool {
+        false
+    }
+
+    /// `PiglinAi.isWearingSafeArmor(player)`.
+    pub fn piglin_ai_is_wearing_safe_armor(&self) -> bool {
+        false
+    }
+
+    /// `PiglinAi.isPlayerHoldingLovedItem(player)`.
+    pub fn piglin_ai_is_player_holding_loved_item(&self) -> bool {
+        false
+    }
+
+    /// `PiglinAi.isZombified(entityType)` — zombified_piglin/drowned?
+    /// В ваниле: `EntityType.PIGLIN`-семейство с zombie-вариантом —
+    /// `zombified_piglin`.
+    pub fn piglin_ai_is_zombified_type(type_id: &crate::resources::identifier::Identifier) -> bool {
+        type_id.path == "zombified_piglin" || type_id.path == "zoglin"
+    }
+
+    /// `Villager.getVillagerData().profession().secondaryPoi()` —
+    /// блоки вторичного POI профессии; None = нет (sensor стирает
+    /// SECONDARY_JOB_SITE как в Java early-return).
+    pub fn villager_secondary_poi_blocks(&self) -> Option<Vec<crate::resources::identifier::Identifier>> {
+        None
+    }
+
+    /// `EntityTracker.isVisibleBy` — проверка, что target есть в
+    /// `NEAREST_VISIBLE_LIVING_ENTITIES` памяти Brain'а владельца.
+    /// Default `None` = brain не подключён; переопределяется когда
+    /// появится `Brain`.
+    pub fn brain_nearest_visible_contains(&self, _target: &LivingEntity) -> Option<bool> {
+        None
+    }
+
+    /// `Brain.isMemoryValue(type, value)` — проверка, что память
+    /// `type` содержит значение, равное `value` (по UUID для
+    /// сущностей). Default `None` = brain не подключён;
+    /// переопределяется в `Brain`-носителе.
+    pub fn brain_is_memory_value(
+        &self,
+        _ty: &crate::world::entity::ai::memory::memory::MemoryModuleType,
+        _value: &LivingEntity,
+    ) -> Option<bool> {
+        None
     }
 }

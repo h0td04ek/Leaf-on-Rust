@@ -343,6 +343,30 @@ pub trait LevelReader: Send + Sync {
         None
     }
 
+    /// `PoiManager.find(HOME, ..., IS_OCCUPIED)` — ближайший
+    /// HOME-POI (NearestBedSensor; AcquirePoi-путь — упрощённо
+    /// до ближайшего POI без path-проверки до порта PoiManager).
+    fn home_poi_near(&self, _center: BlockPos, _max_dist: i32) -> Option<BlockPos> {
+        None
+    }
+
+    /// `CampfireBlock.isLitCampfire(state)` — soul_campfire горит
+    /// (PiglinSpecificSensor.isValidRepellent).
+    fn is_lit_campfire(&self, pos: BlockPos) -> bool {
+        self.get_block_state(pos)
+            .map(|s| {
+                let id = &s.block.id;
+                if !id.path.contains("campfire") {
+                    return false;
+                }
+                // property "lit" ещё не смоделирована — campfire
+                // id сам по себе lit-состояние не различает;
+                // до порта BlockState properties считаем lit.
+                true
+            })
+            .unwrap_or(false)
+    }
+
     /// `DoorBlock.isWoodenDoor(level, pos)` — `state.is(
     /// WOODEN_DOORS)` (MoveThroughVillageGoal door-scan пути).
     fn is_wooden_door(&self, pos: BlockPos) -> bool {

@@ -78,6 +78,13 @@ pub mod keys {
     pub fn accepts_iron_golem_gift() -> TagKey<EntityType> {
         tag("accepts_iron_golem_gift")
     }
+
+    /// `EntityTypeTags.AXOLOTL_HUNT_TARGETS`.
+    pub fn axolotl_hunt_targets() -> TagKey<EntityType> { tag("axolotl_hunt_targets") }
+    /// `EntityTypeTags.AXOLOTL_ALWAYS_HOSTILES`.
+    pub fn axolotl_always_hostiles() -> TagKey<EntityType> { tag("axolotl_always_hostiles") }
+    /// `EntityTypeTags.FOLLOWABLE_FRIENDLY_MOBS`.
+    pub fn followable_friendly_mobs() -> TagKey<EntityType> { tag("followable_friendly_mobs") }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых тегов
@@ -159,6 +166,29 @@ pub fn bootstrap() {
     register_entity_type_tag(
         Id::with_default_namespace("accepts_iron_golem_gift").unwrap(),
         ids(&["copper_golem"]),
+    );
+    // axolotl_hunt_targets
+    register_entity_type_tag(
+        Id::with_default_namespace("axolotl_hunt_targets").unwrap(),
+        ids(&[
+            "tropical_fish", "pufferfish", "salmon", "cod", "squid",
+            "glow_squid", "tadpole",
+        ]),
+    );
+    // axolotl_always_hostiles
+    register_entity_type_tag(
+        Id::with_default_namespace("axolotl_always_hostiles").unwrap(),
+        ids(&["drowned", "guardian", "elder_guardian"]),
+    );
+    // followable_friendly_mobs
+    register_entity_type_tag(
+        Id::with_default_namespace("followable_friendly_mobs").unwrap(),
+        ids(&[
+            "armadillo", "bee", "camel", "cat", "chicken", "cow", "donkey",
+            "fox", "goat", "happy_ghast", "horse", "skeleton_horse", "llama",
+            "mule", "ocelot", "panda", "parrot", "pig", "polar_bear",
+            "rabbit", "sheep", "sniffer", "strider", "villager", "wolf",
+        ]),
     );
 }
 
