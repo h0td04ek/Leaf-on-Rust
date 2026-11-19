@@ -148,6 +148,9 @@ pub struct Mob {
     /// `swellDir` — направление вздутия крипера
     /// (`SwellGoal`; -1 = не вздут, 1 = вздутие).
     pub swell_dir: i32,
+    /// `movingTarget` — Paper-поле: текущая цель движения
+    /// (`MoveToBlockGoal` выставляет).
+    pub moving_target: Option<BlockPos>,
     // `wasExploding`? нет — `persistent` флаги в Entity.
     // `ambientSoundTime` уже есть; `idleAnimationState`?
     // `swinging` есть в LivingEntity.
@@ -187,6 +190,7 @@ impl Mob {
             spawn_anim: false,
             charging_crossbow: false,
             swell_dir: -1,
+            moving_target: None,
         };
         mob.living.entity.is_mob = true;
         mob

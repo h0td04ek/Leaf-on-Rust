@@ -75,6 +75,11 @@ impl TargetingConditions {
         self
     }
 
+    /// Текущее значение range (для сканов снаружи).
+    pub fn range_value(&self) -> f64 {
+        self.range
+    }
+
     /// `ignoreLineOfSight()`.
     pub fn ignore_line_of_sight(&mut self) -> &mut Self {
         self.check_line_of_sight = false;
