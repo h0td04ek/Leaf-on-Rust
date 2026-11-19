@@ -69,6 +69,17 @@ pub struct Entity {
     pub on_ground: bool,
     /// `pose` — поза сущности (`getPose`/`setPose`).
     pub pose: crate::world::entity::pose::Pose,
+    /// `age` — `AgeableMob.age` (серверная; &lt;0 = детёныш).
+    pub age: i32,
+    /// `forcedAge` — `AgeableMob.forcedAge` (setBaby + ageUp).
+    pub forced_age: i32,
+    /// `forcedAgeTimer` — `AgeableMob.forcedAgeTimer`.
+    pub forced_age_timer: i32,
+    /// `inLove` — `Animal.inLove` (тики влюблённости).
+    pub in_love: i32,
+    /// `loveCause` — `Animal.loveCause` (UUID игрока; EntityReference
+    /// нельзя — рекурсия Entity↔EntityReference).
+    pub love_cause: Option<Uuid>,
     /// `horizontalCollision` — горизонтальное столкновение.
     pub horizontal_collision: bool,
     /// `verticalCollision` — вертикальное столкновение.
@@ -166,6 +177,11 @@ impl Entity {
             velocity: Vec3::ZERO,
             on_ground: false,
             pose: crate::world::entity::pose::Pose::Standing,
+            age: 0,
+            forced_age: 0,
+            forced_age_timer: 0,
+            in_love: 0,
+            love_cause: None,
             horizontal_collision: false,
             vertical_collision: false,
             hurt_time: 0,
@@ -836,8 +852,94 @@ pub fn is_alive_and_well(&self) -> bool {
         self.remaining_fire_ticks = ticks.max(self.remaining_fire_ticks);
     }
 
-    /// `isBaby()` — false для базовой entity (как в Java).
-    pub fn is_baby(&self) -> bool { false }
+    /// `isBaby()` — AgeableMob: `getAge() &lt; 0`.
+    pub fn is_baby(&self) -> bool { self.get_age() < 0 }
+
+    /// `AgeableMob.getAge()` — серверная ветка (client DATA_BABY_ID
+    /// не используется — ядро серверное).
+    pub fn get_age(&self) -> i32 { self.age }
+
+    /// `AgeableMob.setAge(age)` — смена возраста с ageBoundaryReached.
+    pub fn set_age(&mut self, age: i32) {
+        let prev = self.get_age();
+        self.age = age;
+        if (prev < 0 && age >= 0) || (prev >= 0 && age < 0) {
+            self.age_boundary_reached();
+        }
+    }
+
+    /// `AgeableMob.ageUp(amount, forced)` — старение на amount лет
+    /// (умножается на 20 тиков), с forcedAge-трекингом.
+    pub fn age_up(&mut self, amount: i32, forced: bool) {
+        let age = self.get_age();
+        let previous_age = age;
+        let mut age = age + amount * 20;
+        if age > 0 {
+            age = 0;
+        }
+        let i1 = age - previous_age;
+        self.set_age(age);
+        if forced {
+            self.forced_age += i1;
+            if self.forced_age_timer == 0 {
+                self.forced_age_timer = 40;
+            }
+        }
+        if self.get_age() == 0 {
+            self.set_age(self.forced_age);
+        }
+    }
+
+    /// `AgeableMob.getForcedAge()`.
+    pub fn get_forced_age(&self) -> i32 { self.forced_age }
+
+    /// `AgeableMob.getForcedAgeTimer()`.
+    pub fn get_forced_age_timer(&self) -> i32 { self.forced_age_timer }
+
+    /// `AgeableMob.ageBoundaryReached()` — хук (BabyableMob override).
+    pub fn age_boundary_reached(&mut self) {}
+
+    /// `Animal.isInLove()`.
+    pub fn is_in_love(&self) -> bool { self.in_love > 0 }
+
+    /// `Animal.getInLoveTime()`.
+    pub fn get_in_love_time(&self) -> i32 { self.in_love }
+
+    /// `Animal.setInLoveTime(ticks)`.
+    pub fn set_in_love_time(&mut self, ticks: i32) { self.in_love = ticks; }
+
+    /// `Animal.resetLove()` — сброс inLove и loveCause.
+    pub fn reset_love(&mut self) { self.in_love = 0; self.love_cause = None; }
+
+    /// `Animal.canFallInLove()`.
+    pub fn can_fall_in_love(&self) -> bool { self.in_love <= 0 }
+
+    /// `Animal.setInLove(player)` — inLove=600 тиков + loveCause
+    /// (uuid игрока). false, если `!canFallInLove`.
+    pub fn set_in_love(&mut self, cause: Option<&Entity>) -> bool {
+        if !self.can_fall_in_love() {
+            return false;
+        }
+        self.in_love = 600;
+        if let Some(c) = cause {
+            self.love_cause = Some(c.uuid);
+        }
+        true
+    }
+
+    /// `Animal.getLoveCause()` — UUID причины влюблённости.
+    pub fn get_love_cause_uuid(&self) -> Option<Uuid> {
+        self.love_cause
+    }
+
+    /// `Animal.canMate(other)` — тот же класс и оба влюблены.
+    /// `getClass()`-сравнение → entity_type holder equality.
+    pub fn can_mate(&self, other: &Entity) -> bool {
+        other.uuid != self.uuid
+            && self.entity_type == other.entity_type
+            && self.is_in_love()
+            && other.is_in_love()
+    }
 
     /// `isFlying()` — полёт (для Player переопределяется).
     pub fn is_flying(&self) -> bool { false }

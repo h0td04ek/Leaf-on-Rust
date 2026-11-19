@@ -198,3 +198,209 @@ impl Goal for RandomStandGoal {
         }
     }
 }
+
+/// `PARTNER_TARGETING` для BreedGoal — `forNonCombat().range(8).ignoreLineOfSight()`.
+fn breed_partner_targeting() -> crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions {
+    let mut t = crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions::for_non_combat();
+    t.range(8.0);
+    t.ignore_line_of_sight();
+    t
+}
+
+/// `BreedGoal` — поиск партнёра и размножение (Animal).
+pub struct BreedGoal {
+    speed_modifier: f64,
+    partner: Option<LivingEntity>,
+    love_time: i32,
+    targeting: crate::world::entity::ai::targeting::targeting_conditions::TargetingConditions,
+}
+
+impl BreedGoal {
+    /// `new(animal, speedModifier)` — partnerClass = класс животного
+    /// (в Rust: тот же entity_type — проверяется в `can_mate`).
+    pub fn new(_mob: &Mob, speed_modifier: f64) -> Self {
+        Self {
+            speed_modifier,
+            partner: None,
+            love_time: 0,
+            targeting: breed_partner_targeting(),
+        }
+    }
+
+    /// `getFreePartner()` — ближайший подходящий партнёр в 8 блоках.
+    fn get_free_partner(&mut self, mob: &mut Mob) -> Option<LivingEntity> {
+        let level = mob.living.entity.level.clone()?;
+        let bb = mob.living.entity.get_bounding_box().inflate(8.0, 8.0, 8.0);
+        let mut best: Option<LivingEntity> = None;
+        let mut best_d = f64::MAX;
+        for e in level.entities_in_box(&bb) {
+            if e.uuid == mob.living.entity.uuid || !e.is_living {
+                continue;
+            }
+            let partner = LivingEntity::from_entity(e);
+            // `canMate && !isPanicking && distanceToSqr < d` (+ TargetingConditions).
+            if !mob.living.entity.can_mate(&partner.entity) {
+                continue;
+            }
+            if !partner.is_alive() {
+                continue;
+            }
+            let d = mob.living.entity.distance_to_sqr(&partner.entity);
+            if d >= best_d {
+                continue;
+            }
+            let ok = self.targeting.test(&level, Some(&mut *mob), &partner);
+            if !ok {
+                continue;
+            }
+            best = Some(partner);
+            best_d = d;
+        }
+        best
+    }
+
+    /// `breed()` — `spawnChildFromBreeding`.
+    fn breed(&mut self, mob: &mut Mob) {
+        let (Some(partner), Some(level)) = (self.partner.clone(), mob.living.entity.level.clone())
+        else {
+            return;
+        };
+        mob.spawn_child_from_breeding(&level, partner.entity.uuid);
+    }
+}
+
+impl Goal for BreedGoal {
+    fn get_flags(&self) -> GoalFlagSet {
+        GoalFlagSet::from_iter([GoalFlag::Move, GoalFlag::Look])
+    }
+
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if !mob.is_in_love() {
+            return false;
+        }
+        self.partner = self.get_free_partner(mob);
+        self.partner.is_some()
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        let Some(p) = &self.partner else {
+            return false;
+        };
+        p.is_alive() && p.entity.is_in_love() && self.love_time < 60
+    }
+
+    fn stop(&mut self, _mob: &mut Mob) {
+        self.partner = None;
+        self.love_time = 0;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        let Some(partner) = self.partner.clone() else { return };
+        mob.look_control.set_look_at_entity_deltas(
+            &partner.entity,
+            10.0,
+            mob.get_max_head_x_rot(),
+        );
+        if let Some(nav) = mob.get_navigation() {
+            nav.borrow_mut().move_to_entity(mob, &partner, self.speed_modifier);
+        }
+        self.love_time += 1;
+        if self.love_time >= self.adjusted_tick_delay(60)
+            && mob.living.entity.distance_to_sqr(&partner.entity) < 9.0
+        {
+            self.breed(mob);
+        }
+    }
+}
+
+/// `FollowParentGoal` — детёныш следует за родителем (Animal).
+pub struct FollowParentGoal {
+    speed_modifier: f64,
+    parent: Option<LivingEntity>,
+    time_to_recalc_path: i32,
+}
+
+impl FollowParentGoal {
+    /// `new(animal, speedModifier)`.
+    pub fn new(_mob: &Mob, speed_modifier: f64) -> Self {
+        Self {
+            speed_modifier,
+            parent: None,
+            time_to_recalc_path: 0,
+        }
+    }
+}
+
+impl Goal for FollowParentGoal {
+    fn can_use(&mut self, mob: &mut Mob) -> bool {
+        if mob.get_age() >= 0 {
+            return false;
+        }
+        let Some(level) = mob.living.entity.level.clone() else {
+            return false;
+        };
+        let bb = mob
+            .living
+            .entity
+            .get_bounding_box()
+            .inflate(8.0, 4.0, 8.0);
+        let mut best: Option<LivingEntity> = None;
+        let mut best_d = f64::MAX;
+        for e in level.entities_in_box(&bb) {
+            // `getEntitiesOfClass(animal.getClass())` — тот же entity_type.
+            if e.entity_type != mob.living.entity.entity_type {
+                continue;
+            }
+            if e.get_age() < 0 {
+                continue;
+            }
+            let d = mob.living.entity.distance_to_sqr(&e);
+            if d <= best_d {
+                best_d = d;
+                best = Some(LivingEntity::from_entity(e));
+            }
+        }
+        let Some(parent) = best else {
+            return false;
+        };
+        // `d < 9.0` (DONT_FOLLOW_IF_CLOSER_THAN²) → false.
+        if best_d < 9.0 {
+            return false;
+        }
+        self.parent = Some(parent);
+        true
+    }
+
+    fn can_continue_to_use(&mut self, mob: &mut Mob) -> bool {
+        if mob.get_age() >= 0 {
+            return false;
+        }
+        let Some(parent) = &self.parent else {
+            return false;
+        };
+        if !parent.is_alive() {
+            return false;
+        }
+        let d = mob.living.entity.distance_to_sqr(&parent.entity);
+        !(d < 9.0) && !(d > 256.0)
+    }
+
+    fn start(&mut self, _mob: &mut Mob) {
+        self.time_to_recalc_path = 0;
+    }
+
+    fn stop(&mut self, _mob: &mut Mob) {
+        self.parent = None;
+    }
+
+    fn tick(&mut self, mob: &mut Mob) {
+        self.time_to_recalc_path -= 1;
+        if self.time_to_recalc_path <= 0 {
+            self.time_to_recalc_path = self.adjusted_tick_delay(10);
+            let parent = self.parent.clone();
+            if let (Some(p), Some(nav)) = (parent, mob.get_navigation()) {
+                nav.borrow_mut().move_to_entity(mob, &p, self.speed_modifier);
+            }
+        }
+    }
+}

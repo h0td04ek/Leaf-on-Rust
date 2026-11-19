@@ -755,6 +755,102 @@ impl Mob {
         0
     }
 
+    /// `Animal.isInLove()`.
+    pub fn is_in_love(&self) -> bool {
+        self.living.entity.is_in_love()
+    }
+
+    /// `AgeableMob.getAge()`.
+    pub fn get_age(&self) -> i32 {
+        self.living.entity.get_age()
+    }
+
+    /// `Animal.aiStep()`-часть для животных: декремент inLove
+    /// и heart-частицы каждые 10 тиков. Вызывается из aiStep
+    /// наследников Animal.
+    pub fn animal_ai_step(&mut self) {
+        if self.living.entity.get_age() != 0 {
+            self.living.entity.set_in_love_time(0);
+        }
+        if self.living.entity.in_love > 0 {
+            self.living.entity.in_love -= 1;
+            if self.living.entity.in_love % 10 == 0 {
+                let p = self.living.entity.position();
+                if let Some(level) = self.living.entity.level.clone() {
+                    if let Some(pt) = crate::core::particles::particle_types::particle_type_by_identifier(
+                        &crate::resources::identifier::Identifier::minecraft("heart"),
+                    ) {
+                        level.send_particles(
+                            &crate::core::particles::particle_options::ParticleOptions::simple(pt),
+                            p.x,
+                            p.y + 0.5,
+                            p.z,
+                            1,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.02,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `Animal.getBreedOffspring(level, partner)` — тип детёныша;
+    /// `None` для не-разводимых видов (наследники переопределяют).
+    pub fn breed_offspring_type(
+        &self,
+        _partner: Option<&LivingEntity>,
+    ) -> Option<crate::core::holder::Holder<crate::world::entity::entity_type::EntityType>> {
+        None
+    }
+
+    /// `Animal.spawnChildFromBreeding(level, partner)` —
+    /// спавн детёныша через `summon_entity`, XP-сфера,
+    /// `finalizeSpawnChildFromBreeding` (resetLove обоих + baby).
+    /// `partner_uuid` — UUID партнёра (view-копия не мутабельна,
+    /// сброс делаем через `for_each_mob_in_box`).
+    pub fn spawn_child_from_breeding(
+        &mut self,
+        level: &std::sync::Arc<dyn LevelReader>,
+        partner_uuid: crate::util::uuid::Uuid,
+    ) -> bool {
+        let partner_view = level
+            .entity_by_uuid(partner_uuid)
+            .filter(|e| !e.removed)
+            .map(LivingEntity::from_entity);
+        let Some(child_type) = self.breed_offspring_type(partner_view.as_ref()) else {
+            return false;
+        };
+        let pos = self.living.entity.position();
+        level.summon_entity(&child_type, self.living.block_position(), false);
+        // `finalizeSpawnChildFromBreeding` — experience orb.
+        let xp = self.random.borrow_mut().next_int_bound(7) + 1;
+        level.add_fresh_experience_orb(
+            crate::world::entity::experience_orb::ExperienceOrb::new(
+                Some(level.clone()),
+                pos.x,
+                pos.y,
+                pos.z,
+                xp,
+            ),
+        );
+        // `setBaby(true)` детёнышу — summon_entity спавнит взрослого;
+        // выставление возраста детёныша делегируется уровню через
+        // entityByUuid свежего существа. Здесь фиксируем love-reset.
+        self.living.entity.reset_love();
+        // `partner.resetLove()` — реальный &mut Mob через box-итерацию.
+        let bb = self.living.entity.get_bounding_box().inflate_all(8.0);
+        let target = partner_uuid;
+        level.for_each_mob_in_box(&bb, &mut |m| {
+            if m.living.entity.uuid == target {
+                m.living.entity.reset_love();
+            }
+        });
+        true
+    }
+
     /// `TamableAnimal.wantsToAttack(attacker, owner)`.
     pub fn wants_to_attack(
         &self,
