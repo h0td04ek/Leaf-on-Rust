@@ -104,6 +104,14 @@ pub fn bootstrap() {
         Id::with_default_namespace("piglin_repellents").unwrap(),
         ids(&["soul_fire", "soul_torch", "soul_lantern", "soul_wall_torch", "soul_campfire"]),
     );
+    // snaps_goat_horn (RamTarget — RamTarget.hasRammedHornBreakingBlock)
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("snaps_goat_horn").unwrap(),
+        ids(&[
+            "stone", "deepslate", "tuff", "calcite", "dripstone_block",
+            "granite", "diorite", "andesite", "cobbled_deepslate",
+        ]),
+    );
     // hoglin_repellents
     crate::tags::register_block_tag(
         Id::with_default_namespace("hoglin_repellents").unwrap(),

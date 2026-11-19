@@ -69,6 +69,9 @@ pub struct Entity {
     pub on_ground: bool,
     /// `pose` — поза сущности (`getPose`/`setPose`).
     pub pose: crate::world::entity::pose::Pose,
+    /// `discardFriction` — игнорировать трение при движении
+    /// (long jump).
+    pub discard_friction: bool,
     /// `age` — `AgeableMob.age` (серверная; &lt;0 = детёныш).
     pub age: i32,
     /// `forcedAge` — `AgeableMob.forcedAge` (setBaby + ageUp).
@@ -181,6 +184,7 @@ impl Entity {
             velocity: Vec3::ZERO,
             on_ground: false,
             pose: crate::world::entity::pose::Pose::Standing,
+            discard_friction: false,
             age: 0,
             forced_age: 0,
             forced_age_timer: 0,
@@ -953,6 +957,21 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `setPose(pose)`.
     pub fn set_pose(&mut self, pose: crate::world::entity::pose::Pose) {
         self.pose = pose;
+    }
+
+    /// `setDiscardFriction(flag)`.
+    pub fn set_discard_friction(&mut self, flag: bool) {
+        self.discard_friction = flag;
+    }
+
+    /// `isIgnoringBlockTriggers`-нет; `getDimensions(pose)` —
+    /// размеры для позы (default = базовые; Frog/EntityType
+    /// переопределяют).
+    pub fn get_dimensions_pose(
+        &self,
+        _pose: crate::world::entity::pose::Pose,
+    ) -> crate::world::entity::entity_type::EntityDimensions {
+        self.get_dimensions()
     }
 
     /// `isInside(blockPos, blockState)`.

@@ -267,6 +267,7 @@ impl Clone for crate::world::entity::entity::Entity {
             velocity: self.velocity,
             on_ground: self.on_ground,
             pose: self.pose,
+            discard_friction: self.discard_friction,
             age: self.age,
             forced_age: self.forced_age,
             forced_age_timer: self.forced_age_timer,

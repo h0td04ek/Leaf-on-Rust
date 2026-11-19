@@ -75,6 +75,16 @@ pub struct EntityDimensions {
 }
 
 impl EntityDimensions {
+    /// `makeBoundingBox(Vec3)` — AABB по центру позиции.
+    pub fn make_bounding_box(&self, pos: &crate::world::phys::vec3::Vec3) -> crate::world::phys::aabb::Aabb {
+        let w = self.width as f64;
+        let h = self.height as f64;
+        crate::world::phys::aabb::Aabb::new(
+            pos.x - w / 2.0, pos.y, pos.z - w / 2.0,
+            pos.x + w / 2.0, pos.y + h, pos.z + w / 2.0,
+        )
+    }
+
     /// `new(width, height, eyeHeight, fixed)`.
     pub fn new(width: f32, height: f32, eye_height: f32, fixed: bool) -> Self {
         Self { width, height, eye_height, fixed }

@@ -1825,6 +1825,34 @@ impl LivingEntity {
         0.42
     }
 
+    /// `getJumpBoostPower()` — `(amplifier+1)*0.1` от JUMP_BOOST,
+    /// 0 без эффекта.
+    pub fn get_jump_boost_power(&self) -> f32 {
+        self.get_effect_instance(&crate::world::effect::mob_effects::jump_boost())
+            .map(|i| (i.amplifier() + 1) as f32 * 0.1)
+            .unwrap_or(0.0)
+    }
+
+    /// `isTame()` — приручённость (TamableAnimal). Default: false.
+    pub fn is_tame(&self) -> bool {
+        false
+    }
+
+    /// `dropHorn()` — сброс рога (Goat). Default: false.
+    pub fn drop_horn(&self) -> bool {
+        false
+    }
+
+    /// `performRangedAttack(target, charge)` —
+    /// `CrossbowAttackMob`: спавн снаряда через level.
+    /// Реальный projectile-спавн реализуется на уровне
+    /// `LevelReader::shoot_projectile` (ServerLevel).
+    pub fn perform_ranged_attack(&mut self, target: &LivingEntity, charge: f32) {
+        let Some(level) = self.entity.level.clone() else { return };
+        let stack = self.use_item.clone();
+        level.shoot_projectile(&self.entity, &stack, &target.entity, charge);
+    }
+
     /// `getStepHeight()`.
     pub fn get_step_height(&self) -> f32 {
         0.6

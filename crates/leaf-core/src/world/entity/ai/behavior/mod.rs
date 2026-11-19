@@ -18,3 +18,4 @@ pub use sinks::*;
 pub use animal_behaviors::*;
 pub use walk_behaviors::*;
 pub use simple::*;
+pub mod combat_behaviors;

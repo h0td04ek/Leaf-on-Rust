@@ -529,6 +529,18 @@ pub trait LevelReader: Send + Sync {
     ) {
     }
 
+    /// `shootProjectile`-эквивалент — спавн снаряда от сущности
+    /// (crossbow/bow/trident). Default no-op до порта
+    /// projectile-сущностей.
+    fn shoot_projectile(
+        &self,
+        _shooter: &crate::world::entity::entity::Entity,
+        _stack: &crate::world::item::item_stack::ItemStack,
+        _target: &crate::world::entity::entity::Entity,
+        _charge: f32,
+    ) {
+    }
+
     /// `summonEntity(entityType holder, pos, joinTeam)` —
     /// SummonEntityEffect. Default no-op до порта EntityType.create.
     fn summon_entity(
