@@ -5,6 +5,7 @@ pub mod game_type;
 pub mod chunk_pos;
 pub mod saveddata;
 pub mod level_reader;
+pub mod clip;
 
 /// `net.minecraft.world.level.Level` — маркер типа для `ResourceKey<Level>`
 /// и GlobalPos. Полная реализация Level — отдельный этап порта.

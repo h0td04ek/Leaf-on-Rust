@@ -306,3 +306,169 @@ pub fn item_context(
         .with_parameter(params::enchantment_level(), enchantment_level);
     Some(LootContext::new(params, crate::random::legacy::create_unique(), None))
 }
+
+
+// ---- Итерация по зачарованиям одного предмета
+// (`EnchantmentHelper.runIterationOnItem`) и entity-wide
+// модификаторы (modifyDamage/modifyKnockback/doPostAttack/
+// doLunge/tick). ----
+
+use crate::world::item::enchantment::effects::enchanted_item_in_use::EnchantedItemInUse;
+use crate::world::item::enchantment::effects::enchantment_target::EnchantmentTarget;
+use crate::entity::equipment_slot::EquipmentSlot as Slot;
+
+/// `runIterationOnItem(stack, visitor)` — для каждого
+/// зачарования вызывает `f(enchantment, level)`.
+pub fn run_iteration_on_item<F>(stack: &ItemStack, mut f: F)
+where
+    F: FnMut(&Enchantment, i32),
+{
+    let Some(enchantments) = stack
+        .components
+        .get_by_id::<ItemEnchantments>(&Identifier::minecraft("enchantments"))
+    else {
+        return;
+    };
+    for (holder, level) in &enchantments.enchantments {
+        if let Some(enchantment) = holder.value() {
+            f(enchantment, *level);
+        }
+    }
+}
+
+/// `EnchantmentHelper.modifyDamage(level, tool, entity, source, damage)`.
+/// `entity` — цель (victim), не атакующий.
+pub fn modify_damage(
+    tool: &ItemStack,
+    entity: &LivingEntity,
+    damage_source: &DamageSource,
+    damage: f32,
+) -> f32 {
+    let mut result = damage;
+    run_iteration_on_item(tool, |enchantment, level| {
+        enchantment.modify_damage(level, tool, entity, damage_source, &mut result);
+    });
+    result
+}
+
+/// `EnchantmentHelper.modifyKnockback`.
+pub fn modify_knockback(
+    tool: &ItemStack,
+    entity: &LivingEntity,
+    damage_source: &DamageSource,
+    knockback: f32,
+) -> f32 {
+    let mut result = knockback;
+    run_iteration_on_item(tool, |enchantment, level| {
+        enchantment.modify_knockback(level, tool, entity, damage_source, &mut result);
+    });
+    result
+}
+
+/// `EnchantmentHelper.modifyArmorEffectiveness`.
+pub fn modify_armor_effectiveness(
+    tool: &ItemStack,
+    entity: &LivingEntity,
+    damage_source: &DamageSource,
+    effectiveness: f32,
+) -> f32 {
+    let mut result = effectiveness;
+    run_iteration_on_item(tool, |enchantment, level| {
+        enchantment.modify_armor_effectiveness(
+            level,
+            tool,
+            entity,
+            damage_source,
+            &mut result,
+        );
+    });
+    result
+}
+
+/// `EnchantmentHelper.doPostAttackEffects(level, entity, damageSource)` —
+/// `entity` — получившая урон сущность (victim). Пост-эффекты
+/// снаряжения жертвы (target=VICTIM) + оружия атакующего
+/// (target=ATTACKER).
+pub fn do_post_attack_effects(
+    entity: &mut LivingEntity,
+    damage_source: &DamageSource,
+) {
+    // Атакующий — causing entity источника урона.
+    let attacker = damage_source
+        .get_causing_entity()
+        .map(|e| LivingEntity::from_entity(e.clone()));
+    let weapon = attacker
+        .as_ref()
+        .map(|a| a.get_weapon_item())
+        .unwrap_or_else(ItemStack::empty);
+
+    // 1) Экипировка жертвы — эффекты на VICTIM.
+    for slot in Slot::VALUES {
+        let stack = entity.get_item_by_slot(slot).clone();
+        if stack.is_empty() {
+            continue;
+        }
+        let owner = Some(entity.clone());
+        let mut item_in_use =
+            EnchantedItemInUse::new(stack.clone(), Some(slot), owner);
+        run_iteration_on_item(&stack, |enchantment, level| {
+            enchantment.do_post_attack(
+                level,
+                &mut item_in_use,
+                EnchantmentTarget::Victim,
+                entity,
+                damage_source,
+            );
+        });
+    }
+
+    // 2) Оружие атакующего — эффекты на ATTACKER.
+    if !weapon.is_empty() {
+        if let Some(attacker_living) = attacker {
+            let mut attacker_mut = attacker_living;
+            let mut item_in_use =
+                EnchantedItemInUse::new(weapon.clone(), Some(Slot::Mainhand), Some(attacker_mut.clone()));
+            run_iteration_on_item(&weapon, |enchantment, level| {
+                enchantment.do_post_attack(
+                    level,
+                    &mut item_in_use,
+                    EnchantmentTarget::Attacker,
+                    &mut attacker_mut,
+                    damage_source,
+                );
+            });
+        }
+    }
+}
+
+/// `EnchantmentHelper.doLungeEffects(level, entity)` —
+/// POST_PIERCING_ATTACK эффекты оружия.
+pub fn do_lunge_effects(entity: &mut LivingEntity) {
+    let weapon = entity.get_weapon_item();
+    if weapon.is_empty() {
+        return;
+    }
+    let owner = Some(entity.clone());
+    let mut item_in_use =
+        EnchantedItemInUse::new(weapon.clone(), Some(Slot::Mainhand), owner);
+    run_iteration_on_item(&weapon, |enchantment, level| {
+        enchantment.do_lunge(level, &mut item_in_use, entity);
+    });
+}
+
+/// `EnchantmentHelper.tickEffects(level, entity)` — TICK-эффекты
+/// всей экипировки.
+pub fn tick_effects(entity: &mut LivingEntity) {
+    for slot in Slot::VALUES {
+        let stack = entity.get_item_by_slot(slot).clone();
+        if stack.is_empty() {
+            continue;
+        }
+        let owner = Some(entity.clone());
+        let mut item_in_use =
+            EnchantedItemInUse::new(stack.clone(), Some(slot), owner);
+        run_iteration_on_item(&stack, |enchantment, level| {
+            enchantment.tick(level, &mut item_in_use, entity);
+        });
+    }
+}

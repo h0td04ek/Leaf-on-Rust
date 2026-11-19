@@ -27,6 +27,46 @@ impl Item {
         Self { id }
     }
 
+    /// `Item.getAttackDamageBonus(target, damageAmount, source)` —
+    /// бонус урона предмета (база — 0; переопределяется предметами
+    /// типа trident/spear).
+    pub fn get_attack_damage_bonus(
+        &self,
+        _target: &crate::world::entity::entity::Entity,
+        _damage_amount: f32,
+        _damage_source: &crate::world::damagesource::damage_source::DamageSource,
+    ) -> f32 {
+        0.0
+    }
+
+    /// `Item.getItemDamageSource(entity)` (deprecated) —
+    /// предмет-специфичный источник урона. Default: None.
+    pub fn get_item_damage_source(
+        &self,
+        _entity: &crate::world::entity::living_entity::LivingEntity,
+    ) -> Option<crate::world::damagesource::damage_source::DamageSource> {
+        None
+    }
+
+    /// `Item.hurtEnemy(stack, target, attacker)` — пост-ударный
+    /// хук предмета (износ/эффекты). Default: no-op.
+    pub fn hurt_enemy(
+        &self,
+        _stack: &crate::world::item::item_stack::ItemStack,
+        _target: &crate::world::entity::living_entity::LivingEntity,
+        _attacker: &crate::world::entity::living_entity::LivingEntity,
+    ) {
+    }
+
+    /// `Item.postHurtEnemy` — хук после урона. Default: no-op.
+    pub fn post_hurt_enemy(
+        &self,
+        _stack: &crate::world::item::item_stack::ItemStack,
+        _target: &crate::world::entity::living_entity::LivingEntity,
+        _attacker: &crate::world::entity::living_entity::LivingEntity,
+    ) {
+    }
+
     /// `Item` для Direct-holder (не из реестра).
     pub fn direct(id: Identifier) -> Arc<Self> {
         Arc::new(Self::new(id))

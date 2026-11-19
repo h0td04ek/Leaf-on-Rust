@@ -24,6 +24,34 @@ impl DamageSources {
         Self { damage_types: Box::new(resolver) }
     }
 
+    /// `DamageSources` с ванильным resolver'ом (статическая
+    /// таблица `damage_types::bootstrap`) — используется, пока
+    /// полный registry runtime не подключён.
+    pub fn vanilla() -> Self {
+        use std::collections::HashMap;
+        use std::sync::OnceLock;
+        static MAP: OnceLock<HashMap<crate::resources::resource_key::ResourceKey<DamageType>, DamageType>> =
+            OnceLock::new();
+        let map = MAP.get_or_init(|| {
+            super::damage_types::bootstrap().into_iter().collect()
+        });
+        Self::new(move |key| {
+            map.get(key)
+                .cloned()
+                .map(crate::core::holder::Holder::direct)
+                .unwrap_or_else(|| {
+                    crate::core::holder::Holder::direct(DamageType::new(
+                        key.id().clone(),
+                        "death.attack.generic",
+                        super::damage_scaling::DamageScaling::WhenCausedByLivingNonPlayer,
+                        0.0,
+                        super::damage_effects::DamageEffects::Hurt,
+                        super::death_message_type::DeathMessageType::Default,
+                    ))
+                })
+        })
+    }
+
     /// `source(key)` — базовый источник.
     fn source(&self, key: &ResourceKey<DamageType>) -> DamageSource {
         DamageSource::new((self.damage_types)(key))

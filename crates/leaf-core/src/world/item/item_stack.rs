@@ -289,6 +289,77 @@ impl ItemStack {
         }
     }
 
+    /// `getDamageSource(attacker, fallback)` — источник урона
+    /// предмета: компонент `damage_type` (EitherHolder) →
+    /// `item.getItemDamageSource` → `fallback`.
+    pub fn get_damage_source(
+        &self,
+        attacker: &crate::world::entity::living_entity::LivingEntity,
+        fallback: impl FnOnce() -> crate::world::damagesource::damage_source::DamageSource,
+    ) -> crate::world::damagesource::damage_source::DamageSource {
+        use crate::resources::identifier::Identifier;
+        use crate::util::either::Either;
+        use crate::world::damagesource::damage_type::DamageType;
+        use crate::world::item::either_holder::EitherHolder;
+        let damage_type_id = Identifier::minecraft("damage_type");
+        if let Some(either) =
+            self.components.get_by_id::<EitherHolder<DamageType>>(&damage_type_id)
+        {
+            if let Either::Left(holder) = &either.contents {
+                let mut source = crate::world::damagesource::damage_source::DamageSource::new(
+                    holder.clone(),
+                );
+                source.causing_entity = Some(attacker.entity.clone());
+                return source;
+            }
+        }
+        if let Some(item_holder) = &self.item {
+            if let Some(item) = item_holder.value() {
+                if let Some(source) = item.get_item_damage_source(attacker) {
+                    return source;
+                }
+            }
+        }
+        fallback()
+    }
+
+    /// `getAttackDamageBonus(target, damageAmount, source)` —
+    /// делегирует `Item.getAttackDamageBonus`.
+    pub fn get_attack_damage_bonus(
+        &self,
+        target: &crate::world::entity::entity::Entity,
+        damage_amount: f32,
+        damage_source: &crate::world::damagesource::damage_source::DamageSource,
+    ) -> f32 {
+        self.item
+            .as_ref()
+            .and_then(|h| h.value())
+            .map(|i| i.get_attack_damage_bonus(target, damage_amount, damage_source))
+            .unwrap_or(0.0)
+    }
+
+    /// `hurtEnemy(enemy, attacker)` — `Item.hurtEnemy` хук.
+    pub fn hurt_enemy(
+        &self,
+        enemy: &crate::world::entity::living_entity::LivingEntity,
+        attacker: &crate::world::entity::living_entity::LivingEntity,
+    ) {
+        if let Some(item) = self.item.as_ref().and_then(|h| h.value()) {
+            item.hurt_enemy(self, enemy, attacker);
+        }
+    }
+
+    /// `postHurtEnemy(target, attacker)` — `Item.postHurtEnemy`.
+    pub fn post_hurt_enemy(
+        &self,
+        target: &crate::world::entity::living_entity::LivingEntity,
+        attacker: &crate::world::entity::living_entity::LivingEntity,
+    ) {
+        if let Some(item) = self.item.as_ref().and_then(|h| h.value()) {
+            item.post_hurt_enemy(self, target, attacker);
+        }
+    }
+
     /// `hurtAndBreak(amount, entity, slot)` — износ предмета.
     ///
     /// Java `ItemStack.hurtAndBreak(int, LivingEntity, EquipmentSlot)`:

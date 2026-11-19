@@ -653,4 +653,101 @@ impl Mob {
     pub fn forget_current_target_and_refresh_universal_anger(&mut self) {
         self.target = None;
     }
+
+    /// `Mob.isWithinMeleeAttackRange(target)` — vanilla:
+    /// `ATTACK_RANGE` активного предмета → effective max/min;
+    /// иначе `DEFAULT_ATTACK_REACH = sqrt(2.04) - 0.6`.
+    /// Проверка: расширенный bbox пересекает hitbox цели,
+    /// и (minRange <= 0 || bbox(minRange) НЕ пересекает).
+    pub fn is_within_melee_attack_range(&self, entity: &LivingEntity) -> bool {
+        use crate::resources::identifier::Identifier;
+        use crate::world::item::component::attack_range::AttackRange;
+        let (d, d1) = {
+            let active = self.living.get_active_item();
+            match active.components.get_by_id::<AttackRange>(
+                &Identifier::minecraft("attack_range"),
+            ) {
+                Some(range) => (
+                    range.effective_max_range(&self.living.entity) as f64,
+                    range.effective_min_range(&self.living.entity) as f64,
+                ),
+                None => {
+                    const DEFAULT_ATTACK_REACH: f64 = 0.827922_1; // sqrt(2.04)-0.6
+                    (DEFAULT_ATTACK_REACH, 0.0)
+                }
+            }
+        };
+        let hitbox = entity.entity.bounding_box;
+        self.get_attack_bounding_box(d).intersects(&hitbox)
+            && (d1 <= 0.0 || !self.get_attack_bounding_box(d1).intersects(&hitbox))
+    }
+
+    /// `Mob.getAttackBoundingBox(horizontalExpansion)` —
+    /// объединённый bbox с транспортом (vehicle), расширенный
+    /// по X/Z.
+    pub fn get_attack_bounding_box(&self, horizontal_expansion: f64) -> crate::world::phys::aabb::Aabb {
+        let own = self.living.entity.bounding_box;
+        let base = if let Some(vehicle) = self.living.get_vehicle() {
+            let vb = vehicle.bounding_box;
+            crate::world::phys::aabb::Aabb::new(
+                own.min_x.min(vb.min_x),
+                own.min_y,
+                own.min_z.min(vb.min_z),
+                own.max_x.max(vb.max_x),
+                own.max_y,
+                own.max_z.max(vb.max_z),
+            )
+        } else {
+            own
+        };
+        base.inflate(horizontal_expansion, 0.0, horizontal_expansion)
+    }
+
+    /// `Mob.doHurtTarget(target)` — полная vanilla-цепочка:
+    /// ATTACK_DAMAGE → weapon damage source → enchant modify →
+    /// item attack bonus → hurtServer → knockback → hurtEnemy →
+    /// post-attack enchant → setLastHurtMob → attack sound →
+    /// lungeForwardMaybe.
+    pub fn do_hurt_target(&mut self, target: &mut LivingEntity) -> bool {
+        let mut f = self
+            .living
+            .get_attribute_value_by_id_ro(
+                &crate::entity::ai::attributes::attributes::attack_damage(),
+            ) as f32;
+        let weapon_item = self.living.get_weapon_item();
+        // `weaponItem.getDamageSource(this, () -> mobAttack(this))`.
+        let fallback_sources = crate::world::damagesource::damage_sources::DamageSources::vanilla();
+        let mob_entity = self.living.entity.clone();
+        let damage_source = weapon_item.get_damage_source(&self.living, || {
+            fallback_sources.mob_attack(&mob_entity)
+        });
+        // `EnchantmentHelper.modifyDamage(level, weapon, target,
+        // source, f)` — модификация зачарованиями оружия.
+        f = crate::world::item::enchantment::enchantment_helper::modify_damage(
+            &weapon_item,
+            target,
+            &damage_source,
+            f,
+        );
+        f += weapon_item.get_attack_damage_bonus(
+            &target.entity,
+            f,
+            &damage_source,
+        );
+        let delta_movement = target.entity.get_delta_movement();
+        let flag = target.hurt_server(damage_source.clone(), f);
+        if flag {
+            let knockback = self.living.get_knockback(target, &damage_source);
+            self.living.cause_extra_knockback(target, knockback, delta_movement);
+            weapon_item.hurt_enemy(target, &self.living);
+            crate::world::item::enchantment::enchantment_helper::do_post_attack_effects(
+                target,
+                &damage_source,
+            );
+            self.living.set_last_hurt_mob(Some(target.entity.clone()));
+            self.living.play_attack_sound();
+        }
+        self.living.lunge_forward_maybe();
+        flag
+    }
 }

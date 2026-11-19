@@ -1441,11 +1441,6 @@ impl LivingEntity {
         self.attributes.get_base_value(attribute)
     }
 
-    /// `getKnockback(target)`.
-    pub fn get_knockback(&self, _target: &Entity) -> f32 {
-        0.0
-    }
-
     /// `getBlockSpeedFactor()`.
     pub fn get_block_speed_factor(&self) -> f32 {
         1.0
@@ -1850,9 +1845,66 @@ impl LivingEntity {
         self.effects_dirty = true;
     }
 
-    /// `hasLineOfSight`.
-    pub fn has_line_of_sight(&self, _entity: &Entity) -> bool {
-        false
+    /// `getActiveItem()` — `isUsingItem ? useItem : mainHandItem`.
+    pub fn get_active_item(&self) -> ItemStack {
+        if self.is_using_item() {
+            self.get_use_item().clone()
+        } else {
+            self.get_main_hand_item().clone()
+        }
+    }
+
+    /// `getWeaponItem()` — основной предмет атаки.
+    pub fn get_weapon_item(&self) -> ItemStack {
+        self.get_main_hand_item().clone()
+    }
+
+    /// `entityAttackRange()` — `ATTACK_RANGE` активного предмета
+    /// или `AttackRange.defaultFor(this)`.
+    pub fn entity_attack_range(&self) -> crate::world::item::component::attack_range::AttackRange {
+        use crate::resources::identifier::Identifier;
+        self.get_active_item()
+            .components
+            .get_by_id::<crate::world::item::component::attack_range::AttackRange>(
+                &Identifier::minecraft("attack_range"),
+            )
+            .copied()
+            .unwrap_or_else(|| {
+                crate::world::item::component::attack_range::AttackRange::default_for(self)
+            })
+    }
+
+    /// `hasLineOfSight(entity)` — `hasLineOfSight(entity,
+    /// COLLIDER, NONE, entity.getEyeY())`.
+    pub fn has_line_of_sight(&self, entity: &Entity) -> bool {
+        self.has_line_of_sight_at(entity, entity.get_eye_y())
+    }
+
+    /// `hasLineOfSight(entity, block, fluid, y)` — та же лига,
+    /// расстояние ≤ 128², `level.clip(...) == MISS`.
+    pub fn has_line_of_sight_at(&self, entity: &Entity, y: f64) -> bool {
+        let (Some(level), Some(other_level)) = (&self.entity.level, &entity.level)
+        else {
+            return false;
+        };
+        if !std::sync::Arc::ptr_eq(level, other_level)
+            && level.dimension_id() != other_level.dimension_id()
+        {
+            return false;
+        }
+        let eye = Vec3::new(self.entity.pos.x, self.get_eye_y(), self.entity.pos.z);
+        let target = Vec3::new(entity.pos.x, y, entity.pos.z);
+        if target.distance_to_sqr(&eye) > 128.0 * 128.0 {
+            return false;
+        }
+        let hit = crate::world::level::clip::clip(
+            level.as_ref(),
+            eye,
+            target,
+            crate::world::level::clip::ClipBlock::Collider,
+            crate::world::level::clip::ClipFluid::None,
+        );
+        hit.hit_type() == crate::world::phys::hit_result::HitResultType::MISS
     }
 
     /// `isWithinMeleeAttackRange`.
@@ -1889,8 +1941,62 @@ impl LivingEntity {
         base
     }
 
-    /// `doHurtTarget`.
-    pub fn do_hurt_target(&mut self, _target: &mut Entity, _source: &DamageSource) -> bool {
+    /// `getKnockback(target, damageSource)` — в Java параметр
+    /// называется `attacker`, но это цель (получающая knockback).
+    /// `(ATTACK_KNOCKBACK + enchant) / 2`.
+    pub fn get_knockback(&mut self, target: &LivingEntity, damage_source: &DamageSource) -> f32 {
+        let f = self
+            .get_attribute_value_by_id(&crate::entity::ai::attributes::attributes::attack_knockback())
+            as f32;
+        if self.entity.level.is_some() {
+            let weapon = self.get_weapon_item();
+            crate::world::item::enchantment::enchantment_helper::modify_knockback(
+                &weapon,
+                target,
+                damage_source,
+                f,
+            ) / 2.0
+        } else {
+            f / 2.0
+        }
+    }
+
+    /// `causeExtraKnockback(target, strength, currentMovement)` —
+    /// knockback цели + замедление себя (×0.6 по XZ).
+    pub fn cause_extra_knockback(
+        &mut self,
+        target: &mut LivingEntity,
+        strength: f32,
+        _current_movement: Vec3,
+    ) {
+        if strength > 0.0 {
+            let y_rot = self.entity.get_y_rot() as f64 * std::f64::consts::PI / 180.0;
+            target.knockback(
+                strength as f64,
+                crate::util::mth::sin(y_rot) as f64,
+                -crate::util::mth::cos(y_rot) as f64,
+            );
+            let d = self.entity.get_delta_movement();
+            let m = d.multiply(0.6, 1.0, 0.6);
+            self.entity.set_delta_movement(m.x, m.y, m.z);
+        }
+    }
+
+    /// `lungeForwardMaybe()` — `EnchantmentHelper.doLungeEffects`.
+    pub fn lunge_forward_maybe(&mut self) {
+        if self.entity.level.is_some() {
+            crate::world::item::enchantment::enchantment_helper::do_lunge_effects(self);
+        }
+    }
+
+    /// `playAttackSound()` — базовая реализация пуста
+    /// (звуки атаки у конкретных мобов).
+    pub fn play_attack_sound(&mut self) {}
+
+    /// `doHurtTarget` — базовая (LivingEntity): только
+    /// `setLastHurtMob(target)` и `false`.
+    pub fn do_hurt_target(&mut self, target: &mut LivingEntity, _source: &DamageSource) -> bool {
+        self.set_last_hurt_mob(Some(target.entity.clone()));
         false
     }
 

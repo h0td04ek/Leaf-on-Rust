@@ -418,3 +418,5 @@ pub trait LevelReader: Send + Sync {
     // `CollisionGetter.getWorldBorder`-стиль проверек не нужен —
     // `isOutsideBuildHeight` уже покрыт `min_build_height`/`height`.
 }
+
+
