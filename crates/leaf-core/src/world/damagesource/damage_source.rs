@@ -266,6 +266,7 @@ impl Clone for crate::world::entity::entity::Entity {
             old_rotation: self.old_rotation,
             velocity: self.velocity,
             on_ground: self.on_ground,
+            pose: self.pose,
             horizontal_collision: self.horizontal_collision,
             vertical_collision: self.vertical_collision,
             hurt_time: self.hurt_time,

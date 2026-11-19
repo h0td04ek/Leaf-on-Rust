@@ -5,6 +5,7 @@ pub mod goal;
 pub mod util_goals;
 pub mod goal_selector;
 pub mod movement_look;
+pub mod social_goals;
 pub mod special_goals;
 pub mod target;
 

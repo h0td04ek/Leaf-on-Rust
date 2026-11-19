@@ -669,10 +669,90 @@ impl Mob {
         false
     }
 
-    /// `TamableAnimal.getOwner()` — LivingEntity-владелец
-    /// (резолвится наследником из owner-ссылки).
+    /// `TamableAnimal.getOwner()` — LivingEntity-владелец.
+    /// Резолвит `tamable_owner_uuid` через `LevelReader::entity_by_uuid`;
+    /// наследники с прямой ссылкой могут переопределить.
     pub fn tamable_owner(&self) -> Option<LivingEntity> {
+        let uuid = self.tamable_owner_uuid()?;
+        let level = self.living.entity.level.as_ref()?;
+        let entity = level.entity_by_uuid(uuid)?;
+        if entity.removed {
+            return None;
+        }
+        Some(LivingEntity::from_entity(entity))
+    }
+
+    /// `TamableAnimal.setInSittingPose(sitting)`.
+    pub fn set_in_sitting_pose(&mut self, sitting: bool) {
+        use crate::world::entity::pose::Pose;
+        self.living.entity.set_pose(if sitting {
+            Pose::Sitting
+        } else {
+            Pose::Standing
+        });
+    }
+
+    /// `TamableAnimal.unableToMoveToOwner()`.
+    pub fn unable_to_move_to_owner(&self) -> bool {
+        false
+    }
+
+    /// `TamableAnimal.shouldTryTeleportToOwner()`.
+    pub fn should_try_teleport_to_owner(&self) -> bool {
+        false
+    }
+
+    /// `TamableAnimal.tryToTeleportToOwner()` — телепорт к
+    /// владельцу со случайным смещением (vanilla randomTeleport).
+    pub fn try_to_teleport_to_owner(&mut self) {
+        let Some(owner) = self.tamable_owner() else { return };
+        let (ox, oy, oz) = (owner.entity.pos.x, owner.entity.pos.y, owner.entity.pos.z);
+        for _ in 0..10 {
+            let tx = ox + self.living.entity_random().lock().unwrap().next_double() * 6.0 - 3.0;
+            let ty = oy + self.living.entity_random().lock().unwrap().next_double() * 2.0 - 1.0;
+            let tz = oz + self.living.entity_random().lock().unwrap().next_double() * 6.0 - 3.0;
+            if self.teleport_to(tx, ty, tz) {
+                return;
+            }
+        }
+    }
+
+    /// `Entity.randomTeleport(x, y, z)` — телепорт с проверкой,
+    /// что позиция свободна и безопасна (`noCollision` по AABB).
+    pub fn teleport_to(&mut self, x: f64, y: f64, z: f64) -> bool {
+        let old = self.living.entity.pos;
+        self.living.entity.set_pos(x, y, z);
+        let bb = self.living.entity.get_bounding_box();
+        let free = self
+            .living
+            .entity
+            .level
+            .as_ref()
+            .map(|l| l.no_collision(&bb))
+            .unwrap_or(false);
+        if !free {
+            self.living.entity.set_pos(old.x, old.y, old.z);
+            return false;
+        }
+        self.living.entity.set_delta_movement(0.0, 0.0, 0.0);
+        true
+    }
+
+    /// `AbstractHorse.standIfPossible()` / `getAmbientStandSound()` /
+    /// `getAmbientStandInterval()` — хук для `RandomStandGoal`;
+    /// наследники переопределяют.
+    pub fn horse_stand_if_possible(&mut self) -> bool {
+        false
+    }
+
+    /// `getAmbientStandSound()` — `None` для не-лошадей.
+    pub fn horse_ambient_stand_sound(&self) -> Option<crate::core::holder::Holder<crate::sounds::sound_event::SoundEvent>> {
         None
+    }
+
+    /// `getAmbientStandInterval()` — интервал между попытками встать.
+    pub fn horse_ambient_stand_interval(&self) -> i32 {
+        0
     }
 
     /// `TamableAnimal.wantsToAttack(attacker, owner)`.

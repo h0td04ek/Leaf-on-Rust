@@ -67,6 +67,8 @@ pub struct Entity {
     pub velocity: Vec3,
     /// `onGround` — на земле.
     pub on_ground: bool,
+    /// `pose` — поза сущности (`getPose`/`setPose`).
+    pub pose: crate::world::entity::pose::Pose,
     /// `horizontalCollision` — горизонтальное столкновение.
     pub horizontal_collision: bool,
     /// `verticalCollision` — вертикальное столкновение.
@@ -163,6 +165,7 @@ impl Entity {
             old_rotation: Vec2::new(0.0, 0.0),
             velocity: Vec3::ZERO,
             on_ground: false,
+            pose: crate::world::entity::pose::Pose::Standing,
             horizontal_collision: false,
             vertical_collision: false,
             hurt_time: 0,
@@ -784,7 +787,12 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `getPose()`.
     pub fn get_pose(&self) -> crate::world::entity::pose::Pose {
-        crate::world::entity::pose::Pose::Standing
+        self.pose
+    }
+
+    /// `setPose(pose)`.
+    pub fn set_pose(&mut self, pose: crate::world::entity::pose::Pose) {
+        self.pose = pose;
     }
 
     /// `isInside(blockPos, blockState)`.
