@@ -3139,6 +3139,20 @@ impl LivingEntity {
         true
     }
 
+    /// `canPickUpLoot()` — может ли подбирать предметы
+    /// (GoToWantedItem). Default: true.
+    pub fn can_pick_up_loot(&self) -> bool {
+        true
+    }
+
+    /// `getViewVector(partialTicks)` — направление взгляда.
+    pub fn get_view_vector(&self, _partial_ticks: f32) -> crate::world::phys::vec3::Vec3 {
+        crate::world::phys::vec3::Vec3::direction_from_rotation(
+            self.entity.rotation.y,
+            self.entity.rotation.x,
+        )
+    }
+
     /// `canUseNonMeleeWeapon(stack)` — может ли использовать
     /// не-melee оружие (лук/арбалет). Default: false.
     pub fn can_use_non_melee_weapon(&self) -> bool {

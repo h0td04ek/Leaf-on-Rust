@@ -93,6 +93,29 @@ pub trait LevelReader: Send + Sync {
         0
     }
 
+    /// `isVillage(pos)` — алиас is_village_at для behavior-классов.
+    fn is_village(&self, pos: BlockPos) -> bool {
+        self.is_village_at(pos)
+    }
+
+    /// `getWorldBorder().isWithinBounds(pos)` — позиция внутри
+    /// границы мира (GoToWantedItem). Default: true.
+    fn world_border_is_within_bounds(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `level.random` — источник случайности уровня.
+    /// Default: новый LegacyRandom (thread_local не нужен —
+    /// вызывается редко).
+    fn level_random_next_int(&self, bound: i32) -> i32 {
+        use std::cell::RefCell;
+        thread_local! {
+            static RNG: RefCell<Box<dyn crate::random::RandomSource>> =
+                RefCell::new(crate::random::legacy::create_unique());
+        }
+        RNG.with(|r| r.borrow_mut().next_int_bound(bound))
+    }
+
     /// `loadedAndEntityCanStandOn(pos, entity)` — позиция
     /// загружена и сущность может стоять (InsideBrownianWalk).
     /// Default: true.
