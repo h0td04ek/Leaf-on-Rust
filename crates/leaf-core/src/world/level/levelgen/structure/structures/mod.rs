@@ -18,6 +18,7 @@ pub mod ruined_portal;
 pub mod shipwreck;
 pub mod swamp_hut;
 pub mod nether_fossil;
+pub mod woodland_mansion;
 
 use crate::resources::identifier::Identifier;
 use crate::world::level::block::state::block_state::BlockState;

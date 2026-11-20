@@ -19,6 +19,14 @@ pub trait LevelReader: Send + Sync {
     /// (в Java возвращает air — здесь Option честнее).
     fn get_block_state(&self, pos: BlockPos) -> Option<BlockState>;
 
+    /// `isEmptyBlock(pos)` — блок air/отсутствует. Default: через
+    /// `get_block_state`.
+    fn is_empty_block(&self, pos: BlockPos) -> bool {
+        self.get_block_state(pos)
+            .map(|s| s.is_air())
+            .unwrap_or(true)
+    }
+
     /// `getFluidState(pos)`.
     fn get_fluid_state(&self, pos: BlockPos) -> Option<FluidState> {
         None

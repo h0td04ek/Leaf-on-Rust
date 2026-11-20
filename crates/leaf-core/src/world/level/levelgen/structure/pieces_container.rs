@@ -1,6 +1,7 @@
 //! Перенос `net.minecraft.world.level.levelgen.structure.pieces` —
 //! `PiecesContainer` и `StructurePieceType`-реестр.
 
+use crate::core::block_pos::BlockPos;
 use crate::nbt::compound::CompoundTag;
 use crate::nbt::tag::Tag;
 use crate::resources::identifier::Identifier;
@@ -31,6 +32,14 @@ impl PiecesContainer {
     /// `pieces()`.
     pub fn pieces(&self) -> &[Box<dyn StructurePiece>] {
         &self.pieces
+    }
+
+    /// `isInsidePiece(pos)` — позиция внутри bounding box хотя бы
+    /// одного куска.
+    pub fn is_inside_piece(&self, pos: BlockPos) -> bool {
+        self.pieces
+            .iter()
+            .any(|p| p.bounding_box().is_inside_pos(pos))
     }
 
     /// `calculateBoundingBox` — объединяющий бокс всех частей.
