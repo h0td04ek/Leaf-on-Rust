@@ -685,3 +685,15 @@ impl StructureProcessor for JigsawReplacementProcessor {
         }
     }
 }
+
+/// Подмодули-алиасы для Java-совместимых путей импорта
+/// (`processors::block_ignore_processor::BlockIgnoreProcessor`).
+pub mod block_ignore_processor {
+    pub use super::BlockIgnoreProcessor;
+}
+pub mod block_rot_processor {
+    pub use super::BlockRotProcessor;
+}
+pub mod rule_processor {
+    pub use super::RuleProcessor;
+}

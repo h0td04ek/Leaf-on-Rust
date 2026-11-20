@@ -284,6 +284,10 @@ impl StructurePiece for DesertPyramidPiece {
         self.bounding_box.clone()
     }
 
+    fn bounding_box_mut(&mut self) -> Option<&mut BoundingBox> {
+        Some(&mut self.bounding_box)
+    }
+
     fn gen_depth(&self) -> i32 {
         self.gen_depth
     }
@@ -616,7 +620,7 @@ pub fn desert_pyramid_structure(
                 .at(center.x, center.y, center.z);
             let mut list: Vec<BlockPos> = set.into_iter().collect();
             shuffle(&mut list, random_source.as_mut());
-            let mut min = list.len().min(random_source.next_int_bound(4) + 5);
+            let mut min = list.len().min((random_source.next_int_bound(4) + 5) as usize);
             for pos in &list {
                 if min > 0 {
                     min -= 1;

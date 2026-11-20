@@ -44,6 +44,19 @@ impl StructurePieceAccessor for Vec<Box<dyn StructurePiece>> {
 pub trait StructurePiece {
     /// `boundingBox`.
     fn bounding_box(&self) -> BoundingBox;
+    /// Доступ к boundingBox для `move` (default: нет —
+    /// `move_by` тогда no-op, как Java-базовый класс без полей).
+    fn bounding_box_mut(&mut self) -> Option<&mut BoundingBox> {
+        None
+    }
+    /// `move(x, y, z)` — сдвиг куска. Java `StructurePiece.move`
+    /// двигает только boundingBox; `TemplateStructurePiece`
+    /// дополнительно двигает templatePosition (переопределяет).
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        if let Some(bb) = self.bounding_box_mut() {
+            bb.move_(x, y, z);
+        }
+    }
     /// `genDepth`.
     fn gen_depth(&self) -> i32;
     /// `setGenDepth`.
@@ -816,4 +829,63 @@ pub fn is_close_to_chunk(bb: &BoundingBox, chunk_pos: ChunkPos, distance: i32) -
     let min_x = chunk_pos.get_min_block_x();
     let min_z = chunk_pos.get_min_block_z();
     bb.intersects_2d(min_x - distance, min_z - distance, min_x + 15 + distance, min_z + 15 + distance)
+}
+
+/// `StructurePiecesBuilder` — хелперы над `Vec<Box<dyn
+/// StructurePiece>>` (аналог pieces/StructurePiecesBuilder.java).
+
+/// `offsetPiecesVertically(offset)` — сдвиг всех кусков по Y.
+pub fn offset_pieces_vertically(pieces: &mut [Box<dyn StructurePiece>], offset: i32) {
+    for piece in pieces.iter_mut() {
+        piece.move_by(0, offset, 0);
+    }
+}
+
+/// `moveBelowSeaLevel(seaLevel, minY, random, amount)` —
+/// опускает структуру ниже уровня моря. Возвращает сдвиг.
+pub fn move_below_sea_level(
+    pieces: &mut Vec<Box<dyn StructurePiece>>,
+    sea_level: i32,
+    min_y: i32,
+    random: &mut dyn RandomSource,
+    amount: i32,
+) -> i32 {
+    let i = sea_level - amount;
+    let bounding_box = pieces_bounding_box(pieces);
+    let mut i1 = bounding_box.get_y_span() + min_y + 1;
+    if i1 < i {
+        i1 += random.next_int_bound(i - i1);
+    }
+    let i2 = i1 - bounding_box.max_y;
+    offset_pieces_vertically(pieces, i2);
+    i2
+}
+
+/// `moveInsideHeights(random, minY, maxY)`.
+pub fn move_inside_heights(
+    pieces: &mut Vec<Box<dyn StructurePiece>>,
+    random: &mut dyn RandomSource,
+    min_y: i32,
+    max_y: i32,
+) {
+    let bounding_box = pieces_bounding_box(pieces);
+    let i = max_y - min_y + 1 - bounding_box.get_y_span();
+    let i1 = if i > 1 {
+        min_y + random.next_int_bound(i)
+    } else {
+        min_y
+    };
+    let i2 = i1 - bounding_box.min_y;
+    offset_pieces_vertically(pieces, i2);
+}
+
+/// `getBoundingBox()` — объединяющий бокс (пустой список →
+/// degenerate box в (0,0,0), Java бросает — у нас безопасный
+/// дефолт).
+pub fn pieces_bounding_box(pieces: &[Box<dyn StructurePiece>]) -> BoundingBox {
+    let refs: Vec<&dyn StructurePiece> = pieces.iter().map(|b| b.as_ref()).collect();
+    if refs.is_empty() {
+        return BoundingBox::new(0, 0, 0, -1, -1, -1);
+    }
+    create_bounding_box(&refs)
 }

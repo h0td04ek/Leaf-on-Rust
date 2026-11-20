@@ -147,6 +147,10 @@ impl StructurePiece for IglooPiece {
         self.base.bounding_box()
     }
 
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        self.base.move_by(x, y, z);
+    }
+
     fn gen_depth(&self) -> i32 {
         self.base.gen_depth()
     }

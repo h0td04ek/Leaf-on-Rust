@@ -23,6 +23,14 @@ use std::sync::Arc;
 
 type PoolKey = ResourceKey<Rc<StructureTemplatePool>>;
 
+// SAFETY: worldgen-генерация в Rust-JVM однопоточна (как и
+// Java-воркер), а `find_generation_point`-замыкание лишь читает
+// конфиг. Rc-поля (pool holder, alias bindings) не покидают
+// поток генерации. Без этого `Arc<dyn Fn + Send + Sync>` не
+// собирается — рефакторинг всего pool-слоя на Arc отложен.
+unsafe impl Send for JigsawStructureConfig {}
+unsafe impl Sync for JigsawStructureConfig {}
+
 /// `JigsawStructure` — конфиг jigsaw-структуры.
 pub struct JigsawStructureConfig {
     /// `startPool`.

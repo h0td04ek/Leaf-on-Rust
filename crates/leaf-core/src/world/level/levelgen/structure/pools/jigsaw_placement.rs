@@ -753,6 +753,9 @@ impl StructurePiece for RcPoolPiece {
     fn bounding_box(&self) -> crate::world::level::levelgen::structure::bounding_box::BoundingBox {
         self.0.borrow().bounding_box()
     }
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        self.0.borrow_mut().move_by(x, y, z);
+    }
     fn gen_depth(&self) -> i32 {
         self.0.borrow().gen_depth()
     }

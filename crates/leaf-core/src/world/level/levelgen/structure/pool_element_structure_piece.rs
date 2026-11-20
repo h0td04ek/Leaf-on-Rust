@@ -143,6 +143,18 @@ impl StructurePiece for PoolElementStructurePiece {
         self.bounding_box.clone()
     }
 
+    fn bounding_box_mut(&mut self) -> Option<&mut BoundingBox> {
+        Some(&mut self.bounding_box)
+    }
+
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        // Java `PoolElementStructurePiece.move` — bb + position.
+        if let Some(bb) = self.bounding_box_mut() {
+            bb.move_(x, y, z);
+        }
+        self.position = self.position.offset(x, y, z);
+    }
+
     fn gen_depth(&self) -> i32 {
         self.gen_depth
     }

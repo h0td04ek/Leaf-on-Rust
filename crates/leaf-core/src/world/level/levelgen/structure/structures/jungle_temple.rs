@@ -153,6 +153,10 @@ impl StructurePiece for JungleTemplePiece {
         self.bounding_box.clone()
     }
 
+    fn bounding_box_mut(&mut self) -> Option<&mut BoundingBox> {
+        Some(&mut self.bounding_box)
+    }
+
     fn gen_depth(&self) -> i32 {
         self.gen_depth
     }

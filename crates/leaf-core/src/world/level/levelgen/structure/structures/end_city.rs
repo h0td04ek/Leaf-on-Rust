@@ -44,6 +44,9 @@ impl StructurePiece for EndCityPieceHandle {
     fn bounding_box(&self) -> BoundingBox {
         self.0.borrow().bounding_box()
     }
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        self.0.borrow_mut().move_by(x, y, z);
+    }
     fn gen_depth(&self) -> i32 {
         self.0.borrow().gen_depth
     }
@@ -68,7 +71,7 @@ impl StructurePiece for EndCityPieceHandle {
     fn add_additional_save_data(&self, tag: &mut CompoundTag) {
         self.0.borrow().add_additional_save_data(tag);
         let b = self.0.borrow();
-        tag.put("Rot", Tag::String(b.place_settings.get_rotation().get_name().to_string()));
+        tag.put("Rot", Tag::String(b.place_settings.get_rotation().get_serialized_name().to_string()));
         let overwrite = matches!(
             b.place_settings
                 .processors

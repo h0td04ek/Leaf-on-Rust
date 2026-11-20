@@ -5,7 +5,7 @@
 
 use super::super::bounding_box::BoundingBox;
 use super::super::structure::{
-    get_lowest_y, get_mean_first_occupied_height, on_top_of_chunk_center,
+    get_lowest_y_explicit, get_mean_first_occupied_height, on_top_of_chunk_center,
     GenerationContext, GenerationStub, Structure, StructureSettings,
 };
 use super::super::structure_manager::StructureManagerAccess;
@@ -46,7 +46,7 @@ const STRUCTURE_LOCATION_BEACHED: [&str; 11] = [
     "shipwreck/rightsideup_backhalf_degraded",
 ];
 
-const STRUCTURE_LOCATION_OCEAN: [&str; 19] = [
+const STRUCTURE_LOCATION_OCEAN: [&str; 20] = [
     "shipwreck/with_mast",
     "shipwreck/upsidedown_full",
     "shipwreck/upsidedown_fronthalf",
@@ -174,6 +174,10 @@ impl ShipwreckPiece {
 impl StructurePiece for ShipwreckPiece {
     fn bounding_box(&self) -> BoundingBox {
         self.base.bounding_box()
+    }
+
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        self.base.move_by(x, y, z);
     }
 
     fn gen_depth(&self) -> i32 {
@@ -329,11 +333,14 @@ pub fn shipwreck_structure(
                 if piece.is_too_big_to_fit_in_world_gen_region() {
                     let bb = piece.bounding_box();
                     let i = if is_beached {
-                        let lowest_y = get_lowest_y(
+                        // Java: getLowestY(context, minX, xSpan, minZ, zSpan)
+                        // — span передаётся как max-координата (ванильный
+                        // quirk, сохраняем 1:1).
+                        let lowest_y = get_lowest_y_explicit(
                             context,
                             bb.min_x,
-                            bb.get_x_span(),
                             bb.min_z,
+                            bb.get_x_span(),
                             bb.get_z_span(),
                         );
                         piece.calculate_beached_position(lowest_y, &mut context.random)

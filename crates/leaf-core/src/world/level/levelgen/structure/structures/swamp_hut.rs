@@ -101,17 +101,18 @@ impl SwampHutPiece {
     }
 
     /// `spawnWitch`-логика — создаёт Witch через level-хуки.
+    /// Associated-функция (без `&mut self`): вызывается с
+    /// `&mut self.spawned_*`, что иначе даёт double-borrow.
     fn spawn_mob(
-        &mut self,
         level: &dyn LevelReader,
         box_: &BoundingBox,
         spawned: &mut bool,
         entity_name: &str,
+        world_pos: BlockPos,
     ) {
         if *spawned {
             return;
         }
-        let world_pos = self.world_pos(2, 2, 5);
         if !box_.is_inside_pos(world_pos) {
             return;
         }
@@ -146,6 +147,10 @@ impl SwampHutPiece {
 impl StructurePiece for SwampHutPiece {
     fn bounding_box(&self) -> BoundingBox {
         self.bounding_box.clone()
+    }
+
+    fn bounding_box_mut(&mut self) -> Option<&mut BoundingBox> {
+        Some(&mut self.bounding_box)
     }
 
     fn gen_depth(&self) -> i32 {
@@ -310,8 +315,10 @@ impl StructurePiece for SwampHutPiece {
             }
         }
 
-        self.spawn_mob(level, box_, &mut self.spawned_witch, "witch");
-        self.spawn_mob(level, box_, &mut self.spawned_cat, "cat");
+        let witch_pos = self.world_pos(2, 2, 5);
+        Self::spawn_mob(level, box_, &mut self.spawned_witch, "witch", witch_pos);
+        let cat_pos = self.world_pos(2, 2, 5);
+        Self::spawn_mob(level, box_, &mut self.spawned_cat, "cat", cat_pos);
     }
 }
 

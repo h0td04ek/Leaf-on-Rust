@@ -26,7 +26,7 @@ use super::super::pools::structure_pool_element::PoolGeneratorAccess;
 use super::{block_state, with_bool_property};
 use crate::core::block_pos::BlockPos;
 use crate::core::direction::Direction;
-use crate::entity::entity_spawn_reason::EntitySpawnReason;
+use crate::world::entity::entity_spawn_reason::EntitySpawnReason;
 use crate::entity::entity_type::entity_type_by_identifier;
 use crate::nbt::compound::CompoundTag;
 use crate::nbt::tag::Tag;
@@ -324,6 +324,10 @@ impl OceanRuinPiece {
 impl StructurePiece for OceanRuinPiece {
     fn bounding_box(&self) -> BoundingBox {
         self.base.bounding_box()
+    }
+
+    fn move_by(&mut self, x: i32, y: i32, z: i32) {
+        self.base.move_by(x, y, z);
     }
 
     fn gen_depth(&self) -> i32 {
