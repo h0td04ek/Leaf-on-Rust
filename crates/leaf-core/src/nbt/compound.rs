@@ -137,6 +137,122 @@ impl CompoundTag {
         }
     }
 
+    /// `getListOrEmpty` — пустой срез, если ключ отсутствует/не список.
+    pub fn get_list_or_empty(&self, key: &str) -> &[Tag] {
+        match self.get(key) {
+            Some(Tag::List(l)) => l.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// `getCompoundOrEmpty` — клон compound или пустой.
+    /// В Java возвращается живая ссылка; здесь — owned-копия,
+    /// паттерн использования `get → mutate → put` сохраняется.
+    pub fn get_compound_or_empty(&self, key: &str) -> CompoundTag {
+        self.get_compound(key).cloned().unwrap_or_default()
+    }
+
+    /// `getIntOr`.
+    pub fn get_int_or(&self, key: &str, default: i32) -> i32 {
+        self.get_int(key).unwrap_or(default)
+    }
+
+    /// `getLongOr`.
+    pub fn get_long_or(&self, key: &str, default: i64) -> i64 {
+        self.get_long(key).unwrap_or(default)
+    }
+
+    /// `getLongArray`.
+    pub fn get_long_array(&self, key: &str) -> Option<&[i64]> {
+        match self.get(key) {
+            Some(Tag::LongArray(a)) => Some(a.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// `getByteArray`.
+    pub fn get_byte_array(&self, key: &str) -> Option<&[i8]> {
+        match self.get(key) {
+            Some(Tag::ByteArray(a)) => Some(a.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// `getIntArray`.
+    pub fn get_int_array(&self, key: &str) -> Option<&[i32]> {
+        match self.get(key) {
+            Some(Tag::IntArray(a)) => Some(a.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// `getStringOr` — `getString(key).orElse(default)`.
+    pub fn get_string_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+        self.get_string(key).unwrap_or(default)
+    }
+
+    /// `getBooleanOr`.
+    pub fn get_bool_or(&self, key: &str, default: bool) -> bool {
+        self.get_bool(key).unwrap_or(default)
+    }
+
+    // ---------- typed put ----------
+
+    /// `putByte`.
+    pub fn put_byte(&mut self, key: &str, value: i8) {
+        self.put(key, Tag::Byte(value));
+    }
+
+    /// `putShort`.
+    pub fn put_short(&mut self, key: &str, value: i16) {
+        self.put(key, Tag::Short(value));
+    }
+
+    /// `putInt`.
+    pub fn put_int(&mut self, key: &str, value: i32) {
+        self.put(key, Tag::Int(value));
+    }
+
+    /// `putLong`.
+    pub fn put_long(&mut self, key: &str, value: i64) {
+        self.put(key, Tag::Long(value));
+    }
+
+    /// `putFloat`.
+    pub fn put_float(&mut self, key: &str, value: f32) {
+        self.put(key, Tag::Float(value));
+    }
+
+    /// `putDouble`.
+    pub fn put_double(&mut self, key: &str, value: f64) {
+        self.put(key, Tag::Double(value));
+    }
+
+    /// `putBoolean`.
+    pub fn put_bool(&mut self, key: &str, value: bool) {
+        self.put(key, Tag::Byte(if value { 1 } else { 0 }));
+    }
+
+    /// `putString`.
+    pub fn put_string(&mut self, key: &str, value: &str) {
+        self.put(key, Tag::String(value.to_owned()));
+    }
+
+    /// `putLongArray`.
+    pub fn put_long_array(&mut self, key: &str, value: &[i64]) {
+        self.put(key, Tag::LongArray(value.to_vec()));
+    }
+
+    /// `putIntArray`.
+    pub fn put_int_array(&mut self, key: &str, value: &[i32]) {
+        self.put(key, Tag::IntArray(value.to_vec()));
+    }
+
+    /// `putByteArray`.
+    pub fn put_byte_array(&mut self, key: &str, value: &[i8]) {
+        self.put(key, Tag::ByteArray(value.to_vec()));
+    }
+
     /// `toSortedMap` — сортировка ключей (используется в SNBT/тестах).
     pub fn to_sorted_map(&self) -> BTreeMap<String, Tag> {
         let mut map = BTreeMap::new();

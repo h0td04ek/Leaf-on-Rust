@@ -16,6 +16,7 @@ pub mod csv_output;
 pub mod delegate_data_output;
 pub mod dependency_sorter;
 pub mod debug;
+pub mod datafix;
 pub mod debugchart;
 pub mod directory_lock;
 pub mod ease;

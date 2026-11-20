@@ -13,6 +13,7 @@ pub mod path;
 pub mod snbt;
 pub mod snbt_parse;
 pub mod tag;
+pub mod utils;
 
 pub use accounter::NbtAccounter;
 pub use compound::CompoundTag;

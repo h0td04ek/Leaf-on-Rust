@@ -18,6 +18,8 @@ pub mod structure_start;
 pub mod structures;
 pub mod template_structure_piece;
 pub mod templatesystem;
+pub mod legacy_structure_data_handler;
+pub mod structure_feature_index_saved_data;
 pub mod structure_type;
 pub mod terrain_adjustment;
 
