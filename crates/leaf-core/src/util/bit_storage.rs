@@ -222,6 +222,11 @@ impl SimpleBitStorage {
         self.data[cell] = (cleared | (((value as u64) & mask) << offset)) as i64;
     }
 
+    /// `getSize`.
+    pub fn get_size(&self) -> usize {
+        self.size
+    }
+
     /// `get`.
     pub fn get(&self, index: usize) -> i32 {
         assert!(index < self.size, "Index {} out of bounds {}", index, self.size);

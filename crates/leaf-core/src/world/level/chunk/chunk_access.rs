@@ -139,6 +139,22 @@ impl ChunkAccess {
         self.sections.get_mut(idx)
     }
 
+    /// `getSectionYFromSectionIndex` — sectionY по 0-based индексу секции.
+    pub fn get_section_y_from_section_index(&self, section_index: i32) -> i32 {
+        section_index + self.get_min_section()
+    }
+
+    /// `getHighestFilledSectionIndex` — индекс (0-based) самой высокой
+    /// непустой секции, -1 если все секции пусты.
+    pub fn get_highest_filled_section_index(&self) -> i32 {
+        for i in (0..self.sections.len()).rev() {
+            if !self.sections[i].has_only_air() {
+                return i as i32;
+            }
+        }
+        -1
+    }
+
     /// `getBlockState` — состояние блока.
     pub fn get_block_state(&self, pos: &BlockPos) -> BlockState {
         let section_y = SectionPos::block_to_section_coord(pos.get_y());

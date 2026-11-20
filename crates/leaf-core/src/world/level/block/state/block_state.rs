@@ -240,6 +240,26 @@ impl BlockState {
         crate::world::phys::shapes::VoxelShape::block()
     }
 
+    /// `getOcclusionShape()` без level — форма, блокирующая свет
+    /// (без направления). Пустая, если `isEmptyShape`.
+    pub fn occlusion_shape_unleveled(&self) -> crate::world::phys::shapes::VoxelShape {
+        if !self.can_occlude() || !self.use_shape_for_light_occlusion() {
+            return crate::world::phys::shapes::VoxelShape::empty();
+        }
+        self.block_shape_static()
+    }
+
+    /// `getFaceOcclusionShape(direction)` — форма окклюзии грани.
+    /// Направление зарезервировано (vanilla различает формы по
+    /// направлениям; в текущей модели форм направления не
+    /// различаются).
+    pub fn face_occlusion_shape_unleveled(
+        &self,
+        _direction: crate::core::direction::Direction,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        self.occlusion_shape_unleveled()
+    }
+
     /// `isCollisionShapeFullBlock(level, pos)` —
     /// `Block.isShapeFullBlock(getCollisionShape)`.
     pub fn is_collision_shape_full_block(

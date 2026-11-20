@@ -5,7 +5,6 @@ use crate::core::section_pos::SectionPos;
 use crate::world::level::block::state::block_state::BlockState;
 use std::sync::Arc;
 
-use crate::world::level::chunk::data_layer::DataLayer;
 use crate::world::level::light_layer::LightLayer;
 
 /// `LightEngine` — базовый движок освещения (упрощённая версия).
@@ -56,10 +55,72 @@ pub trait LightEngine: Send + Sync {
 
     /// `hasDifferentLightProperties(state1, state2)` — проверка разных свойств света.
     fn has_different_light_properties(&self, state1: &BlockState, state2: &BlockState) -> bool {
-        state2 != state1 && (
-            state2.get_light_block() != state1.get_light_block() ||
-            state2.get_light_emission() != state1.get_light_emission() ||
-            state2.use_shape_for_light_occlusion() != state1.use_shape_for_light_occlusion()
-        )
+        has_different_light_properties(state1, state2)
     }
+}
+
+/// `LightEngine.isEmptyShape(state)` — `!canOcclude || !useShapeForLightOcclusion`.
+pub fn is_empty_shape(state: &BlockState) -> bool {
+    !state.can_occlude() || !state.use_shape_for_light_occlusion()
+}
+
+/// `LightEngine.getOcclusionShape(state, direction)`.
+pub fn get_occlusion_shape(
+    state: &BlockState,
+    direction: crate::core::direction::Direction,
+) -> crate::world::phys::shapes::VoxelShape {
+    if is_empty_shape(state) {
+        crate::world::phys::shapes::VoxelShape::empty()
+    } else {
+        state.face_occlusion_shape_unleveled(direction)
+    }
+}
+
+/// `LightEngine.getLightBlockInto(state1, state2, direction, default)`.
+pub fn get_light_block_into(
+    state1: &BlockState,
+    state2: &BlockState,
+    direction: crate::core::direction::Direction,
+    default_return_value: i32,
+) -> i32 {
+    let is_empty_shape1 = is_empty_shape(state1);
+    let is_empty_shape2 = is_empty_shape(state2);
+    if is_empty_shape1 && is_empty_shape2 {
+        return default_return_value;
+    }
+    let shape1 = if is_empty_shape1 {
+        crate::world::phys::shapes::VoxelShape::empty()
+    } else {
+        state1.occlusion_shape_unleveled()
+    };
+    let shape2 = if is_empty_shape2 {
+        crate::world::phys::shapes::VoxelShape::empty()
+    } else {
+        state2.occlusion_shape_unleveled()
+    };
+    if crate::world::phys::shapes::merged_face_occludes(&shape1, &shape2, direction) {
+        16
+    } else {
+        default_return_value
+    }
+}
+
+/// `LightEngine.shapeOccludes(state1, state2, direction)`.
+pub fn shape_occludes(
+    state1: &BlockState,
+    state2: &BlockState,
+    direction: crate::core::direction::Direction,
+) -> bool {
+    let occlusion_shape = get_occlusion_shape(state1, direction);
+    let occlusion_shape1 = get_occlusion_shape(state2, direction.get_opposite());
+    crate::world::phys::shapes::face_shape_occludes(&occlusion_shape, &occlusion_shape1)
+}
+
+/// `LightEngine.hasDifferentLightProperties(state1, state2)`.
+pub fn has_different_light_properties(state1: &BlockState, state2: &BlockState) -> bool {
+    state2 != state1
+        && (state2.get_light_block() != state1.get_light_block()
+            || state2.get_light_emission() != state1.get_light_emission()
+            || state2.use_shape_for_light_occlusion()
+            || state1.use_shape_for_light_occlusion())
 }

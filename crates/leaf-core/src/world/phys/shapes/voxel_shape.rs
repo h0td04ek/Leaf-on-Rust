@@ -231,6 +231,236 @@ impl VoxelShape {
     }
 }
 
+/// `COLLISION_EPSILON` (moonrise `CollisionUtil`).
+pub const COLLISION_EPSILON: f64 = 1.0e-7;
+
+/// `mergedMayOccludeBlock(shape1, shape2)` — объединённые границы
+/// форм должны покрывать единичный куб с epsilon.
+pub fn merged_may_occlude_block(shape1: &VoxelShape, shape2: &VoxelShape) -> bool {
+    let (Some(b1), Some(b2)) = (shape1.bounds(), shape2.bounds()) else {
+        return false;
+    };
+    let min_x = b1.min_x.min(b2.min_x);
+    let min_y = b1.min_y.min(b2.min_y);
+    let min_z = b1.min_z.min(b2.min_z);
+    let max_x = b1.max_x.max(b2.max_x);
+    let max_y = b1.max_y.max(b2.max_y);
+    let max_z = b1.max_z.max(b2.max_z);
+    min_x <= COLLISION_EPSILON
+        && max_x >= 1.0 - COLLISION_EPSILON
+        && min_y <= COLLISION_EPSILON
+        && max_y >= 1.0 - COLLISION_EPSILON
+        && min_z <= COLLISION_EPSILON
+        && max_z >= 1.0 - COLLISION_EPSILON
+}
+
+/// `moonrise$occludesFullBlock` — форма покрывает единичный куб.
+/// Точная проверка: разбиение по всем координатам граней брусов и
+/// проверка покрытия каждой ячейки (union AABB покрывает куб тогда
+/// и только тогда, когда покрыта каждая ячейка сетки).
+fn occludes_full_block(shape: &VoxelShape) -> bool {
+    if shape.is_empty() {
+        return false;
+    }
+    let Some(b) = shape.bounds() else {
+        return false;
+    };
+    if b.min_x > COLLISION_EPSILON
+        || b.min_y > COLLISION_EPSILON
+        || b.min_z > COLLISION_EPSILON
+        || b.max_x < 1.0 - COLLISION_EPSILON
+        || b.max_y < 1.0 - COLLISION_EPSILON
+        || b.max_z < 1.0 - COLLISION_EPSILON
+    {
+        return false;
+    }
+    covers_unit_cube(&shape.boxes)
+}
+
+/// Покрывают ли AABB-ы весь единичный куб [0,1]³.
+fn covers_unit_cube(boxes: &[Aabb]) -> bool {
+    let mut xs: Vec<f64> = vec![0.0, 1.0];
+    let mut ys: Vec<f64> = vec![0.0, 1.0];
+    let mut zs: Vec<f64> = vec![0.0, 1.0];
+    for b in boxes {
+        for v in [b.min_x, b.max_x] {
+            if v > 0.0 && v < 1.0 && !xs.contains(&v) {
+                xs.push(v);
+            }
+        }
+        for v in [b.min_y, b.max_y] {
+            if v > 0.0 && v < 1.0 && !ys.contains(&v) {
+                ys.push(v);
+            }
+        }
+        for v in [b.min_z, b.max_z] {
+            if v > 0.0 && v < 1.0 && !zs.contains(&v) {
+                zs.push(v);
+            }
+        }
+    }
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for i in 0..xs.len() - 1 {
+        for j in 0..ys.len() - 1 {
+            for k in 0..zs.len() - 1 {
+                let (x, y, z) = (
+                    (xs[i] + xs[i + 1]) * 0.5,
+                    (ys[j] + ys[j + 1]) * 0.5,
+                    (zs[k] + zs[k + 1]) * 0.5,
+                );
+                if !boxes.iter().any(|b| b.contains(x, y, z)) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `Shapes.faceShapeOccludes(shape1, shape2)` — окклюзия между
+/// соседними гранями блоков (используется движком освещения).
+pub fn face_shape_occludes(shape1: &VoxelShape, shape2: &VoxelShape) -> bool {
+    if occludes_full_block(shape1) || occludes_full_block(shape2) {
+        return true;
+    }
+
+    let s1_empty = shape1.is_empty();
+    let s2_empty = shape2.is_empty();
+    if s1_empty && s2_empty {
+        return false;
+    }
+    if s1_empty || s2_empty {
+        return if s2_empty {
+            occludes_full_block(shape1)
+        } else {
+            occludes_full_block(shape2)
+        };
+    }
+    if shape1 == shape2 {
+        return occludes_full_block(shape1);
+    }
+
+    merged_may_occlude_block(shape1, shape2)
+        && occludes_full_block(&shape1.join(shape2, BooleanOp::Or))
+}
+
+/// `Shapes.mergedFaceOccludes(first, second, direction)` — окклюзия
+/// между гранями блоков в направлении `direction` (используется
+/// `LightEngine.getLightBlockInto`).
+pub fn merged_face_occludes(
+    first: &VoxelShape,
+    second: &VoxelShape,
+    direction: crate::core::direction::Direction,
+) -> bool {
+    if occludes_full_block(first) || occludes_full_block(second) {
+        return true;
+    }
+    if first.is_empty() && second.is_empty() {
+        return false;
+    }
+
+    let first_rects = face_rects(first, direction);
+    let second_rects = face_rects(second, direction.get_opposite());
+
+    let first_empty = first_rects.is_empty();
+    let second_empty = second_rects.is_empty();
+    if first_empty && second_empty {
+        return false;
+    }
+    if first_empty || second_empty {
+        return face_rects_cover(if second_empty { &first_rects } else { &second_rects });
+    }
+
+    let mut all = first_rects;
+    all.extend(second_rects);
+    face_rects_cover(&all)
+}
+
+/// 2D-прямоугольник на единичной грани: `(u_min, v_min, u_max, v_max)`.
+type FaceRect = (f64, f64, f64, f64);
+
+/// `moonrise$getFaceShapeClamped(direction)` в виде набора
+/// прямоугольников: проекция брусов, касающихся грани в направлении
+/// `direction`, на единичный квадрат грани.
+fn face_rects(shape: &VoxelShape, direction: crate::core::direction::Direction) -> Vec<FaceRect> {
+    use crate::core::direction::{Axis, AxisDirection};
+    let axis = direction.get_axis();
+    let positive = direction.get_axis_direction() == AxisDirection::POSITIVE;
+    let (u_axis, v_axis) = match axis {
+        Axis::X => (Axis::Z, Axis::Y),
+        Axis::Y => (Axis::X, Axis::Z),
+        Axis::Z => (Axis::X, Axis::Y),
+    };
+    let mut rects = Vec::new();
+    for b in &shape.boxes {
+        let (min_a, max_a) = axis_range(b, axis);
+        let touches = if positive {
+            max_a >= 1.0 - COLLISION_EPSILON
+        } else {
+            min_a <= COLLISION_EPSILON
+        };
+        if !touches {
+            continue;
+        }
+        let (u_min, u_max) = axis_range_clamped(b, u_axis);
+        let (v_min, v_max) = axis_range_clamped(b, v_axis);
+        rects.push((u_min, v_min, u_max, v_max));
+    }
+    rects
+}
+
+fn axis_range(b: &Aabb, axis: crate::core::direction::Axis) -> (f64, f64) {
+    use crate::core::direction::Axis;
+    match axis {
+        Axis::X => (b.min_x, b.max_x),
+        Axis::Y => (b.min_y, b.max_y),
+        Axis::Z => (b.min_z, b.max_z),
+    }
+}
+
+fn axis_range_clamped(b: &Aabb, axis: crate::core::direction::Axis) -> (f64, f64) {
+    use crate::core::direction::Axis;
+    match axis {
+        Axis::X => (b.min_x.clamp(0.0, 1.0), b.max_x.clamp(0.0, 1.0)),
+        Axis::Y => (b.min_y.clamp(0.0, 1.0), b.max_y.clamp(0.0, 1.0)),
+        Axis::Z => (b.min_z.clamp(0.0, 1.0), b.max_z.clamp(0.0, 1.0)),
+    }
+}
+
+/// Покрывают ли прямоугольники грани весь единичный квадрат [0,1]².
+fn face_rects_cover(rects: &[FaceRect]) -> bool {
+    if rects.is_empty() {
+        return false;
+    }
+    let mut xs: Vec<f64> = vec![0.0, 1.0];
+    let mut ys: Vec<f64> = vec![0.0, 1.0];
+    for r in rects {
+        for v in [r.0, r.2] {
+            if v > 0.0 && v < 1.0 && !xs.contains(&v) {
+                xs.push(v);
+            }
+        }
+        for v in [r.1, r.3] {
+            if v > 0.0 && v < 1.0 && !ys.contains(&v) {
+                ys.push(v);
+            }
+        }
+    }
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for i in 0..xs.len() - 1 {
+        for j in 0..ys.len() - 1 {
+            let (u, v) = ((xs[i] + xs[i + 1]) * 0.5, (ys[j] + ys[j + 1]) * 0.5);
+            if !rects.iter().any(|r| u >= r.0 && u <= r.2 && v >= r.1 && v <= r.3) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// `a \ b` — вычитание AABB `b` из AABB `a`, результат —
 /// список непересекающихся боксов (стандартная декомпозиция
 /// на до 6 частей по осям).

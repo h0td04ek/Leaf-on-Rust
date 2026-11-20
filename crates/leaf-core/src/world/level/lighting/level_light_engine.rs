@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::core::block_pos::BlockPos;
-use crate::world::level::chunk::chunk_access::ChunkAccess;
 use crate::world::level::light_layer::LightLayer;
 use crate::world::level::lighting::light_engine::LightEngine;
 
