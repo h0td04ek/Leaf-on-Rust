@@ -17,6 +17,16 @@ impl Mirror {
     /// `values()`.
     pub const VALUES: [Mirror; 3] = [Mirror::NONE, Mirror::LEFT_RIGHT, Mirror::FRONT_BACK];
 
+    /// `mirror(float angle)` — отражение угла (для entity
+    /// yRot при mirror-повороте шаблона).
+    pub fn mirror_f32(&self, angle: f32) -> f32 {
+        match self {
+            Mirror::NONE => angle,
+            Mirror::LEFT_RIGHT => 180.0 - angle,
+            Mirror::FRONT_BACK => -angle,
+        }
+    }
+
     /// `getSerializedName`.
     pub fn get_serialized_name(&self) -> &'static str {
         match self {

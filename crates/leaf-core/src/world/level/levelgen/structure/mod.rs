@@ -11,6 +11,7 @@ pub mod structure_manager;
 pub mod structure_piece;
 pub mod structure_spawn_override;
 pub mod structure_start;
+pub mod templatesystem;
 pub mod structure_type;
 pub mod terrain_adjustment;
 

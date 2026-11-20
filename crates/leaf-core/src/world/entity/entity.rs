@@ -61,6 +61,10 @@ pub struct Entity {
     pub old_pos: Vec3,
     /// `rotation` — вращение (yaw, pitch).
     pub rotation: Vec2,
+    /// `y_head_rot` — поворот головы (для setYHeadRot).
+    pub y_head_rot: f32,
+    /// `y_body_rot` — поворот тела.
+    pub y_body_rot: f32,
     /// `oldRotation` — предыдущее вращение.
     pub old_rotation: Vec2,
     /// `velocity` — скорость.
@@ -180,6 +184,8 @@ impl Entity {
             pos: Vec3::ZERO,
             old_pos: Vec3::ZERO,
             rotation: Vec2::new(0.0, 0.0),
+            y_head_rot: 0.0,
+            y_body_rot: 0.0,
             old_rotation: Vec2::new(0.0, 0.0),
             velocity: Vec3::ZERO,
             on_ground: false,
@@ -367,6 +373,25 @@ impl Entity {
 
     /// `setXRot(pitch)`.
     pub fn set_x_rot(&mut self, pitch: f32) { self.rotation.y = pitch; }
+
+    /// `setYHeadRot`.
+    pub fn set_y_head_rot(&mut self, rot: f32) { self.y_head_rot = rot; }
+    /// `setYBodyRot`.
+    pub fn set_y_body_rot(&mut self, rot: f32) { self.y_body_rot = rot; }
+    /// `getYHeadRot`.
+    pub fn get_y_head_rot(&self) -> f32 { self.y_head_rot }
+    /// `getYBodyRot`.
+    pub fn get_y_body_rot(&self) -> f32 { self.y_body_rot }
+
+    /// `rotate(rotation)` — поворот yRot на rotation (для
+    /// StructureTemplate.placeEntities).
+    pub fn rotate(&self, rotation: crate::world::level::block::rotation::Rotation) -> f32 {
+        rotation.rotate_f32(self.get_y_rot())
+    }
+    /// `mirror(mirror)` — зеркальный yRot.
+    pub fn mirror(&self, mirror: crate::world::level::block::mirror::Mirror) -> f32 {
+        mirror.mirror_f32(self.get_y_rot())
+    }
 
 
     /// `snapTo(x, y, z, yRot, xRot)` — телепорт с установкой

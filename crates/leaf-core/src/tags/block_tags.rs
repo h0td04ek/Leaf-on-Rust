@@ -69,6 +69,14 @@ impl BlockTags {
     pub fn hoglin_repellents() -> Identifier {
         Identifier::minecraft("hoglin_repellents")
     }
+    /// `BlockTags.STAIRS` — все лестницы.
+    pub fn stairs() -> Identifier {
+        Identifier::minecraft("stairs")
+    }
+    /// `BlockTags.SLABS` — все плиты.
+    pub fn slabs() -> Identifier {
+        Identifier::minecraft("slabs")
+    }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых блочных
@@ -117,6 +125,41 @@ pub fn bootstrap() {
         Id::with_default_namespace("hoglin_repellents").unwrap(),
         ids(&["warped_fungus", "potted_warped_fungus", "nether_portal", "respawn_anchor"]),
     );
+    // stairs/slabs — все варианты лестниц и плит.
+    let woods = [
+        "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove",
+        "cherry", "bamboo", "bamboo_mosaic", "crimson", "warped",
+    ];
+    let mut stairs: Vec<Id> = Vec::new();
+    let mut slabs: Vec<Id> = Vec::new();
+    for w in woods {
+        stairs.push(Id::with_default_namespace(&format!("{w}_stairs")).unwrap());
+        slabs.push(Id::with_default_namespace(&format!("{w}_slab")).unwrap());
+    }
+    for s in [
+        "stone_stairs", "stone_slab", "cobblestone_stairs", "cobblestone_slab",
+        "mossy_cobblestone_stairs", "mossy_cobblestone_slab", "stone_brick_stairs",
+        "stone_brick_slab", "mossy_stone_brick_stairs", "mossy_stone_brick_slab",
+        "brick_stairs", "brick_slab", "nether_brick_stairs", "nether_brick_slab",
+        "sandstone_stairs", "sandstone_slab", "red_sandstone_stairs",
+        "red_sandstone_slab", "purpur_stairs", "purpur_slab", "quartz_stairs",
+        "quartz_slab", "smooth_quartz_stairs", "smooth_quartz_slab",
+        "prismarine_stairs", "prismarine_slab", "dark_prismarine_stairs",
+        "dark_prismarine_slab", "polished_granite_stairs", "polished_granite_slab",
+        "polished_diorite_stairs", "polished_diorite_slab", "polished_andesite_stairs",
+        "polished_andesite_slab", "polished_deepslate_stairs", "polished_deepslate_slab",
+        "deepslate_tile_stairs", "deepslate_tile_slab", "cobbled_deepslate_stairs",
+        "cobbled_deepslate_slab", "deepslate_brick_stairs", "deepslate_brick_slab",
+        "mud_brick_stairs", "mud_brick_slab", "resin_brick_stairs", "resin_brick_slab",
+        "tuff_stairs", "tuff_slab", "polished_tuff_stairs", "polished_tuff_slab",
+        "calcite_stairs", "calcite_slab",
+    ] {
+        if s.ends_with("_stairs") { stairs.push(Id::with_default_namespace(s).unwrap()); }
+        else if s.ends_with("_slab") { slabs.push(Id::with_default_namespace(s).unwrap()); }
+        else { slabs.push(Id::with_default_namespace(s).unwrap()); }
+    }
+    crate::tags::register_block_tag(Id::with_default_namespace("stairs").unwrap(), stairs);
+    crate::tags::register_block_tag(Id::with_default_namespace("slabs").unwrap(), slabs);
 }
 
 /// `bootstrap_once()` — идемпотентный bootstrap.

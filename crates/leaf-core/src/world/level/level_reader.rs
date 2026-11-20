@@ -1216,5 +1216,40 @@ pub trait LevelReader: Send + Sync {
     fn world_seed(&self) -> i64 {
         0
     }
+    /// `level.setBlockEntityNbt`/`BlockEntity.loadWithComponents` —
+    /// применение NBT к block entity после установки блока
+    /// (StructureTemplate.placeInWorld). Default: no-op.
+    fn set_block_entity_nbt(
+        &self,
+        _pos: BlockPos,
+        _nbt: &crate::nbt::compound::CompoundTag,
+    ) {
+    }
+
+    /// `EntityType.create(nbt, level, spawnReason)` — создание
+    /// сущности из NBT (StructureTemplate.placeEntities).
+    /// Default: None.
+    fn create_entity_from_nbt(
+        &self,
+        _nbt: &crate::nbt::compound::CompoundTag,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+    /// `level.updateShapeAtEdge`/`updateNeighbourShapes` —
+    /// обновление формы соседних блоков после размещения
+    /// шаблона. Default: no-op.
+    fn update_neighbor_shape(&self, _pos: BlockPos) {}
+
+    /// `StructureTemplate.fillFromWorld` — заполнение шаблона
+    /// из области мира. Default: пустой шаблон.
+    fn fill_template_from_world(
+        &self,
+        _pos: BlockPos,
+        _size: crate::core::vec3i::Vec3i,
+        _include_entities: bool,
+        _ignored_blocks: &[crate::resources::identifier::Identifier],
+    ) -> crate::world::level::levelgen::structure::templatesystem::structure_template::StructureTemplate {
+        crate::world::level::levelgen::structure::templatesystem::structure_template::StructureTemplate::new()
+    }
 
 }

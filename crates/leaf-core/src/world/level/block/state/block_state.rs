@@ -283,6 +283,42 @@ impl BlockState {
         self.is_solid_render(level, pos)
     }
 
+    /// `getId`-эквивалент — числовой id состояния в реестре
+    /// (для палитр/сериализации).
+    pub fn id(&self) -> i32 {
+        use crate::world::level::chunk::palette::IdMap;
+        super::block_state_registry::block_state_id_map().get_id(self)
+    }
+
+    /// `mirror(mirror)` — зеркальная трансформация состояния.
+    pub fn mirror(&self, mirror: crate::world::level::block::mirror::Mirror) -> Self {
+        crate::world::level::levelgen::structure::structure_piece::state_mirror(
+            self.clone(),
+            mirror,
+        )
+    }
+
+    /// `rotate(rotation)` — вращение состояния.
+    pub fn rotate(&self, rotation: crate::world::level::block::rotation::Rotation) -> Self {
+        crate::world::level::levelgen::structure::structure_piece::state_rotate(
+            self.clone(),
+            rotation,
+        )
+    }
+
+    /// `setValue(WATERLOGGED, v)` — установка waterlogged, если
+    /// свойство есть.
+    pub fn with_waterlogged(&self, waterlogged: bool) -> Self {
+        let mut state = self.clone();
+        if state.values.get_by_name("waterlogged").is_some() {
+            state.values.set_erased(
+                "waterlogged",
+                super::property::StateValue::Bool(waterlogged),
+            );
+        }
+        state
+    }
+
     /// `BlockBehaviour.isPathfindable(state, type)` — дефолтная
     /// реализация + переопределение через `properties.pathfindable`.
     pub fn is_pathfindable(

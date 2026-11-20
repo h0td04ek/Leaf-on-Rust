@@ -263,6 +263,8 @@ impl Clone for crate::world::entity::entity::Entity {
             pos: self.pos,
             old_pos: self.old_pos,
             rotation: self.rotation,
+            y_head_rot: self.y_head_rot,
+            y_body_rot: self.y_body_rot,
             old_rotation: self.old_rotation,
             velocity: self.velocity,
             on_ground: self.on_ground,

@@ -88,6 +88,17 @@ impl Rotation {
         }
     }
 
+    /// `rotate(float angle)` — поворот угла на 90°*index.
+    pub fn rotate_f32(&self, angle: f32) -> f32 {
+        let shift = match self {
+            Rotation::CLOCKWISE_90 => 90.0,
+            Rotation::CLOCKWISE_180 => 180.0,
+            Rotation::COUNTERCLOCKWISE_90 => -90.0,
+            Rotation::NONE => 0.0,
+        };
+        (angle + shift).rem_euclid(360.0)
+    }
+
     /// `rotate(int rotation, int positionCount)`
     pub fn rotate_index(&self, rotation: i32, position_count: i32) -> i32 {
         match self {
