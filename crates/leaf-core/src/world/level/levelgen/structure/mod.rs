@@ -3,6 +3,7 @@
 pub mod bounding_box;
 pub mod pieces_container;
 pub mod placement;
+pub mod pool_element_structure_piece;
 pub mod pools;
 pub mod scattered_feature_piece;
 pub mod single_piece_structure;
@@ -20,6 +21,7 @@ pub mod terrain_adjustment;
 
 pub use bounding_box::BoundingBox;
 pub use pieces_container::PiecesContainer;
+pub use pool_element_structure_piece::PoolElementStructurePiece;
 pub use scattered_feature_piece::ScatteredFeaturePieceData;
 pub use single_piece_structure::single_piece_structure;
 pub use structure::{

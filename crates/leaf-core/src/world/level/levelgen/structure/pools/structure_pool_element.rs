@@ -10,7 +10,7 @@ use crate::core::vec3i::Vec3i;
 use crate::random::RandomSource;
 use crate::world::level::block::rotation::Rotation;
 use crate::world::level::levelgen::structure::bounding_box::BoundingBox;
-use crate::world::level::levelgen::structure::structure_manager::StructureManager;
+use crate::world::level::levelgen::structure::structure_manager::StructureManagerAccess;
 use crate::world::level::levelgen::structure::templatesystem::liquid_settings::LiquidSettings;
 use crate::world::level::levelgen::structure::templatesystem::structure_template::{
     JigsawBlockInfo, StructureBlockInfo, StructureTemplate,
@@ -69,7 +69,7 @@ pub trait StructurePoolElement {
         &self,
         structure_template_manager: &StructureTemplateManager,
         level: &dyn LevelReader,
-        structure_manager: &StructureManager,
+        structure_manager: &dyn StructureManagerAccess,
         generator: &dyn PoolGeneratorAccess,
         offset: BlockPos,
         pos: BlockPos,

@@ -111,6 +111,11 @@ impl Rotation {
         }
     }
 
+    /// `getRandom`.
+    pub fn get_random(random: &mut dyn RandomSource) -> Rotation {
+        Self::VALUES[random.next_int_bound(4) as usize]
+    }
+
     /// `getShuffled`
     pub fn get_shuffled(random: &mut dyn RandomSource) -> Vec<Rotation> {
         util::shuffled_copy(&Self::VALUES, random)

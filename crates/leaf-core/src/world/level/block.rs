@@ -2,6 +2,7 @@
 
 pub mod rotation;
 pub mod entity;
+pub mod jigsaw_block;
 pub mod mirror;
 pub mod structure_mode;
 pub mod test_block_mode;

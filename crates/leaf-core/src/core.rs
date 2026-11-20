@@ -4,6 +4,7 @@ pub mod block_pos;
 pub mod rotations;
 pub mod component;
 pub mod direction;
+pub mod front_and_top;
 pub mod global_pos;
 pub mod holder;
 pub mod holder_set;

@@ -129,13 +129,14 @@ impl PiecesContainer {
         index: usize,
         level: &dyn crate::world::level::level_reader::LevelReader,
         structure_manager: &dyn crate::world::level::levelgen::structure::structure_manager::StructureManagerAccess,
+        generator: Option<&dyn crate::world::level::levelgen::structure::pools::structure_pool_element::PoolGeneratorAccess>,
         random: &mut dyn crate::random::RandomSource,
         box_: &BoundingBox,
         chunk_pos: crate::world::level::chunk_pos::ChunkPos,
         pos: crate::core::block_pos::BlockPos,
     ) {
         if let Some(piece) = self.pieces.get_mut(index) {
-            piece.post_process(level, structure_manager, random, box_, chunk_pos, pos);
+            piece.post_process(level, structure_manager, generator, random, box_, chunk_pos, pos);
         }
     }
 }

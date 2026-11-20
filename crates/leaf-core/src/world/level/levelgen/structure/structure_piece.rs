@@ -73,10 +73,14 @@ pub trait StructurePiece {
     );
     /// `postProcess(level, structureManager, generator, random,
     /// box, chunkPos, pos)`.
+    /// `postProcess(level, structureManager, generator, random,
+    /// box, chunkPos, pos)` — `generator` — PoolGeneratorAccess
+    /// (нужен jigsaw-частям; None для остальных).
     fn post_process(
         &mut self,
         level: &dyn LevelReader,
         structure_manager: &dyn crate::world::level::levelgen::structure::structure_manager::StructureManagerAccess,
+        generator: Option<&dyn crate::world::level::levelgen::structure::pools::structure_pool_element::PoolGeneratorAccess>,
         random: &mut dyn RandomSource,
         box_: &BoundingBox,
         chunk_pos: ChunkPos,

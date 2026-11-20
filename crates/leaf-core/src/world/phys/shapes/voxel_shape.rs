@@ -102,6 +102,14 @@ impl VoxelShape {
         &self.boxes
     }
 
+    /// `deflate(d)` — сжатие всех AABB на d со всех сторон.
+    pub fn deflate(&self, d: f64) -> Self {
+        Self {
+            boxes: self.boxes.iter().map(|b| b.deflate_all(d)).collect(),
+        }
+        .optimize()
+    }
+
     /// `optimize` — удалить вырожденные/дублирующиеся части.
     /// (Vanilla объединяет соседние срезы в индексе.)
     pub fn optimize(&self) -> Self {

@@ -139,10 +139,13 @@ impl StructureStart {
     }
 
     /// `placeInChunk` — пост-обработка кусков в чанке.
+    /// `placeInChunk(level, structureManager, generator, random,
+    /// box, chunkPos)`.
     pub fn place_in_chunk(
         &mut self,
         level: &dyn LevelReader,
         structure_manager: &dyn StructureManagerAccess,
+        generator: Option<&dyn crate::world::level::levelgen::structure::pools::structure_pool_element::PoolGeneratorAccess>,
         random: &mut dyn RandomSource,
         box_: &BoundingBox,
         chunk_pos: ChunkPos,
@@ -176,6 +179,7 @@ impl StructureStart {
                 idx,
                 level,
                 structure_manager,
+                generator,
                 random,
                 box_,
                 chunk_pos,
