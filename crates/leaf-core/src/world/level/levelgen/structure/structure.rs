@@ -32,14 +32,25 @@ pub struct GenerationStub {
     /// `position`.
     pub position: BlockPos,
     /// `generator` — заполняет `StructurePiecesBuilder`.
-    pub generator: Box<dyn FnOnce(&mut Vec<Box<dyn StructurePiece>>)>,
+    /// Второй аргумент — `GenerationContext` (Java замыкание
+    /// захватывает context: random/level нужны генераторам вида
+    /// Shipwreck.generatePieces).
+    pub generator: Box<
+        dyn for<'a, 'b> FnOnce(
+            &mut Vec<Box<dyn StructurePiece>>,
+            &mut GenerationContext<'b>,
+        ),
+    >,
 }
 
 impl GenerationStub {
     /// `new(position, generator)`.
     pub fn new(
         position: BlockPos,
-        generator: impl FnOnce(&mut Vec<Box<dyn StructurePiece>>) + 'static,
+        generator: impl for<'a, 'b> FnOnce(
+                &mut Vec<Box<dyn StructurePiece>>,
+                &mut GenerationContext<'b>,
+            ) + 'static,
     ) -> Self {
         Self {
             position,
@@ -254,7 +265,7 @@ impl Structure {
         let mut found = false;
         if let Some(finder) = &self.find_generation_point {
             if let Some(stub) = finder(&mut context) {
-                (stub.generator)(&mut pieces);
+                (stub.generator)(&mut pieces, &mut context);
                 found = true;
             }
         }
@@ -334,7 +345,10 @@ impl Structure {
 pub fn on_top_of_chunk_center(
     context: &mut GenerationContext,
     heightmap_types: HeightmapType,
-    generator: impl FnOnce(&mut Vec<Box<dyn StructurePiece>>) + 'static,
+    generator: impl for<'a, 'b> FnOnce(
+            &mut Vec<Box<dyn StructurePiece>>,
+            &mut GenerationContext<'b>,
+        ) + 'static,
 ) -> GenerationStub {
     let chunk_pos = context.chunk_pos;
     let middle_block_x = chunk_pos.get_middle_block_x();

@@ -86,6 +86,14 @@ pub trait StructurePiece {
         chunk_pos: ChunkPos,
         pos: BlockPos,
     );
+
+    /// Downcast-хук для `instanceof`-проверок в `afterPlace`
+    /// (Java pattern matching `piece instanceof X x`). Наследники,
+    /// чьи данные нужны `Structure.afterPlace`, переопределяют.
+    /// Default: `None`.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// `makeBoundingBox(x, y, z, direction, offsetX, offsetY, offsetZ)`.
@@ -447,7 +455,7 @@ pub fn generate_box_selector(
     for i in min_y..=max_y {
         for i1 in min_x..=max_x {
             for i2 in min_z..=max_z {
-                if !always_replace
+                if always_replace
                     || !get_block(level, bb, orientation, i1, i, i2, box_).is_air()
                 {
                     let wall = i == min_y || i == max_y || i1 == min_x || i1 == max_x || i2 == min_z || i2 == max_z;

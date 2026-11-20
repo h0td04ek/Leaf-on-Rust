@@ -25,7 +25,7 @@ use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::level_reader::LevelReader;
 use crate::world::level::levelgen::heightmap::HeightmapType;
 use crate::world::level::levelgen::structure::pool_element_structure_piece::PoolElementStructurePiece;
-use crate::world::level::levelgen::structure::structure::GenerationStub;
+use crate::world::level::levelgen::structure::structure::{GenerationContext, GenerationStub};
 use crate::world::level::levelgen::structure::structure_piece::StructurePiece;
 use crate::world::level::levelgen::structure::templatesystem::liquid_settings::LiquidSettings;
 use crate::world::level::levelgen::structure::templatesystem::structure_template::{
@@ -301,7 +301,7 @@ pub fn add_pieces(
 
     Some(GenerationStub::new(
         BlockPos::new(i, i4, i1),
-        move |out: &mut Vec<Box<dyn StructurePiece>>| {
+        move |out: &mut Vec<Box<dyn StructurePiece>>, _context: &mut GenerationContext| {
             for piece in pieces {
                 out.push(Box::new(RcPoolPiece(piece)));
             }

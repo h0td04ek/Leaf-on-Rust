@@ -208,7 +208,7 @@ impl StructurePiece for SwampHutPiece {
         _chunk_pos: ChunkPos,
         _pos: BlockPos,
     ) {
-        let bounds = self.bounding_box.clone();
+        let bounds = box_.clone();
         if !self
             .scattered
             .update_average_ground_height(level, &bounds, 0, &mut self.bounding_box)
@@ -325,22 +325,18 @@ pub fn swamp_hut_structure(
     structure.find_generation_point =
         Some(Arc::new(|context: &mut GenerationContext| -> Option<GenerationStub> {
             let chunk_pos = context.chunk_pos;
-            let min_x = chunk_pos.get_min_block_x();
-            let min_z = chunk_pos.get_min_block_z();
-            // Java: context.random() передаётся в конструктор куска —
-            // у нас WorldgenRandom клонируем через make_random того же
-            // seed/чанка не можем (random уже consumed на других
-            // структурах) — используем context.random напрямую через
-            // Rc<RefCell> нельзя; поэтому создаём свежий WorldgenRandom
-            // с largeFeatureSeed (детерминированно, как SinglePiece).
-            let seed = context.seed;
             Some(on_top_of_chunk_center(
                 context,
                 HeightmapType::WorldSurfaceWg,
-                move |pieces| {
-                    let mut random =
-                        GenerationContext::make_random(seed, chunk_pos);
-                    pieces.push(Box::new(SwampHutPiece::new(&mut random, min_x, min_z)));
+                move |pieces, context| {
+                    // Java: `SwampHutPiece::new(context.random(), ...)`.
+                    let min_x = chunk_pos.get_min_block_x();
+                    let min_z = chunk_pos.get_min_block_z();
+                    pieces.push(Box::new(SwampHutPiece::new(
+                        &mut context.random,
+                        min_x,
+                        min_z,
+                    )));
                 },
             ))
         }));

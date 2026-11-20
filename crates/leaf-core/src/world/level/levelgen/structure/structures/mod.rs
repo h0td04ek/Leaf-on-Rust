@@ -6,6 +6,10 @@
 //! наследника) + куски (`StructurePiece`-реализации).
 
 pub mod buried_treasure;
+pub mod desert_pyramid;
+pub mod igloo;
+pub mod jungle_temple;
+pub mod shipwreck;
 pub mod swamp_hut;
 pub mod nether_fossil;
 
@@ -30,5 +34,17 @@ pub fn block_state_named(id: &Identifier) -> BlockState {
 /// (`facing`, `shape`, `half` и т.п.).
 pub fn with_string_property(mut state: BlockState, name: &str, value: &str) -> BlockState {
     state.values.set_erased(name, crate::world::level::block::state::property::StateValue::Str(value.to_string()));
+    state
+}
+
+/// `state.setValue(BooleanProperty, value)`.
+pub fn with_bool_property(mut state: BlockState, name: &str, value: bool) -> BlockState {
+    state.values.set_erased(name, crate::world::level::block::state::property::StateValue::Bool(value));
+    state
+}
+
+/// `state.setValue(IntegerProperty, value)`.
+pub fn with_int_property(mut state: BlockState, name: &str, value: i32) -> BlockState {
+    state.values.set_erased(name, crate::world::level::block::state::property::StateValue::Int(value));
     state
 }

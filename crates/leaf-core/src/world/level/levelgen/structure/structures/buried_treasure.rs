@@ -193,7 +193,7 @@ pub fn buried_treasure_structure(
             on_top_of_chunk_center_opt(
                 context,
                 HeightmapType::OceanFloorWg,
-                move |pieces| {
+                move |pieces, _context| {
                     let block_x = chunk_pos.get_block_x(2, 1); // getBlockX(9)
                     let block_z = chunk_pos.get_block_z(2, 1); // getBlockZ(9)
                     let _ = seed;
@@ -211,7 +211,10 @@ pub fn buried_treasure_structure(
 fn on_top_of_chunk_center_opt(
     context: &mut GenerationContext,
     heightmap_types: HeightmapType,
-    generator: impl FnOnce(&mut Vec<Box<dyn StructurePiece>>) + 'static,
+    generator: impl for<'a, 'b> FnOnce(
+            &mut Vec<Box<dyn StructurePiece>>,
+            &mut GenerationContext<'b>,
+        ) + 'static,
 ) -> Option<GenerationStub> {
     Some(on_top_of_chunk_center(context, heightmap_types, generator))
 }

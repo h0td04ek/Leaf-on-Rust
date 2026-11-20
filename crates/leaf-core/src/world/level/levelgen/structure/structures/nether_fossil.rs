@@ -294,12 +294,18 @@ pub fn nether_fossil_structure(
                 return None;
             }
             let block_pos = BlockPos::new(i, y, i1);
-            let template_manager = context.template_manager.clone()?;
-            // Java: generator откладывается до stub — у нас pieces
-            // генерируются eagerly (детерминированно, см. jigsaw).
-            let piece = add_piece(&template_manager, worldgen_random, block_pos);
-            Some(GenerationStub::new(block_pos, move |out| {
-                out.push(Box::new(piece));
+            Some(GenerationStub::new(block_pos, move |out, context| {
+                // Java: `addPieces(context.structureTemplateManager(),
+                // pos, context.random())` — кусок создаётся в
+                // генераторе на реальном random контекста.
+                if let Some(template_manager) = context.template_manager.clone() {
+                    let piece = add_piece(
+                        &template_manager,
+                        &mut context.random,
+                        block_pos,
+                    );
+                    out.push(Box::new(piece));
+                }
             }))
         }));
     structure

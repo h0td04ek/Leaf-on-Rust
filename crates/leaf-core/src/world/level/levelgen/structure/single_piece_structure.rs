@@ -42,17 +42,14 @@ pub fn single_piece_structure(
         if lowest_y < context.level.sea_level() {
             return None;
         }
-        let seed = context.seed;
         let chunk_pos = context.chunk_pos;
         let min_x = chunk_pos.get_min_block_x();
         let min_z = chunk_pos.get_min_block_z();
         let ctor = ctor.clone();
-        let stub = on_top_of_chunk_center(context, HeightmapType::WorldSurfaceWg, move |pieces| {
-            // `context.random` в состоянии после findGenerationPoint —
-            // onTopOfChunkCenter его не расходует, поэтому свежий
-            // WorldgenRandom с тем же seed/чанком эквивалентен.
-            let mut random = GenerationContext::make_random(seed, chunk_pos);
-            pieces.push(ctor(&mut random, min_x, min_z));
+        let stub = on_top_of_chunk_center(context, HeightmapType::WorldSurfaceWg, move |pieces, context| {
+            // Java: `constructor.construct(context.random(), ...)` —
+            // используем реальный WorldgenRandom контекста.
+            pieces.push(ctor(&mut context.random, min_x, min_z));
         });
         Some(stub)
     }));
