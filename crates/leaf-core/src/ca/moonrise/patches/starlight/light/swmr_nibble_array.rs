@@ -3,8 +3,17 @@
 //! `storage_visible`, писатель работает с `storage_updating` (copy-on-write).
 
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 use crate::world::level::chunk::data_layer::DataLayer;
+
+/// `SWMRNibbleArray[]` — разделяемый массив нибблов (в Java элементы
+/// разделяются между чанком и кэшем движка по ссылке). `Mutex` вместо
+/// `RefCell`, чтобы `ChunkAccess` оставался `Send + Sync`.
+pub type NibbleArrayRef = Arc<Mutex<SWMRNibbleArray>>;
+
+/// `boolean[]` emptiness map — разделяемый массив (chunk ↔ engine cache).
+pub type EmptinessMapRef = Arc<Mutex<Vec<bool>>>;
 
 pub const ARRAY_SIZE: usize = 16 * 16 * 16 / 2;
 
@@ -390,4 +399,12 @@ impl Default for SWMRNibbleArray {
 
 fn is_all_zero(data: &[u8; ARRAY_SIZE]) -> bool {
     data.chunks_exact(8).all(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 0)
+}
+
+/// `StarLightEngine.getFilledEmptyLight(totalLightSections)` — массив
+/// null-nibble'ов (`new SWMRNibbleArray(null, true)`).
+pub fn get_filled_empty_light_vec(total_light_sections: usize) -> Vec<Option<NibbleArrayRef>> {
+    (0..total_light_sections)
+        .map(|_| Some(Arc::new(Mutex::new(SWMRNibbleArray::new_null()))))
+        .collect()
 }

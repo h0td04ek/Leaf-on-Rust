@@ -11,8 +11,9 @@ use crate::world::level::block::state::block_state::BlockState;
 pub trait LightChunk {
     /// `findBlockLightSources(BiConsumer<BlockPos, BlockState>)`.
     fn find_block_light_sources(&self, output: &mut dyn FnMut(BlockPos, &BlockState));
-    /// `getSkyLightSources`.
-    fn get_sky_light_sources(&self) -> &ChunkSkyLightSources;
+    /// `getSkyLightSources` — `None` (в Paper/Leaf возвращает null,
+    /// StarLight вычисляет источники самостоятельно).
+    fn get_sky_light_sources(&self) -> Option<&ChunkSkyLightSources>;
     /// `getBlockState(pos)` (из `BlockGetter`).
     fn get_block_state(&self, pos: &BlockPos) -> BlockState;
 }

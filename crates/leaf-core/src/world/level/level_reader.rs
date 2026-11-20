@@ -60,6 +60,31 @@ pub trait LevelReader: Send + Sync {
         self.min_build_height() + 63
     }
 
+    /// `isClientSide` — для сервера всегда `false`.
+    fn is_client_side(&self) -> bool {
+        false
+    }
+
+    /// `moonrise$getAnyChunkIfLoaded(chunkX, chunkZ)` — любой загруженный
+    /// чанк (включая proto/неполные) для StarLight.
+    fn moonrise_get_any_chunk_if_loaded(
+        &self,
+        _chunk_x: i32,
+        _chunk_z: i32,
+    ) -> Option<std::sync::Arc<crate::world::level::chunk::chunk_access::ChunkAccess>> {
+        None
+    }
+
+    /// `moonrise$getChunkTaskScheduler()` — chunk-task scheduler для
+    /// server-очереди StarLight. `None` — scheduler ещё не подключён
+    /// (порт moonrise chunk system).
+    fn moonrise_get_chunk_task_scheduler(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::ca::moonrise::patches::starlight::light::star_light_interface::StarLightTaskScheduler>>
+    {
+        None
+    }
+
     /// `isInsideBuildHeight(y)`.
     fn is_inside_build_height(&self, y: i32) -> bool {
         y >= self.min_build_height() && y < self.min_build_height() + self.height()

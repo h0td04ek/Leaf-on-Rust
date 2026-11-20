@@ -40,7 +40,7 @@ impl LevelLightEngine {
     }
 
     /// `setLightValue(pos, layer, value)`.
-    pub fn set_light_value(&mut self, pos: &BlockPos, layer: LightLayer, value: u8) {
+    pub fn set_light_value(&self, pos: &BlockPos, layer: LightLayer, value: u8) {
         match layer {
             LightLayer::Sky => {
                 if let Some(engine) = &self.sky_engine {
@@ -56,7 +56,7 @@ impl LevelLightEngine {
     }
 
     /// `propagateLight(pos, layer)`.
-    pub fn propagate_light(&mut self, pos: &BlockPos, layer: LightLayer) {
+    pub fn propagate_light(&self, pos: &BlockPos, layer: LightLayer) {
         match layer {
             LightLayer::Sky => {
                 if let Some(engine) = &self.sky_engine {
@@ -72,7 +72,7 @@ impl LevelLightEngine {
     }
 
     /// `updateLight(pos, layer)`.
-    pub fn update_light(&mut self, pos: &BlockPos, layer: LightLayer) {
+    pub fn update_light(&self, pos: &BlockPos, layer: LightLayer) {
         match layer {
             LightLayer::Sky => {
                 if let Some(engine) = &self.sky_engine {
@@ -88,7 +88,7 @@ impl LevelLightEngine {
     }
 
     /// `checkLight(pos, layer)`.
-    pub fn check_light(&mut self, pos: &BlockPos, layer: LightLayer) {
+    pub fn check_light(&self, pos: &BlockPos, layer: LightLayer) {
         match layer {
             LightLayer::Sky => {
                 if let Some(engine) = &self.sky_engine {

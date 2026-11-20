@@ -10,6 +10,7 @@ use crate::world::level::biome::biome::Biome;
 use crate::world::level::block::state::block_state::BlockState;
 use crate::world::level::block::state::fluid_state::FluidState;
 use crate::world::level::block::entity::block_entity::BlockEntityAccess;
+use crate::world::level::chunk::level_chunk::ChunkStatus;
 use crate::world::level::chunk::level_chunk_section::LevelChunkSection;
 use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::level_height_accessor::LevelHeightAccessor;
@@ -49,6 +50,25 @@ pub struct ChunkAccess {
     pub structure_starts: HashMap<String, StructureStart>,
     /// `structuresRefences` — structure references.
     pub structures_references: HashMap<String, Vec<i64>>,
+    /// `blockNibbles` — StarLight block-light нибблы (Paper-патч).
+    pub starlight_block_nibbles: std::sync::Mutex<
+        Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>>,
+    >,
+    /// `skyNibbles` — StarLight sky-light нибблы.
+    pub starlight_sky_nibbles: std::sync::Mutex<
+        Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>>,
+    >,
+    /// `skyEmptinessMap` — карта пустых sky-секций.
+    pub starlight_sky_emptiness_map: std::sync::Mutex<
+        Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef>,
+    >,
+    /// `blockEmptinessMap` — карта пустых block-секций.
+    pub starlight_block_emptiness_map: std::sync::Mutex<
+        Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef>,
+    >,
+    /// `persistedStatus` — персистентный статус чанка
+    /// (`getPersistedStatus`; LevelChunk синхронизирует со своим статусом).
+    pub persisted_status: ChunkStatus,
 }
 
 /// `UpgradeData` — данные обновления чанка.
@@ -92,6 +112,7 @@ impl ChunkAccess {
         sections: Vec<LevelChunkSection>,
     ) -> Self {
         let coordinate_key = ChunkPos::as_long_static(chunk_pos.x, chunk_pos.z);
+        let light_section_count = level_height_accessor.get_sections_count() as usize;
         Self {
             chunk_pos,
             coordinate_key,
@@ -109,7 +130,25 @@ impl ChunkAccess {
             blending_data: None,
             structure_starts: HashMap::new(),
             structures_references: HashMap::new(),
+            starlight_block_nibbles: std::sync::Mutex::new(
+                crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::get_filled_empty_light_vec(
+                    light_section_count,
+                ),
+            ),
+            starlight_sky_nibbles: std::sync::Mutex::new(
+                crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::get_filled_empty_light_vec(
+                    light_section_count,
+                ),
+            ),
+            starlight_sky_emptiness_map: std::sync::Mutex::new(None),
+            starlight_block_emptiness_map: std::sync::Mutex::new(None),
+            persisted_status: ChunkStatus::Full,
         }
+    }
+
+    /// `getPersistedStatus`.
+    pub fn get_persisted_status(&self) -> ChunkStatus {
+        self.persisted_status
     }
 
     /// `getPos` — позиция чанка.
@@ -144,6 +183,11 @@ impl ChunkAccess {
         section_index + self.get_min_section()
     }
 
+    /// `getSectionIndexFromSectionY` — 0-based индекс секции по sectionY.
+    pub fn get_section_index_from_section_y(&self, section_y: i32) -> i32 {
+        section_y - self.get_min_section()
+    }
+
     /// `getHighestFilledSectionIndex` — индекс (0-based) самой высокой
     /// непустой секции, -1 если все секции пусты.
     pub fn get_highest_filled_section_index(&self) -> i32 {
@@ -153,6 +197,35 @@ impl ChunkAccess {
             }
         }
         -1
+    }
+
+    /// `findBlocks(predicate, output)` — обход всех блоков чанка,
+    /// удовлетворяющих предикату.
+    pub fn find_blocks(
+        &self,
+        predicate: &dyn Fn(&BlockState) -> bool,
+        output: &mut dyn FnMut(BlockPos, &BlockState),
+    ) {
+        for section_y in self.get_min_section()..=self.get_max_section() {
+            let section_idx = self.get_section_index_from_section_y(section_y);
+            let Some(section) = self.get_section(section_idx) else {
+                continue;
+            };
+            if !section.maybe_has(predicate) {
+                continue;
+            }
+            let origin = SectionPos::of_chunk(&self.chunk_pos, section_y).origin();
+            for i in 0..16 {
+                for i1 in 0..16 {
+                    for i2 in 0..16 {
+                        let state = section.get_block_state(i2, i, i1);
+                        if predicate(&state) {
+                            output(origin.offset(i2, i, i1), &state);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// `getBlockState` — состояние блока.
@@ -344,4 +417,78 @@ pub struct NoiseChunk {
 pub struct BiomeGenerationSettings {
     /// `biomes` — биомы.
     pub biomes: Vec<crate::core::holder::Holder<Biome>>,
+}
+
+impl crate::world::level::chunk::light_chunk::LightChunk for ChunkAccess {
+    /// `findBlockLightSources` — `findBlocks(state -> lightEmission != 0)`.
+    fn find_block_light_sources(&self, output: &mut dyn FnMut(BlockPos, &BlockState)) {
+        self.find_blocks(
+            &|state: &BlockState| state.get_light_emission() != 0,
+            output,
+        );
+    }
+
+    /// `getSkyLightSources` — `null` в Paper/Leaf.
+    fn get_sky_light_sources(&self) -> Option<&crate::world::level::lighting::chunk_sky_light_sources::ChunkSkyLightSources> {
+        None
+    }
+
+    /// `getBlockState(pos)` (из `BlockGetter`).
+    fn get_block_state(&self, pos: &BlockPos) -> BlockState {
+        ChunkAccess::get_block_state(self, pos)
+    }
+}
+
+impl crate::ca::moonrise::patches::starlight::chunk::StarlightChunk for ChunkAccess {
+    fn starlight_get_block_nibbles(
+        &self,
+    ) -> Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>> {
+        self.starlight_block_nibbles.lock().unwrap().clone()
+    }
+
+    fn starlight_set_block_nibbles(
+        &self,
+        nibbles: Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>>,
+    ) {
+        *self.starlight_block_nibbles.lock().unwrap() = nibbles;
+    }
+
+    fn starlight_get_sky_nibbles(
+        &self,
+    ) -> Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>> {
+        self.starlight_sky_nibbles.lock().unwrap().clone()
+    }
+
+    fn starlight_set_sky_nibbles(
+        &self,
+        nibbles: Vec<Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::NibbleArrayRef>>,
+    ) {
+        *self.starlight_sky_nibbles.lock().unwrap() = nibbles;
+    }
+
+    fn starlight_get_sky_emptiness_map(
+        &self,
+    ) -> Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef> {
+        self.starlight_sky_emptiness_map.lock().unwrap().clone()
+    }
+
+    fn starlight_set_sky_emptiness_map(
+        &self,
+        map: Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef>,
+    ) {
+        *self.starlight_sky_emptiness_map.lock().unwrap() = map;
+    }
+
+    fn starlight_get_block_emptiness_map(
+        &self,
+    ) -> Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef> {
+        self.starlight_block_emptiness_map.lock().unwrap().clone()
+    }
+
+    fn starlight_set_block_emptiness_map(
+        &self,
+        map: Option<crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::EmptinessMapRef>,
+    ) {
+        *self.starlight_block_emptiness_map.lock().unwrap() = map;
+    }
 }

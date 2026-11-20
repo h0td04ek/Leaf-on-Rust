@@ -240,6 +240,12 @@ impl BlockState {
         crate::world::phys::shapes::VoxelShape::block()
     }
 
+    /// `starlight$isConditionallyFullOpaque` — `canOcclude &
+    /// useShapeForLightOcclusion` (Moonrise-патч).
+    pub fn starlight_is_conditionally_full_opaque(&self) -> bool {
+        self.can_occlude() && self.use_shape_for_light_occlusion()
+    }
+
     /// `getOcclusionShape()` без level — форма, блокирующая свет
     /// (без направления). Пустая, если `isEmptyShape`.
     pub fn occlusion_shape_unleveled(&self) -> crate::world::phys::shapes::VoxelShape {

@@ -90,6 +90,32 @@ impl ChunkStatus {
     pub fn ordinal(&self) -> usize {
         Self::VALUES.iter().position(|s| s == self).unwrap_or(0)
     }
+
+}
+
+/// Глобальные write-radius'ы статусов (в Java — поле на enum-константе;
+/// у нас enum без состояния, поэтому таблица + Mutex).
+static WRITE_RADII: std::sync::Mutex<Option<[i32; 12]>> = std::sync::Mutex::new(None);
+
+impl ChunkStatus {
+    /// `moonrise$getWriteRadius()` статическая таблица.
+    /// Индекс = ordinal. По умолчанию `-1` (как в Java static init).
+    pub fn write_radius(self) -> i32 {
+        let mut guard = WRITE_RADII.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some([-1; 12]);
+        }
+        guard.unwrap()[self.ordinal()]
+    }
+
+    /// `moonrise$setWriteRadius(value)` статическая таблица.
+    pub fn set_write_radius(self, value: i32) {
+        let mut guard = WRITE_RADII.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some([-1; 12]);
+        }
+        guard.as_mut().unwrap()[self.ordinal()] = value;
+    }
 }
 
 impl LevelChunk {
@@ -186,6 +212,7 @@ impl LevelChunk {
     /// `setChunkStatus` — установить статус чанка.
     pub fn set_chunk_status(&mut self, status: ChunkStatus) {
         self.chunk_status = status;
+        self.chunk_access.persisted_status = status;
     }
 
     /// `isUnsaved` — несохранённый ли чанк.
