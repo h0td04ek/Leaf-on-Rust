@@ -146,7 +146,7 @@ cargo test -p leaf-core
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-17. **~75k строк Rust** в `crates/leaf-core`, 84 теста зелёные.
+Актуально на 2026-11-17. **~25.5k строк Rust** в `crates/leaf-core/src`, 84 теста зелёные.
 
 ### ✅ Работает и проверено тестами
 
@@ -166,6 +166,8 @@ cargo test -p leaf-core
 | **world/** | `Rotation`, `Mirror`, `StructureMode`, `TestBlockMode`, block entities, `GameTestInstance`, `RecipeBookType`/`Settings`, `DisplaySlot`, `MobEffect`, `DamageType`, `SoundEvent`, `BossEvent` enums, `Team`, `ObjectiveCriteria`, `Waypoint`/`TrackedWaypoint`, `MinecartStep`, `RespawnData`, `InteractionHand`, `Difficulty`, `LevelChunk`/`ProtoChunk`/palettes/`LevelChunkSection`, levelgen (noise/improved/perlin/normal, `DensityFunction`-система, `Climate` Parameter/RTree/SpawnFinder, biomes, `ChunkGenerator`/`NoiseBasedChunkGenerator`, heightmap, blending) |
 | **entity/AI** | **`Mob`** (goal/target selectors, navigation, controls, sensing, leash/home/restriction), **`LivingEntity`** полный порт (~2600 строк: hurt-цепочка, эффекты, equipment, attributes), **AI-фреймворк**: `Goal`/`WrappedGoal`/`GoalSelector`/`GoalFlagSet`, `LookControl`/`MoveControl`/`FlyingMoveControl`/`JumpControl`/`BodyRotationControl`, `Sensing`, **pathfinding полный**: `Node`/`Target`/`Path`/`BinaryHeap`/`PathType`(+cache)/`PathfindingContext`/`NodeEvaluator`/`WalkNodeEvaluator`/`FlyNodeEvaluator`/`AmphibiousNodeEvaluator`/`SwimNodeEvaluator`/`PathFinder` (A*), **навигация**: `MobNavigation`/`PathNavigation` (~1000 строк: moveTo/tick/stuck-detection/trim/timeout) + `NavKind` Ground/Flying/Amphibious/WaterBound/WallClimber, `PathNavigationRegion`, `LevelReader`-интерфейс (Send+Sync), **AI-утилиты**: `RandomPos`/`LandRandomPos`/`HoverRandomPos`/`AirAndWaterRandomPos`/`DefaultRandomPos`/`GoalUtils`/`BehaviorUtils`, **конкретные цели**: `FloatGoal`/`PanicGoal`/`RandomStrollGoal`/`RandomSwimmingGoal`/`WaterAvoidingRandomStrollGoal`/`WaterAvoidingRandomFlyingGoal`/`RandomLookAroundGoal`/`LookAtPlayerGoal`/`JumpGoal`/`MoveTowardsTargetGoal` + все 63 goal-класса (`combat`/`movement`/`look`/`target`/`util`/`social`/`door`/`breed`/`special`/`village`), `BlockState` collision/pathfind API, `Entity`/`DamageSource`/`DamageTypes`/`DamageSources`/`CombatTracker`, `EntityType`+`MobCategory`, `SynchedEntityData` |
 | **entity/AI Brain** | **Полный Brain-AI порт** ✅: `Brain` (activities/mensors/sensors, schedule), `MemoryModuleType` (~100 ключей) + `ExpirableValue`/`MemoryStatus`, `SensorType` + все сенсоры, `GossipContainer`, **behavior-фреймворк**: `BehaviorControl`/`BehaviorBase`/`PointBehavior`/`GateBehavior`(OrderPolicy/RunningPolicy)/`TriggerGate`/`ShufflingList`, **все 104 behavior-класса Java** (`behavior/`: simple/sinks/animal/walk/combat/long_jump/poi/villager_extra/villager_final/villager_goal_packages), `VillagerGoalPackages` — все 9 activity-пакетов (core/work/meet/rest/idle/panic/pre_raid/raid/hide/play) с ванильными приоритетами, `PoiManager`/`PoiType`/`PoiRecord`, `VillagerData`/`VillagerProfession`/`MerchantOffers`, `FireworkRocketEntity`, `Raid`/`Raids`/`RaidStatus`, `SimpleContainer`/`Container` |
+| **world/level — взрывы** | **`Explosion`/`ServerExplosion` полный порт** ✅: `BlockInteraction`, `ExplosionDamageCalculator` (+Default/Simple/EntityBased), `calculateExplodedPositions` (16³-perimeter rays + power decay), `getSeenPercent` (bounding-box sampling + clip), `hurtEntities` (урон + blast-protection knockback + hitPlayers), `interactWithBlocks` (shuffle/TNT-prime/StackCollector merge≤16), `createFire`, `Explosion`-хуки в `LevelReader` (8 шт.) |
+| **world/level — спавнеры** | **`BaseSpawner`/`SpawnData`/`EquipmentTable` полный порт** ✅: `serverTick`/`clientTick`/`delay`/NBT save-load, spawnPotentials `WeightedList`, `CustomSpawnRules` (light limits), `Spawner`/`CustomSpawner` трейты, `entity_type_registry` (аналог BuiltInRegistries.ENTITY_TYPE), 17 `LevelReader`-хуков |
 | **resources/** | `Identifier`, `ResourceKey` |
 
 ### 🟡 В работе
@@ -176,17 +178,19 @@ cargo test -p leaf-core
 | **network/protocol/game** | ✅ Дописано: все 180+ пакетов включая chunks/entity-data/containers/dialogs/debug |
 | **core/component payloads** | ~55 из 104 типов ждут свои payload-классы (`FoodProperties`, `Consumable`, `PotionContents`, `ArmorTrim`, `Equippable`, `Tool`, `AdventureModePredicate`, `ItemEnchantments`, books, fireworks, bees, entity-variant реестры, `EitherHolder`...) — wire-id порядок уже корректен |
 | **registries** | Нужны `HolderSet`/`EitherHolder` и bootstrap реестров (ITEM, DAMAGE_TYPE, ENTITY_TYPE, SOUND_EVENT...) для полной резолва holder'ов |
-| **world/level** | `Level`/`ServerLevel` runtime, lighting engine, chunk loading/generation pipeline, block-entity ticking |
-| **entity/player/command** | `Player`-полный порт, `CommandNode`-дерево и dispatcher |
-| **loot-условия** | Все 17 типов дописаны; остаются `Mob`-специфичные проверки через `EntityPredicateTarget` |
+| **world/level** | `Level`/`ServerLevel` runtime, `NaturalSpawner` (908 строк Java — chunk mob spawning, mob caps), structure-фреймворк (`StructureStart`/`StructurePiece`/`StructureManager`/`StructureCheck` + placement/pools), lighting engine runtime, chunk loading/generation pipeline, block-entity ticking. Сделано: explosion system ✅, mob spawner (`BaseSpawner`/`SpawnData`/`EquipmentTable`) ✅ |
+| **entity/player/command** | `Player`-полный порт; commands — packet-типы готовы, dispatcher/`CommandNode`-дерево не начато (нужен порт brigadier как база), argument types |
+| **loot-условия** | Все типы дописаны; остаются `Mob`-специфичные проверки через `EntityPredicateTarget` и wiring в `ServerLevel` |
 
 ### 🔴 Осталось
 
 1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть нативов java.base не реализована в jvm25-rust.
-2. **Протоколы login/configuration/game** — регистрация пакетов в ProtocolInfo.
-3. **World/level** — генерация чанков, lighting, entities.
-4. **Plugin API** — Bukkit/Paper события и менеджеры.
-5. **Полный прогон** — `nogui` сервер должен дойти до "Done".
+2. **World/level runtime** — `NaturalSpawner`, structure-система, `Level`/`ServerLevel` (chunk loading, generation pipeline, lighting engine, block-entity ticking).
+3. **Commands** — brigadier-база → `CommandNode`-дерево, dispatcher, argument types, synchronization (пакеты уже есть).
+4. **Entity-иерархия** — `Player` полный порт, projectile/item-entity Mob-операции через LevelReader-хуки.
+5. **Component payloads** — ~55 типов (`FoodProperties`, `Consumable`, `PotionContents`, `Equippable`, `Tool`...) + registry bootstrap (`HolderSet`/`EitherHolder`).
+6. **Plugin API** — Bukkit/Paper события и менеджеры.
+7. **Полный прогон** — `nogui` сервер должен дойти до "Done".
 
 ### 🏃 Текущий запуск
 
