@@ -254,6 +254,46 @@ pub fn place_block(
     }
 }
 
+/// Предикат `canBeReplaced(level, x, y, z, box)` — локальные
+/// координаты куска.
+pub type CanBeReplaced<'a> = dyn Fn(&dyn LevelReader, i32, i32, i32, &BoundingBox) -> bool + 'a;
+
+/// `placeBlock` с кастомным `canBeReplaced` (MineShaftPiece
+/// переопределяет: нельзя заменять свои planks/wood/fence/chain).
+#[allow(clippy::too_many_arguments)]
+pub fn place_block_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    mut state: BlockState,
+    x: i32,
+    y: i32,
+    z: i32,
+    box_: &BoundingBox,
+    can_replace: &CanBeReplaced,
+) {
+    let t = PieceTransform { bb, orientation };
+    let world_pos = t.world_pos(x, y, z);
+    if box_.is_inside_pos(world_pos) && can_replace(level, x, y, z, box_) {
+        if mirror != Mirror::NONE {
+            state = state_mirror(state, mirror);
+        }
+        if rotation != Rotation::NONE {
+            state = state_rotate(state, rotation);
+        }
+        level.set_block_state(world_pos, &state);
+        let fluid = state.get_fluid_state();
+        if !fluid.is_empty() {
+            level.schedule_tick(world_pos, &fluid.fluid.id.clone(), 0);
+        }
+        if is_shape_check_block(&state) {
+            level.mark_pos_for_postprocessing(world_pos);
+        }
+    }
+}
+
 /// `SHAPE_CHECK_BLOCKS` — fence/torch/ladder/iron_bars.
 pub fn is_shape_check_block(state: &BlockState) -> bool {
     const IDS: [&str; 11] = [
@@ -888,4 +928,172 @@ pub fn pieces_bounding_box(pieces: &[Box<dyn StructurePiece>]) -> BoundingBox {
         return BoundingBox::new(0, 0, 0, -1, -1, -1);
     }
     create_bounding_box(&refs)
+}
+
+
+/// `generateBox` с предикатом `canBeReplaced`.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_box_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    box_: &BoundingBox,
+    min_x: i32,
+    min_y: i32,
+    min_z: i32,
+    max_x: i32,
+    max_y: i32,
+    max_z: i32,
+    boundary: &BlockState,
+    inside: &BlockState,
+    existing_only: bool,
+    can_replace: &CanBeReplaced,
+) {
+    for i in min_y..=max_y {
+        for i1 in min_x..=max_x {
+            for i2 in min_z..=max_z {
+                if !existing_only
+                    || !get_block(level, bb, orientation, i1, i, i2, box_).is_air()
+                {
+                    let interior = i != min_y && i != max_y && i1 != min_x && i1 != max_x && i2 != min_z && i2 != max_z;
+                    let state = if interior { inside } else { boundary };
+                    place_block_pred(level, bb, orientation, mirror, rotation, state.clone(), i1, i, i2, box_, can_replace);
+                }
+            }
+        }
+    }
+}
+
+/// `generateMaybeBox` с предикатом.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_maybe_box_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    box_: &BoundingBox,
+    random: &mut dyn RandomSource,
+    chance: f32,
+    x1: i32,
+    y1: i32,
+    z1: i32,
+    x2: i32,
+    y2: i32,
+    z2: i32,
+    edge_state: &BlockState,
+    state: &BlockState,
+    require_non_air: bool,
+    require_skylight: bool,
+    can_replace: &CanBeReplaced,
+) {
+    for i in y1..=y2 {
+        for i1 in x1..=x2 {
+            for i2 in z1..=z2 {
+                if random.next_float() > chance {
+                    continue;
+                }
+                if require_non_air && get_block(level, bb, orientation, i1, i, i2, box_).is_air() {
+                    continue;
+                }
+                if require_skylight && !is_interior(level, bb, orientation, i1, i, i2, box_) {
+                    continue;
+                }
+                let interior = i != y1 && i != y2 && i1 != x1 && i1 != x2 && i2 != z1 && i2 != z2;
+                let s = if interior { state } else { edge_state };
+                place_block_pred(level, bb, orientation, mirror, rotation, s.clone(), i1, i, i2, box_, can_replace);
+            }
+        }
+    }
+}
+
+/// `maybeGenerateBlock` с предикатом.
+#[allow(clippy::too_many_arguments)]
+pub fn maybe_generate_block_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    box_: &BoundingBox,
+    random: &mut dyn RandomSource,
+    chance: f32,
+    x: i32,
+    y: i32,
+    z: i32,
+    state: &BlockState,
+    can_replace: &CanBeReplaced,
+) {
+    if random.next_float() < chance {
+        place_block_pred(level, bb, orientation, mirror, rotation, state.clone(), x, y, z, box_, can_replace);
+    }
+}
+
+/// `generateAirBox` с предикатом.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_air_box_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    box_: &BoundingBox,
+    min_x: i32,
+    min_y: i32,
+    min_z: i32,
+    max_x: i32,
+    max_y: i32,
+    max_z: i32,
+    can_replace: &CanBeReplaced,
+) {
+    for i in min_y..=max_y {
+        for i1 in min_x..=max_x {
+            for i2 in min_z..=max_z {
+                place_block_pred(level, bb, orientation, mirror, rotation, BlockState::air(), i1, i, i2, box_, can_replace);
+            }
+        }
+    }
+}
+
+/// `generateUpperHalfSphere` с предикатом.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_upper_half_sphere_pred(
+    level: &dyn LevelReader,
+    bb: &BoundingBox,
+    orientation: Option<Direction>,
+    mirror: Mirror,
+    rotation: Rotation,
+    box_: &BoundingBox,
+    min_x: i32,
+    min_y: i32,
+    min_z: i32,
+    max_x: i32,
+    max_y: i32,
+    max_z: i32,
+    state: &BlockState,
+    exclude_air: bool,
+    can_replace: &CanBeReplaced,
+) {
+    let f = (max_x - min_x + 1) as f32;
+    let f1 = (max_y - min_y + 1) as f32;
+    let f2 = (max_z - min_z + 1) as f32;
+    let f3 = min_x as f32 + f / 2.0;
+    let f4 = min_z as f32 + f2 / 2.0;
+    for i in min_y..=max_y {
+        let f5 = (i - min_y) as f32 / f1;
+        for i1 in min_x..=max_x {
+            let f6 = (i1 as f32 - f3) / (f * 0.5);
+            for i2 in min_z..=max_z {
+                let f7 = (i2 as f32 - f4) / (f2 * 0.5);
+                if !exclude_air || !get_block(level, bb, orientation, i1, i, i2, box_).is_air() {
+                    let f8 = f6 * f6 + f5 * f5 + f7 * f7;
+                    if f8 <= 1.05 {
+                        place_block_pred(level, bb, orientation, mirror, rotation, state.clone(), i1, i, i2, box_, can_replace);
+                    }
+                }
+            }
+        }
+    }
 }

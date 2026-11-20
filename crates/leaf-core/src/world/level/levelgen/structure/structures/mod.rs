@@ -11,6 +11,7 @@ pub mod end_city;
 pub mod igloo;
 pub mod jigsaw;
 pub mod jungle_temple;
+pub mod mineshaft;
 pub mod ocean_ruin;
 pub mod ruined_portal;
 pub mod shipwreck;

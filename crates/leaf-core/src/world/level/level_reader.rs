@@ -1286,6 +1286,28 @@ pub trait LevelReader: Send + Sync {
         _seed: i64,
     ) {
     }
+    /// `biome.is(BiomeTags.MINESHAFT_BLOCKING)` — биом блокирует
+    /// генерацию шахты (пустыни/плохие земли и т.п.). Default:
+    /// false (реализуется с biome-tag wiring).
+    fn is_mineshaft_blocking_biome(&self, _pos: crate::core::block_pos::BlockPos) -> bool {
+        false
+    }
+
+    /// `level.addFreshEntity(MinecartChest)` — спавн шахтной
+    /// тележки с сундуком при генерации структуры. `pos` —
+    /// центр блока (x+0.5, y+0.5, z+0.5). Default: no-op.
+    fn spawn_minecart_chest(
+        &self,
+        _pos: crate::world::phys::vec3::Vec3,
+        _loot_table: &crate::resources::identifier::Identifier,
+        _seed: i64,
+    ) {
+    }
+
+    /// `SpawnerBlockEntity.setEntityId` при генерации —
+    /// установка entity-type спавнера в `pos`. Default: no-op.
+    fn place_structure_spawner(&self, _pos: BlockPos, _entity_type: &str) {}
+
     /// `Level.isInSpawnableBounds(pos)` — позиция в пределах
     /// спавнябельной высоты (vanilla: -64 <= y < 320).
     /// Default: жёсткие ванильные границы.
