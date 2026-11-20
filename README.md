@@ -176,7 +176,7 @@ cargo test -p leaf-core
 
 | Подсистема | Состояние |
 |---|---|
-| **world/level — structure-генерация** | Конкретные структуры: `structure/structures/*` (~18 типов: village/mansion/stronghold/mineshaft/monument и т.д.), `templatesystem` (StructureTemplate/StructurePlaceSettings), `placement` (StructurePlacement/ConcentricRings), `pools` (Jigsaw-генерация), `StructureSet`/`StructureFeatureIndexSavedData` |
+| **world/level — structure-генерация** | `templatesystem` ✅ (StructureTemplate/Palette/StructureBlockInfo, `placeInWorld`/`processBlockInfos`/`placeEntities`, transform/mirror/rotation, NBT save-load, `StructureTemplateManager`, `StructurePlaceSettings`, все processors: Rule/Capped/Gravity/BlockRot/BlockIgnore/BlockAge/BlackstoneReplace/LavaSubmerged/JigsawReplacement/Protected + rule-tests), осталось: `placement` (StructurePlacement/RandomSpread/ConcentricRings), `pools` (Jigsaw-генерация: StructurePoolElement/JigsawPlacement/StructureTemplatePool), `structures/*` (~18 типов), `StructureSet`/`StructureFeatureIndexSavedData` |
 
 ### 🔴 Осталось
 
