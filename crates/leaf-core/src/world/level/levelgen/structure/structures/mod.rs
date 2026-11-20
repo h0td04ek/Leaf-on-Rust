@@ -20,6 +20,7 @@ pub mod swamp_hut;
 pub mod nether_fortress;
 pub mod nether_fossil;
 pub mod woodland_mansion;
+pub mod stronghold;
 
 use crate::resources::identifier::Identifier;
 use crate::world::level::block::state::block_state::BlockState;
