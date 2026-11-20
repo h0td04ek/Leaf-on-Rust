@@ -75,3 +75,4 @@ pub mod levelgen;
 pub mod storage;
 pub mod pathfinder;
 pub mod path_navigation_region;
+pub mod explosion;

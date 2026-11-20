@@ -845,6 +845,69 @@ pub trait LevelReader: Send + Sync {
 
     // `CollisionGetter.getWorldBorder`-стиль проверек не нужен —
     // `isOutsideBuildHeight` уже покрыт `min_build_height`/`height`.
+
+    /// `forEachEntity(LivingEntity.class, aabb, noSpectators, fn)` —
+    /// mutable-итерация по живым сущностям (ServerExplosion
+    /// hurtEntities). Default: нет (ServerLevel переопределит).
+    fn for_each_living_in_box(
+        &self,
+        _aabb: &crate::world::phys::aabb::Aabb,
+        _f: &mut dyn FnMut(&mut crate::world::entity::living_entity::LivingEntity),
+    ) {
+    }
+
+    /// `level.random.nextFloat()` — float [0,1) для взрывов
+    /// (`calculateExplodedPositions` ray-power). Default — через
+    /// `level_random_next_int`.
+    fn level_random_next_float(&self) -> f32 {
+        self.level_random_next_int(i32::MAX) as f32 / i32::MAX as f32
+    }
+
+    /// `GameRules.TNT_EXPLODES` — геймерул для TNT-prime при взрыве.
+    /// Default: true.
+    fn tnt_explodes(&self) -> bool {
+        true
+    }
+
+    /// `state.getBlock() instanceof TntBlock` — проверка TNT-блока
+    /// для prime-ветки `interactWithBlocks`. Default: false.
+    fn is_tnt_block_at(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// `blockState.onExplosionHit` → дропы предметов при взрыве
+    /// (`getDrops`/`popResource`). Default: пусто (ServerLevel
+    /// подключит loot tables).
+    fn block_explosion_drops(
+        &self,
+        _pos: BlockPos,
+        _state: &crate::world::level::block::state::block_state::BlockState,
+        _yield_fraction: f32,
+    ) -> Vec<crate::world::item::item_stack::ItemStack> {
+        Vec::new()
+    }
+
+    /// `CraftEventFactory.callBlockIgniteEvent` (IgnitionByExplosion)
+    /// — разрешение поджога блока взрывом. Default: true.
+    fn allow_block_ignition(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `BaseFireBlock.getState(level, pos)` — fire block-state
+    /// для `createFire`. Default: None.
+    fn fire_block_state_at(&self, _pos: BlockPos) -> Option<crate::world::level::block::state::block_state::BlockState> {
+        None
+    }
+
+    /// PreExplodeEvents (Purpur/CraftBukkit) — отмена взрыва до
+    /// `explode()`. Default: false.
+    fn explosion_pre_cancelled(
+        &self,
+        _explosion: &dyn crate::world::level::explosion::Explosion,
+    ) -> bool {
+        false
+    }
+
 }
 
 

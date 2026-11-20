@@ -1184,6 +1184,26 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `hurt(source, amount)`.
     pub fn hurt(&mut self, _source: &crate::world::damagesource::damage_type::DamageType, _amount: f32) -> bool { false }
 
+    /// `push(vec)` — добавить импульс к deltaMovement.
+    pub fn push(&mut self, vec: Vec3) {
+        let d = self.get_delta_movement();
+        self.set_delta_movement(d.x + vec.x, d.y + vec.y, d.z + vec.z);
+    }
+
+    /// `onExplosionHit(source)` — хук для снарядов (перенаправление
+    /// владельца REDIRECTABLE_PROJECTILE). Default no-op.
+    pub fn on_explosion_hit(&mut self, _source: Option<&Entity>) {}
+
+    /// `ignoreExplosion(explosion)` — `isInvulnerable() &&
+    /// !bypassesInvulnerability`.
+    pub fn ignore_explosion(&self, damage_source: &crate::world::damagesource::damage_source::DamageSource) -> bool {
+        self.is_invulnerable() && !damage_source.bypasses_invulnerability()
+    }
+
+    /// `getOwner()` — владелец снаряда/примётанного TNT
+    /// (Projectile/PrimedTnt). Default — нет владельца.
+    pub fn owner_entity(&self) -> Option<Entity> { None }
+
     /// `heal(amount)`.
     pub fn heal(&mut self, _amount: f32) {}
 

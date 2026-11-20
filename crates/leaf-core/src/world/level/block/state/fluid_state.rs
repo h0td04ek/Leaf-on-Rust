@@ -149,6 +149,12 @@ impl FluidState {
             || self.is_in_named_tag(&crate::tags::fluid_tags::FluidTags::lava())
     }
 
+    /// `getExplosionResistance()` — 0 для пустой жидкости,
+    /// иначе `fluid.getExplosionResistance()`.
+    pub fn get_explosion_resistance(&self) -> f32 {
+        if self.is_empty() { 0.0 } else { self.fluid.get_explosion_resistance() }
+    }
+
     /// `is(TagKey<Fluid>)` по именованному тегу.
     pub fn is_in_named_tag(&self, tag_location: &Identifier) -> bool {
         !self.is_empty() && crate::tags::is_fluid_in_named_tag(&self.fluid.id, tag_location)

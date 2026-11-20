@@ -329,3 +329,18 @@ impl std::hash::Hash for BlockState {
         self.values.hash(state);
     }
 }
+
+impl BlockState {
+
+    /// `getExplosionResistance()` — сопротивление взрыву блока
+    /// (`Block.getExplosionResistance` с учётом fluid state).
+    pub fn get_explosion_resistance(&self) -> f32 {
+        self.block.properties.explosion_resistance.unwrap_or(0.0)
+            .max(self.fluid_state.get_explosion_resistance())
+    }
+
+    /// `isDestroyable()` — `getExplosionResistance() < 3600000.0`.
+    pub fn is_destroyable(&self) -> bool {
+        self.get_explosion_resistance() < 3600000.0
+    }
+}

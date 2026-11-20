@@ -81,3 +81,31 @@ impl ItemEntity {
         !self.item.is_empty() && self.thrower.is_none() && self.target.is_none()
     }
 }
+
+/// `ItemEntity.areMergable(a, b)` — одинаковый предмет/компоненты
+/// и сумма не превышает max stack size.
+pub fn item_entity_are_mergable(
+    a: &crate::world::item::item_stack::ItemStack,
+    b: &crate::world::item::item_stack::ItemStack,
+) -> bool {
+    crate::world::item::item_stack::ItemStack::matches(a, b)
+        && a.get_count() + b.get_count()
+            <= a.get_max_stack_size().max(b.get_max_stack_size())
+}
+
+/// `ItemEntity.merge(a, b, maxCount)` — слить `b` в `a` до `maxCount`,
+/// возвращает объединённый стек (мутирует `b` через уменьшение count).
+pub fn item_entity_merge(
+    a: &crate::world::item::item_stack::ItemStack,
+    b: &mut crate::world::item::item_stack::ItemStack,
+    max_count: i32,
+) -> crate::world::item::item_stack::ItemStack {
+    let mut result = a.copy();
+    let to_move = (max_count - result.get_count()).min(b.get_count());
+    if to_move > 0 {
+        result.grow(to_move);
+        b.shrink(to_move);
+    }
+    result
+}
+
