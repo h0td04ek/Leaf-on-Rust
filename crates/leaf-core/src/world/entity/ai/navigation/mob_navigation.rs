@@ -76,6 +76,10 @@ pub trait MobNavigation {
     /// `shouldRecomputePath`.
     fn should_recompute_path(&self, mob: &Mob, pos: BlockPos) -> bool;
 
+    /// `setCanPathToTargetsBelowSurface` (GroundPathNavigation) —
+    /// default no-op для не-ground навигаций.
+    fn set_can_path_to_targets_below_surface(&mut self, _v: bool) {}
+
     /// `getPathTypeAt(mob, pos)` — через nodeEvaluator
     /// (`MoveControl.isWalkable` использует).
     fn get_path_type_at(&mut self, mob: &Mob, pos: BlockPos) -> PathType;

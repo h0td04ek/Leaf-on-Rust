@@ -114,6 +114,43 @@ impl MerchantOffer {
         )
     }
 
+
+    /// `getCostA()` — baseCostA.itemStack с modified count.
+    pub fn get_cost_a(&self) -> ItemStack {
+        let count = self.modified_cost_count(&self.base_cost_a);
+        let mut stack = self.base_cost_a.item_stack.copy();
+        stack.set_count(count);
+        stack
+    }
+
+    /// `getModifiedCostCount(itemCost)`.
+    fn modified_cost_count(&self, item_cost: &ItemCost) -> i32 {
+        let count = item_cost.count;
+        let max = (count as f32 * self.demand as f32 * self.price_multiplier)
+            .floor()
+            .max(0.0) as i32;
+        (count + max + self.special_price_diff)
+            .clamp(1, item_cost.item_stack.get_max_stack_size())
+    }
+
+    /// `getCostB()`.
+    pub fn get_cost_b(&self) -> ItemStack {
+        self.cost_b
+            .as_ref()
+            .map(|c| c.item_stack.copy())
+            .unwrap_or_else(ItemStack::empty)
+    }
+
+    /// `assemble()` — result.copy().
+    pub fn assemble(&self) -> ItemStack {
+        self.result.copy()
+    }
+
+    /// `isOutOfStock()`.
+    pub fn is_out_of_stock(&self) -> bool {
+        self.uses >= self.max_uses
+    }
+
     /// `STREAM_CODEC`.
     pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, MerchantOffer> + Send + Sync + 'static {
         crate::network::codec::stream_codec::sync_fn(

@@ -128,6 +128,8 @@ pub struct LivingEntity {
     pub pose: crate::world::entity::pose::Pose,
     /// `isSleeping` — сущность спит.
     pub is_sleeping: bool,
+    /// `sleepingPos` — позиция кровати.
+    pub sleeping_pos: Option<crate::core::block_pos::BlockPos>,
     /// Текущий health.
     pub health: f32,
 }
@@ -207,6 +209,7 @@ impl LivingEntity {
             was_experience_consumed: false,
             pose: crate::world::entity::pose::Pose::Standing,
             is_sleeping: false,
+            sleeping_pos: None,
             health,
         }
     }
@@ -1544,9 +1547,17 @@ impl LivingEntity {
         self.is_sleeping
     }
 
+    /// `startSleeping(bedPos)` — vanilla: позиция сна +
+    /// `setPosToBed`-snap упрощённо (точная — при Level runtime).
+    pub fn start_sleeping(&mut self, bed_pos: crate::core::block_pos::BlockPos) {
+        self.is_sleeping = true;
+        self.sleeping_pos = Some(bed_pos);
+    }
+
     /// `stopSleeping()`.
     pub fn stop_sleeping(&mut self) {
         self.is_sleeping = false;
+        self.sleeping_pos = None;
     }
 
     /// `hasCustomName()`.
@@ -3020,6 +3031,7 @@ impl Clone for LivingEntity {
             was_experience_consumed: self.was_experience_consumed,
             pose: self.pose,
             is_sleeping: self.is_sleeping,
+            sleeping_pos: self.sleeping_pos,
             health: self.health,
         }
     }

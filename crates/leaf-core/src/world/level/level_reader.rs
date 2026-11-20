@@ -161,6 +161,20 @@ pub trait LevelReader: Send + Sync {
         false
     }
 
+    /// Purpur `purpurConfig.villagerClericsFarmWarts` —
+    /// разрешить ли клерикам обрабатывать новь в нижнем мире.
+    /// Default false (vanilla-поведение).
+    fn purpur_villager_clerics_farm_warts(&self) -> bool {
+        false
+    }
+
+    /// Purpur `purpurConfig.villagerDisplayTradeItem` —
+    /// показывать ли предмет трейда в руке жителя.
+    /// Default true (vanilla-поведение).
+    fn purpur_villager_display_trade_item(&self) -> bool {
+        true
+    }
+
     /// Purpur/Leaf `purpurConfig.creeperEncircleTarget` —
     /// обход цели во время вздутия крипера (SwellGoal).
     /// Default: false.
@@ -216,6 +230,16 @@ pub trait LevelReader: Send + Sync {
     fn add_fresh_item_entity(
         &self,
         _entity: crate::world::entity::item_entity::ItemEntity,
+    ) {
+    }
+
+
+    /// `addFreshEntity(FireworkRocketEntity)` — спавн
+    /// фейерверк-ракеты (CelebrateVillagersSurvivedRaid).
+    /// Default no-op.
+    fn add_fresh_firework_rocket(
+        &self,
+        _entity: crate::world::entity::firework_rocket_entity::FireworkRocketEntity,
     ) {
     }
 
@@ -673,6 +697,38 @@ pub trait LevelReader: Send + Sync {
         _params: &crate::world::level::storage::loot::loot_context::LootParams,
     ) -> Vec<crate::world::item::item_stack::ItemStack> {
         Vec::new()
+    }
+
+
+    /// `level.getBlockEntity(pos)` как `Container` —
+    /// контейнеры блок-сущностей (chest/barrel/shulker/...).
+    /// Default — нет доступа к block entity (пусто).
+    fn container_at(
+        &self,
+        _pos: BlockPos,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<dyn crate::world::simple_container::Container>>> {
+        None
+    }
+
+    /// Итерация block-entity контейнеров в области — аналог
+    /// `chunk.getBlockEntities().values()` фильтра по
+    /// `BaseContainerBlockEntity` в `TransportItemsBetweenContainers`.
+    /// Default — пусто.
+    fn containers_in_area(
+        &self,
+        _min: BlockPos,
+        _max: BlockPos,
+    ) -> Vec<(
+        BlockPos,
+        std::rc::Rc<std::cell::RefCell<dyn crate::world::simple_container::Container>>,
+    )> {
+        Vec::new()
+    }
+
+    /// `level.clip(ClipContext(pos, vec, COLLIDER, NONE, entity))` —
+    /// первый блок по лучу (block-hit pos). Default — нет попадания.
+    fn clip_block_hit(&self, _from: crate::world::phys::vec3::Vec3, _to: crate::world::phys::vec3::Vec3) -> Option<BlockPos> {
+        None
     }
 
     /// `ServerLevel.getPathTypeCache` — кэш `PathType` уровня.

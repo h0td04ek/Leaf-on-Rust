@@ -21,3 +21,6 @@ pub use simple::*;
 pub mod combat_behaviors;
 pub mod long_jump;
 pub mod poi_behaviors;
+pub mod villager_extra;
+pub mod villager_final;
+pub mod villager_goal_packages;

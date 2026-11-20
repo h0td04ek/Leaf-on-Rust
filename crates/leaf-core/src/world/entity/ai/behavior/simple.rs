@@ -61,6 +61,13 @@ impl PointBehavior {
         Self::new(HashMap::new(), trigger)
     }
 
+
+    /// Доступ к trigger-функции для `TriggerGate`-обёрток
+    /// (`OneShot implements Trigger` — trigger() = point-лямбда).
+    pub fn trigger_rc(&self) -> TriggerFn {
+        self.trigger.clone()
+    }
+
     /// Условия `present`/`absent`/`registered`.
     pub fn with_conditions(mut self, pairs: &[(MemoryModuleType, MemoryStatus)]) -> Self {
         for (ty, st) in pairs {

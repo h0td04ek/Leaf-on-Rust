@@ -172,6 +172,10 @@ pub struct Mob {
     pub last_restock_game_time: i64,
     /// `demands` — спрос по предметам.
     pub demands: std::collections::HashMap<crate::resources::identifier::Identifier, i32>,
+    /// `inventory` — `SimpleContainer(8)` у жителей
+    /// (`Villager.inventory`); `None` у не-жителей.
+    pub inventory:
+        Option<crate::world::simple_container::SimpleContainer>,
     /// `goalPackages` — провайдер VillagerGoalPackages
     /// (вызывается из refresh_brain).
     pub goal_packages:
@@ -226,6 +230,7 @@ impl Mob {
             trading_player: None,
             last_restock_game_time: 0,
             demands: std::collections::HashMap::new(),
+            inventory: None,
             goal_packages: None,
         };
         mob.living.entity.is_mob = true;

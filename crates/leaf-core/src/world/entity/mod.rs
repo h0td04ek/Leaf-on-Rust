@@ -17,6 +17,7 @@ pub mod living_entity;
 pub mod mob;
 pub mod npc;
 pub mod item_entity;
+pub mod firework_rocket_entity;
 pub mod experience_orb;
 pub mod projectile;
 pub use living_entity::LivingEntity;

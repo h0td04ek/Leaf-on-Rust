@@ -357,6 +357,13 @@ pub fn silverfish_entity_type() -> EntityType {
     misc_entity_type("silverfish", 0.4, 0.3, 0.255, 8, 5)
 }
 
+
+/// `EntityType.FIREWORK_ROCKET` —
+/// `sized(0.25, 0.25).clientTrackingRange(4).updateInterval(10)`.
+pub fn firework_rocket_entity_type() -> EntityType {
+    misc_entity_type("firework_rocket", 0.25, 0.25, 0.0, 4, 10)
+}
+
 /// id entity-type'а holder'а (`Direct`/`Key` резолвятся;
 /// `Reference` без контекста реестра — `None`).
 pub fn holder_type_id(holder: &crate::core::holder::Holder<EntityType>) -> Option<crate::resources::identifier::Identifier> {

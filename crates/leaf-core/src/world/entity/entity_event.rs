@@ -4,6 +4,9 @@
 pub const DEATH: u8 = 3;
 pub const HURT: u8 = 2;
 pub const VILLAGER_HAPPY: u8 = 14;
+pub const LOVE_HEARTS: u8 = 12;
+pub const VILLAGER_ANGRY: u8 = 13;
+pub const IN_LOVE_HEARTS: u8 = 18;
 pub const PLAY_DEAD: u8 = 59 - 6; // уточняется по ванили при необходимости
 pub const START_RAM: u8 = 58;
 pub const END_RAM: u8 = 59;

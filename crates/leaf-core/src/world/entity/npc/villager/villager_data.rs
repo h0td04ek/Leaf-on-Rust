@@ -92,6 +92,19 @@ pub fn default_villager_data() -> VillagerData {
     )
 }
 
+/// `profession == key` — Holder-compare по registry-ключу/id
+/// (аналог `profession().is(key)` / `equals`).
+pub fn profession_is(
+    holder: &Holder<VillagerProfession>,
+    key: &crate::resources::resource_key::ResourceKey<VillagerProfession>,
+) -> bool {
+    match holder {
+        Holder::Key(k) => *k == *key,
+        Holder::Direct(p) => p.id == key.identifier,
+        Holder::Reference(_) => false,
+    }
+}
+
 /// `profession().is(VillagerProfession.NONE)`-проверка через
 /// ключ holder'а.
 pub fn is_profession_none(holder: &Holder<VillagerProfession>) -> bool {

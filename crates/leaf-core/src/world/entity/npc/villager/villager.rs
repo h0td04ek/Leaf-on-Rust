@@ -52,6 +52,12 @@ pub fn init_villager(mob: &mut Mob, ty: Holder<VillagerType>) {
     ));
     mob.gossips = Some(GossipContainer::new());
     mob.villager_xp = 0;
+    // `inventory = new SimpleContainer(8)` — 8 слотов у Villager.
+    mob.inventory = Some(crate::world::simple_container::SimpleContainer::new(8));
+    // `VillagerGoalPackages` — регистрация brain-активностей.
+    mob.goal_packages = Some(std::rc::Rc::new(
+        crate::world::entity::ai::behavior::villager_goal_packages::register_villager_packages,
+    ));
 }
 
 /// `isVillager`-проверка.
@@ -217,6 +223,45 @@ impl Mob {
         false
     }
 
+    /// `shouldRestock(level)` — можно ли рестокнуть сегодня:
+    /// не более 2 рестоков и прошли сутки с прошлого.
+    /// (Vanilla: `canRestock` через workstation + счётчики.)
+    pub fn should_restock(&self, level: &Arc<dyn LevelReader>) -> bool {
+        self.number_of_restocks_today < 2
+            && level.game_time() - self.last_restock_game_time >= 24000
+    }
+
+    /// `restock(level)` — `updateTrades` + сброс demands и
+    /// счётчиков (vanilla `AbstractVillager.restock`).
+    pub fn restock(&mut self, level: &Arc<dyn LevelReader>) {
+        self.update_trades(level);
+        self.demands.clear();
+        self.number_of_restocks_today += 1;
+        self.last_restock_game_time = level.game_time();
+    }
+
+    /// `eatAndDigestFood` — `AgeableMob`: съесть один
+    /// едовый предмет из инвентаря + `setInLove`.
+    pub fn eat_and_digest_food(&mut self) {
+        let foods = [
+            Identifier::minecraft("bread"),
+            Identifier::minecraft("potato"),
+            Identifier::minecraft("carrot"),
+            Identifier::minecraft("beetroot"),
+        ];
+        for food in &foods {
+            let has = self
+                .get_inventory_ref()
+                .map(|i| i.count_item(food) > 0)
+                .unwrap_or(false);
+            if has {
+                self.get_inventory().remove_item_type(food, 1);
+                break;
+            }
+        }
+        self.living.entity.set_in_love(None);
+    }
+
     /// `updateTrades` — VillagerTrades (отдельный порт).
     pub fn update_trades(&mut self, _level: &Arc<dyn LevelReader>) {}
 
@@ -242,6 +287,18 @@ impl Mob {
     }
     pub fn set_offers(&mut self, offers: MerchantOffers) {
         self.offers = Some(offers);
+    }
+
+    /// `getInventory` — panics если не villager (как Java NPE).
+    pub fn get_inventory(&mut self) -> &mut crate::world::simple_container::SimpleContainer {
+        self.inventory
+            .as_mut()
+            .expect("not a villager (no inventory)")
+    }
+
+    /// `getInventory` иммутабельный вариант.
+    pub fn get_inventory_ref(&self) -> Option<&crate::world::simple_container::SimpleContainer> {
+        self.inventory.as_ref()
     }
 
     /// `setTradingPlayer`/`getTradingPlayer`.

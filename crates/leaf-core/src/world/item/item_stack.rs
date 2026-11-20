@@ -177,6 +177,19 @@ impl ItemStack {
         64
     }
 
+
+    /// `isSameItem(a, b)` — одинаковый item (без count/компонентов).
+    pub fn is_same_item(a: &ItemStack, b: &ItemStack) -> bool {
+        a.item == b.item
+    }
+
+    /// `copyWithCount(count)`.
+    pub fn copy_with_count(&self, count: i32) -> ItemStack {
+        let mut s = self.copy();
+        s.set_count(count);
+        s
+    }
+
     /// `matches(a, b)` — одинаковый item и count (без компонентов).
     pub fn matches(a: &ItemStack, b: &ItemStack) -> bool {
         a.item == b.item && a.count == b.count
@@ -209,6 +222,27 @@ impl ItemStack {
         result.count = i;
         self.shrink(i);
         result
+    }
+
+    /// `grow(amount)` — увеличить count.
+    pub fn grow(&mut self, amount: i32) {
+        self.count += amount;
+    }
+
+    /// `setCount(count)` — прямая установка count (с обрезкой <=0
+    /// в empty, как в Java).
+    pub fn set_count(&mut self, count: i32) {
+        self.count = count;
+        if self.count <= 0 {
+            *self = ItemStack::empty();
+        }
+    }
+
+    /// `limitSize(max)` — `count = min(count, max)`.
+    pub fn limit_size(&mut self, max: i32) {
+        if self.count > max {
+            self.count = max;
+        }
     }
 
     /// `get(component)` — значение компонента по registry-id.

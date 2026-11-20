@@ -679,6 +679,10 @@ impl PathNavigation {
 }
 
 impl MobNavigation for PathNavigation {
+    fn set_can_path_to_targets_below_surface(&mut self, v: bool) {
+        PathNavigation::set_can_path_to_targets_below_surface(self, v);
+    }
+
     fn tick(&mut self, mob: &mut Mob) {
         self.tick += 1;
         if self.has_delayed_recomputation {
