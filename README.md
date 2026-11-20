@@ -175,7 +175,7 @@ cargo test -p leaf-core
 | Подсистема | Состояние |
 |---|---|
 | **Запуск сервера** | JVM исполняет Java (~0.8s bootstrap), сервер доходит до `PaperBootstrap`, дальше `FileNotFoundException` в natives — баг jvm25-rust |
-| **network/protocol/game** | ✅ Дописано: все 180+ пакетов включая chunks/entity-data/containers/dialogs/debug |
+| **network/protocol/game** | ✅ Все ~205 пакетов дописаны (типы+кодеки+регистрации в `game_protocols`). Осталось: wiring в `ProtocolInfo` и серверные handler'ы пакетов (часть connection/runtime, не сами типы) |
 | **core/component payloads** | ~55 из 104 типов ждут свои payload-классы (`FoodProperties`, `Consumable`, `PotionContents`, `ArmorTrim`, `Equippable`, `Tool`, `AdventureModePredicate`, `ItemEnchantments`, books, fireworks, bees, entity-variant реестры, `EitherHolder`...) — wire-id порядок уже корректен |
 | **registries** | Нужны `HolderSet`/`EitherHolder` и bootstrap реестров (ITEM, DAMAGE_TYPE, ENTITY_TYPE, SOUND_EVENT...) для полной резолва holder'ов |
 | **world/level** | `Level`/`ServerLevel` runtime, `NaturalSpawner` (908 строк Java — chunk mob spawning, mob caps), structure-фреймворк (`StructureStart`/`StructurePiece`/`StructureManager`/`StructureCheck` + placement/pools), lighting engine runtime, chunk loading/generation pipeline, block-entity ticking. Сделано: explosion system ✅, mob spawner (`BaseSpawner`/`SpawnData`/`EquipmentTable`) ✅ |
