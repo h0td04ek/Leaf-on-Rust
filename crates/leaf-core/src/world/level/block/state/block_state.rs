@@ -304,6 +304,43 @@ impl BlockState {
             }
         }
     }
+
+    /// `isSignalSource()` — редстоун-источник.
+    pub fn is_signal_source(&self) -> bool {
+        self.block.properties.signal_source
+    }
+
+    /// `isRedstoneConductor(level, pos)` —
+    /// `properties.isRedstoneConductor` или дефолт
+    /// `isCollisionShapeFullBlock`.
+    pub fn is_redstone_conductor(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> bool {
+        if let Some(f) = &self.block.properties.is_redstone_conductor {
+            f(self, level, pos)
+        } else {
+            self.is_collision_shape_full_block(level, pos)
+        }
+    }
+
+    /// `isValidSpawn(level, pos, entityType)` —
+    /// `properties.isValidSpawn` или дефолт
+    /// `isFaceSturdy(UP) && lightEmission < 14`.
+    pub fn is_valid_spawn(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+        entity_type: &crate::entity::entity_type::EntityType,
+    ) -> bool {
+        if let Some(f) = &self.block.properties.is_valid_spawn {
+            f(self, level, pos, entity_type)
+        } else {
+            level.is_face_sturdy(pos, crate::core::direction::Direction::UP)
+                && self.get_light_emission() < 14
+        }
+    }
 }
 
 impl PartialEq for BlockState {

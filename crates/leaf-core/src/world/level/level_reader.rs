@@ -1052,6 +1052,137 @@ pub trait LevelReader: Send + Sync {
     /// no-op.
     fn add_spawner_particles(&self, _x: f64, _y: f64, _z: f64) {}
 
+    // === NaturalSpawner / SpawnPlacements hooks ===
+
+    /// `natureSpawnChunkMap.nearest(level, x, y, z)` — квадрат
+    /// расстояния до ближайшего игрока для natural spawn
+    /// (Leaf-оптимизация). Default: +∞ (нет игроков рядом —
+    /// спавн не ограничен).
+    fn nearest_player_distance_sqr(&self, _x: f64, _y: f64, _z: f64) -> f64 {
+        f64::INFINITY
+    }
+
+    /// `level.canSpawnEntitiesInChunk(chunkPos)` — можно ли
+    /// спавнить сущности в чанке (keep-spawn-area правила).
+    /// Default: true.
+    fn can_spawn_entities_in_chunk(&self, _chunk_pos: crate::world::level::chunk_pos::ChunkPos) -> bool {
+        true
+    }
+
+    /// `level.getRespawnData()` — `(dimension, pos)` точки
+    /// возрождения (RespawnData). Default: None.
+    fn respawn_data(&self) -> Option<(Identifier, crate::world::phys::vec3::Vec3)> {
+        None
+    }
+
+    /// `level.dimensionType().hasCeiling()` — потолок
+    /// (nether/end). Default: false (overworld).
+    fn dimension_has_ceiling(&self) -> bool {
+        false
+    }
+
+    /// `CollisionGetter.containsAnyLiquid(aabb)` — есть ли
+    /// жидкость в AABB. Default: скан по `get_fluid_state`.
+    fn contains_any_liquid(&self, bb: &crate::world::phys::aabb::Aabb) -> bool {
+        let (x0, y0, z0) = (bb.min_x.floor() as i32, bb.min_y.floor() as i32, bb.min_z.floor() as i32);
+        let (x1, y1, z1) = (bb.max_x.floor() as i32, bb.max_y.floor() as i32, bb.max_z.floor() as i32);
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                for z in z0..=z1 {
+                    if let Some(fs) = self.get_fluid_state(BlockPos::new(x, y, z)) {
+                        if !fs.is_empty() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// `level.isUnobstructed(entity)` — нет ли коллизий у
+    /// сущности в её bounding box. Default: `no_collision(bb)`.
+    fn is_unobstructed_entity(&self, entity: &crate::world::entity::entity::Entity) -> bool {
+        self.no_collision(&entity.bounding_box)
+    }
+
+    /// `GameRules.SPAWN_MOBS` — геймерул спавна мобов при
+    /// генерации чанков. Default: true.
+    fn spawn_mobs_game_rule(&self) -> bool {
+        true
+    }
+
+    /// `level.getRawBrightness(pos, amountToSubtract)` — raw
+    /// яркость с вычетом. Default: max(block, sky - subtract).
+    fn get_raw_brightness(&self, pos: BlockPos, amount_to_subtract: i32) -> i32 {
+        let block = self.get_brightness(crate::world::level::light_layer::LightLayer::Block, pos);
+        let sky = (self.get_brightness(crate::world::level::light_layer::LightLayer::Sky, pos) - amount_to_subtract).max(0);
+        block.max(sky)
+    }
+
+    /// `level.getMaxLocalRawBrightness(pos, radius)` — max raw
+    /// яркость в радиусе. Default: как 1-аргументная версия
+    /// (полный скан — в ServerLevel).
+    fn get_max_local_raw_brightness_radius(&self, pos: BlockPos, _radius: i32) -> i32 {
+        self.get_max_local_raw_brightness(pos)
+    }
+
+    /// `dimensionType.monsterSpawnBlockLightLimit()` — лимит
+    /// block light для спавна монстров (<15 = лимит).
+    /// Default: 15 (без лимита).
+    fn monster_spawn_block_light_limit(&self) -> i32 {
+        15
+    }
+
+    /// `dimensionType.monsterSpawnLightTest().sample(random)` —
+    /// сэмпл light-теста монстров. Default: `UniformInt(0,7)`
+    /// (overworld).
+    fn monster_spawn_light_test_sample(&self, random: &mut dyn crate::random::RandomSource) -> i32 {
+        random.next_int_bound(8)
+    }
+
+    /// `purpurConfig.entityLeftHandedChance` — шанс леворукости
+    /// при `Mob.finalizeSpawn`. Default: 0.05.
+    fn entity_left_handed_chance(&self) -> f32 {
+        0.05
+    }
+
+    /// `biome.is(BiomeTags.X)` — принадлежность биома тегу
+    /// (например `REDUCED_WATER_AMBIENT_SPAWNS`). Default: false.
+    fn biome_has_tag(&self, _pos: BlockPos, _tag: &Identifier) -> bool {
+        false
+    }
+
+    /// `isInNetherFortressBounds` — monster на nether_bricks
+    /// внутри структуры fortress. Default: false.
+    fn nether_fortress_at(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// `PreCreatureSpawnEvent` — результат события до спавна
+    /// (Paper). `None` — нет слушателей/событие не отменено.
+    /// Default: None.
+    fn pre_spawn_status(
+        &self,
+        _entity_type: &crate::entity::entity_type::EntityType,
+        _pos: BlockPos,
+    ) -> Option<crate::world::level::natural_spawner::PreSpawnStatus> {
+        None
+    }
+
+    /// `updateFailurePlayerMobTypeMap`/`updatePlayerMobTypeMap` —
+    /// per-player mob cap трекинг (Paper). Default: no-op.
+    fn track_spawned_mob(&self, _entity: &crate::world::entity::entity::Entity) {}
+
+    /// `NaturalSpawner.getMobForSpawn` — создание `Mob` по типу
+    /// (entity registry + `EntityType.create`). Default: None.
+    fn create_mob_for_spawn(
+        &self,
+        _entity_type: &crate::entity::entity_type::EntityType,
+    ) -> Option<crate::world::entity::mob::Mob> {
+        None
+    }
+
 }
 
 

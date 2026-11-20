@@ -537,7 +537,14 @@ fn spawn_pos_from_tag(tag: &CompoundTag) -> Option<Vec3> {
 
 /// `LevelRandom` — адаптер `LevelReader`-хуков под `RandomSource`
 /// (нужен `WeightedList::get_random` и `next_int_bound`).
-struct LevelRandom<'a>(&'a dyn LevelReader);
+pub(crate) struct LevelRandom<'a>(pub(crate) &'a dyn LevelReader);
+
+impl<'a> LevelRandom<'a> {
+    /// `new LevelRandom(level)`.
+    pub(crate) fn new(level: &'a dyn LevelReader) -> Self {
+        Self(level)
+    }
+}
 
 impl RandomSource for LevelRandom<'_> {
     fn set_seed(&mut self, _seed: i64) {}

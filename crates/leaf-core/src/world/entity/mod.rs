@@ -5,6 +5,8 @@ pub mod entity;
 pub mod entity_event;
 pub mod entity_reference;
 pub mod entity_type;
+pub mod entity_spawn_reason;
+pub mod spawn_placements;
 pub mod mob_category;
 pub mod pose;
 

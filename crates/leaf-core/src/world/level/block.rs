@@ -54,7 +54,7 @@ pub enum BlockKind {
 
 /// Подмножество `BlockBehaviour.Properties` — флаги,
 /// влияющие на wire/предикаты.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct BlockProperties {
     /// `isAir`.
     pub is_air: bool,
@@ -71,12 +71,23 @@ pub struct BlockProperties {
     pub explosion_resistance: Option<f32>,
     /// `liquid` — блок-жидкость (`LiquidBlock` в Java).
     pub liquid: bool,
+    /// `isRedstoneConductor` — StatePredicate (default:
+    /// `isCollisionShapeFullBlock`).
+    pub is_redstone_conductor: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, crate::core::block_pos::BlockPos) -> bool + Send + Sync>>,
+
+    /// `isValidSpawn` — StateArgumentPredicate<EntityType>
+    /// (default: `isFaceSturdy(UP) && lightEmission < 14`).
+    pub is_valid_spawn: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, crate::core::block_pos::BlockPos, &crate::entity::entity_type::EntityType) -> bool + Send + Sync>>,
+
     /// `isPathfindable` — переопределение проходимости
     /// (`None` → дефолт `BlockBehaviour.isPathfindable`).
     pub pathfindable: Option<bool>,
     /// `collisionShape` — форма коллизии блока
     /// (`None` → полный куб для твёрдых, пусто для air/liquid).
     pub collision_shape: Option<crate::world::phys::shapes::VoxelShape>,
+    /// `isSignalSource` — `BlockBehaviour.Properties.isSignalSource`.
+    pub signal_source: bool,
+
     /// `replaceable` — `BlockBehaviour.Properties.replaceable`.
     pub replaceable: bool,
     // `isLitCampfire`-подобные блоки: `lit`-свойство читается

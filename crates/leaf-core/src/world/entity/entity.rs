@@ -368,6 +368,23 @@ impl Entity {
     /// `setXRot(pitch)`.
     pub fn set_x_rot(&mut self, pitch: f32) { self.rotation.y = pitch; }
 
+
+    /// `snapTo(x, y, z, yRot, xRot)` — телепорт с установкой
+    /// позиции/поворота и сбросом old-полей.
+    pub fn snap_to(&mut self, x: f64, y: f64, z: f64, y_rot: f32, x_rot: f32) {
+        self.pos = crate::world::phys::vec3::Vec3::new(x, y, z);
+        self.set_y_rot(y_rot);
+        self.set_x_rot(x_rot);
+        self.old_pos = self.pos;
+        self.old_rotation = self.rotation;
+    }
+
+    /// `snapTo(Vec3)` — телепорт без смены поворота.
+    pub fn snap_to_vec(&mut self, pos: crate::world::phys::vec3::Vec3) {
+        let (y, x) = (self.get_y_rot(), self.get_x_rot());
+        self.snap_to(pos.x, pos.y, pos.z, y, x);
+    }
+
     /// `getVelocity()`.
     pub fn get_velocity(&self) -> Vec3 { self.velocity }
 

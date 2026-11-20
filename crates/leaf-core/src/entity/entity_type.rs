@@ -43,18 +43,80 @@ pub struct EntityType {
     pub id: Identifier,
     /// `category` — категория спавна.
     pub category: MobCategory,
+    /// `canSummon` — может ли быть призван (спавнер/команда).
+    /// Ванильный дефолт — true.
+    pub can_summon: bool,
+    /// `canSpawnFarFromPlayer` — может ли спавниться дальше
+    /// despawn-дистанции категории.
+    pub can_spawn_far_from_player: bool,
+    /// `width`/`height` — размеры bounding box
+    /// (`EntityDimensions`, default 0.6×1.8).
+    pub width: f32,
+    /// `height`.
+    pub height: f32,
 }
 
 impl EntityType {
-    /// `new`.
+    /// `new` — ванильные дефолты EntityType.Builder
+    /// (canSummon/canSpawnFarFromPlayer = true, 0.6×1.8).
     pub fn new(id: Identifier) -> Self {
-        Self { id, category: MobCategory::Misc }
+        Self {
+            id,
+            category: MobCategory::Misc,
+            can_summon: true,
+            can_spawn_far_from_player: true,
+            width: 0.6,
+            height: 1.8,
+        }
     }
 
     /// `withCategory`-стиль: задать категорию.
     pub fn with_category(mut self, category: MobCategory) -> Self {
         self.category = category;
         self
+    }
+
+    /// `canSummon()`.
+    pub fn can_summon(&self) -> bool {
+        self.can_summon
+    }
+
+    /// `canSpawnFarFromPlayer()`.
+    pub fn can_spawn_far_from_player(&self) -> bool {
+        self.can_spawn_far_from_player
+    }
+
+    /// `getWidth()`.
+    pub fn get_width(&self) -> f32 {
+        self.width
+    }
+
+    /// `getHeight()`.
+    pub fn get_height(&self) -> f32 {
+        self.height
+    }
+
+    /// `getSpawnAABB(x, y, z)` — AABB спавна (центрирован по XZ).
+    pub fn get_spawn_aabb(&self, x: f64, y: f64, z: f64) -> crate::world::phys::aabb::Aabb {
+        let w = self.width as f64 / 2.0;
+        crate::world::phys::aabb::Aabb::new(
+            x - w,
+            y,
+            z - w,
+            x + w,
+            y + self.height as f64,
+            z + w,
+        )
+    }
+
+    /// `isBlockDangerous(state)` — `state.is(BlockTags.FIRE) ||
+    /// state.is(Blocks.WITHER_ROSE)`.
+    pub fn is_block_dangerous(
+        &self,
+        state: &crate::world::level::block::state::block_state::BlockState,
+    ) -> bool {
+        state.is_block_tag(&Identifier::minecraft("fire"))
+            || state.block.id == Identifier::minecraft("wither_rose")
     }
 
     /// `getCategory`.

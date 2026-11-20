@@ -1265,3 +1265,106 @@ impl Mob {
         flag
     }
 }
+
+
+// === NaturalSpawner-related Mob primitives ===
+
+/// `SpawnGroupData` — данные группового спавна (Java record-
+/// наследники: FoxGroupData и т.п.). У нас — непрозрачный контейнер.
+#[derive(Clone)]
+pub struct SpawnGroupData {
+    /// Произвольные данные конкретного типа моба.
+    pub inner: Option<std::rc::Rc<dyn std::any::Any>>,
+}
+
+impl SpawnGroupData {
+    /// `new SpawnGroupData()`.
+    pub fn new() -> Self {
+        Self { inner: None }
+    }
+}
+
+impl Default for SpawnGroupData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Mob {
+    /// `removeWhenFarAway(distance)` — дефолт true
+    /// (животные переопределяют в false через `Animal`).
+    pub fn remove_when_far_away(&self, _distance: f64) -> bool {
+        true
+    }
+
+    /// `requiresCustomPersistence()` — `isPassenger()`.
+    pub fn requires_custom_persistence(&self) -> bool {
+        self.living.entity.is_passenger()
+    }
+
+    /// `checkSpawnRules(level, reason)` — дефолт true
+    /// (переопределяется спецификой мобов).
+    pub fn check_spawn_rules(
+        &self,
+        _level: &dyn crate::world::level::level_reader::LevelReader,
+        _reason: crate::world::entity::entity_spawn_reason::EntitySpawnReason,
+    ) -> bool {
+        true
+    }
+
+    /// `checkSpawnObstruction(level)` —
+    /// `!containsAnyLiquid(bb) && isUnobstructed(this)`.
+    pub fn check_spawn_obstruction_full(&self, level: &dyn crate::world::level::level_reader::LevelReader) -> bool {
+        let bb = self.living.entity.bounding_box.clone();
+        !level.contains_any_liquid(&bb) && level.is_unobstructed_entity(&self.living.entity)
+    }
+
+    /// `getMaxSpawnClusterSize()` — дефолт 4.
+    pub fn get_max_spawn_cluster_size(&self) -> i32 {
+        4
+    }
+
+    /// `isMaxGroupSizeReached(size)` — дефолт false.
+    pub fn is_max_group_size_reached(&self, _size: i32) -> bool {
+        false
+    }
+
+    /// `finalizeSpawn(level, difficulty, reason, groupData)` —
+    /// базовая реализация: `RANDOM_SPAWN_BONUS` модификатор на
+    /// FOLLOW_RANGE + `setLeftHanded`.
+    pub fn finalize_spawn(
+        &mut self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        _difficulty_multiplier: f32,
+        _reason: crate::world::entity::entity_spawn_reason::EntitySpawnReason,
+        spawn_group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        use crate::entity::ai::attributes::attribute_modifier::{
+            AttributeModifier, AttributeModifierOperation,
+        };
+        use crate::entity::ai::attributes::attributes as attribute_ids;
+        use crate::random::RandomSource;
+
+        // RANDOM_SPAWN_BONUS_ID = random_spawn_bonus.
+        let bonus_id = crate::resources::identifier::Identifier::minecraft("random_spawn_bonus");
+        let follow_range = attribute_ids::follow_range();
+        let mut rng = crate::world::level::base_spawner::LevelRandom::new(level);
+        let amount = rng.triangle_f64(0.0, 0.11485000000000001);
+        if let Some(inst) = self.living.attributes.get_instance(&follow_range) {
+            if !inst.has_modifier(&AttributeModifier::new(
+                bonus_id.clone(),
+                amount,
+                AttributeModifierOperation::AddMultipliedBase,
+            )) {
+                inst.add_permanent_modifier(AttributeModifier::new(
+                    bonus_id,
+                    amount,
+                    AttributeModifierOperation::AddMultipliedBase,
+                ));
+            }
+        }
+        // setLeftHanded(random.nextFloat() < level.getLevel().purpurConfig.entityLeftHandedChance)
+        self.set_left_handed(rng.next_float() < level.entity_left_handed_chance());
+        spawn_group_data
+    }
+}

@@ -275,6 +275,44 @@ impl EntityType {
         format!("entity.{}.{}", self.id.get_namespace(), self.id.get_path())
     }
 
+    /// `canSummon()` — может ли быть призван спавнером/командой.
+    /// Ванильный дефолт — true (false только у технических типов
+    /// вне спавнящихся категорий).
+    pub fn can_summon(&self) -> bool {
+        true
+    }
+
+    /// `getWidth()` — ширина bounding box.
+    pub fn get_width(&self) -> f32 {
+        self.dimensions.width
+    }
+
+    /// `getHeight()` — высота bounding box.
+    pub fn get_height(&self) -> f32 {
+        self.dimensions.height
+    }
+
+    /// `getSpawnAABB(x, y, z)` — AABB спавна, центрированный по XZ.
+    pub fn get_spawn_aabb(&self, x: f64, y: f64, z: f64) -> crate::world::phys::aabb::Aabb {
+        let w = self.dimensions.width as f64 / 2.0;
+        crate::world::phys::aabb::Aabb::new(
+            x - w,
+            y,
+            z - w,
+            x + w,
+            y + self.dimensions.height as f64,
+            z + w,
+        )
+    }
+
+    /// `isBlockDangerous(state)` — опасный блок для спавна
+    /// (огонь/везер-роза): `state.is(BlockTags.FIRE) ||
+    /// state.is(Blocks.WITHER_ROSE)`.
+    pub fn is_block_dangerous(&self, state: &crate::world::level::block::state::block_state::BlockState) -> bool {
+        state.is_block_tag(&crate::resources::identifier::Identifier::minecraft("fire"))
+            || state.block.id == crate::resources::identifier::Identifier::minecraft("wither_rose")
+    }
+
     /// `toString()`.
     pub fn to_string(&self) -> String {
         self.id.to_string()
