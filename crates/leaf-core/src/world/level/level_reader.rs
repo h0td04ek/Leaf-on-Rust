@@ -1304,6 +1304,22 @@ pub trait LevelReader: Send + Sync {
     ) {
     }
 
+    /// `holder.is(BiomeTags.REQUIRED_OCEAN_MONUMENT_SURROUNDING)` —
+    /// biome-tag проверка для Ocean Monument. Default: false
+    /// (монумент не генерируется до wiring биом-тегов).
+    fn biome_is_ocean_monument_surrounding(
+        &self,
+        _holder: &crate::core::holder::Holder<crate::world::level::biome::biome::Biome>,
+    ) -> bool {
+        false
+    }
+
+    /// `ElderGuardian` спавн из Ocean Monument кусков
+    /// (`spawnElder`: heal + snapTo + finalizeSpawn +
+    /// addFreshEntityWithPassengers). `pos` — центр блока.
+    /// Default: no-op.
+    fn spawn_elder_guardian(&self, _pos: BlockPos) {}
+
     /// `SpawnerBlockEntity.setEntityId` при генерации —
     /// установка entity-type спавнера в `pos`. Default: no-op.
     fn place_structure_spawner(&self, _pos: BlockPos, _entity_type: &str) {}
