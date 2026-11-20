@@ -1182,7 +1182,39 @@ pub trait LevelReader: Send + Sync {
     ) -> Option<crate::world::entity::mob::Mob> {
         None
     }
+    /// `level.scheduleTick(pos, type, delay)` — планирование тика
+    /// блока/жидкости. Default: no-op (подключится с Level-tick).
+    fn schedule_tick(&self, _pos: BlockPos, _type: &crate::resources::identifier::Identifier, _delay: i32) {}
+
+    /// `level.markPosForPostprocessing(pos)` — отложенная проверка
+    /// формы после пост-обработки структур. Default: no-op.
+    fn mark_pos_for_postprocessing(&self, _pos: BlockPos) {}
+
+    /// `level.placeLootContainer`/`BlockEntity.setLootTable` —
+    /// наполнение контейнера лутом при спавне. Default: no-op
+    /// (подключится с BlockEntity/Container wiring).
+    fn place_loot_container(
+        &self,
+        _pos: BlockPos,
+        _loot_table: &crate::resources::identifier::Identifier,
+        _seed: i64,
+    ) {
+    }
+    /// `level.isChunkLoaded`-эквивалент — загружен ли чанк
+    /// (для StructureManager.checkStructurePresence). Default:
+    /// `has_chunk_at` по центру чанка.
+    fn is_chunk_loaded(&self, chunk_pos: crate::world::level::chunk_pos::ChunkPos) -> bool {
+        let center = crate::core::block_pos::BlockPos::new(
+            chunk_pos.get_min_block_x() + 8,
+            self.min_build_height(),
+            chunk_pos.get_min_block_z() + 8,
+        );
+        self.has_chunk_at(center)
+    }
+    /// `level.getSeed()` — сид мира (для Structure.generate).
+    /// Default: 0.
+    fn world_seed(&self) -> i64 {
+        0
+    }
 
 }
-
-
