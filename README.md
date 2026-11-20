@@ -169,18 +169,19 @@ cargo test -p leaf-core
 | **world/level — взрывы** | **`Explosion`/`ServerExplosion` полный порт** ✅: `BlockInteraction`, `ExplosionDamageCalculator` (+Default/Simple/EntityBased), `calculateExplodedPositions` (16³-perimeter rays + power decay), `getSeenPercent` (bounding-box sampling + clip), `hurtEntities` (урон + blast-protection knockback + hitPlayers), `interactWithBlocks` (shuffle/TNT-prime/StackCollector merge≤16), `createFire`, `Explosion`-хуки в `LevelReader` (8 шт.) |
 | **world/level — спавнеры** | **`BaseSpawner`/`SpawnData`/`EquipmentTable` полный порт** ✅: `serverTick`/`clientTick`/`delay`/NBT save-load, spawnPotentials `WeightedList`, `CustomSpawnRules` (light limits), `Spawner`/`CustomSpawner` трейты, `entity_type_registry` (аналог BuiltInRegistries.ENTITY_TYPE), 17 `LevelReader`-хуков |
 | **world/level — NaturalSpawner** | **`NaturalSpawner` полный порт** ✅: `SpawnState` (energy budget через `PotentialCalculator`/`LocalMobCapCalculator`, per-player `chunkCap`), `createState`/`createStateAsync`, `getFilteredSpawningCategories`, `spawnForChunk`/`spawnCategoryForPosition` (random-bit packed loop, group size, caps), `spawnMobsForChunkGeneration`, `isValidEmptySpawnBlock`, fortress enemies, `PreSpawnStatus`; **`SpawnPlacements`** — полная таблица ~70 типов + placement types + семейные spawn-правила; `EntitySpawnReason`, `Mob::finalizeSpawn`/`checkSpawnObstruction`/cluster/group-size, `Entity::snapTo`; ~15 `LevelReader`-хуков |
+| **world/level — structure-фреймворк** | **Полный порт базового слоя** ✅: `BoundingBox` (intersection/encapsulate/move/inflate/chunk-intersection/corners), `StructurePiece` (trait + `StructurePieceAccessor`, `makeBoundingBox`, `PieceTransform` world-pos трансформации, `placeBlock`/`generateBox`/`generateAirBox`/`generateMaybeBox`/`generateUpperHalfSphere`/`fillColumnDown`, `createChest`/`createDispenser`/`reorient`, `BlockSelector`, mirror/rotation-state трансформации), `PiecesContainer` + `StructurePieceType`-реестр (NBT save/load), `StructureStart` (references/boundingBox-cache/placeInChunk/createTag/loadStaticStart), `Structure` (settings/spawnOverrides/step/terrainAdaptation, `GenerationContext`/`GenerationStub`, `generate`/`findValidGenerationPoint`/`adjustBoundingBox`/corner-height helpers), `StructureManager` + `StructureManagerAccess`, `StructureCheck` (storage-scan/placement-restrictions/feature-check кэш через трейты), `SinglePieceStructure` + `ScatteredFeaturePieceData`, `TerrainAdjustment`/`StructureSpawnOverride`/`StructureType`/`StructureCheckResult`; 6 `LevelReader`-хуков |
 | **resources/** | `Identifier`, `ResourceKey` |
 
 ### 🟡 В работе
 
 | Подсистема | Состояние |
 |---|---|
-| **world/level — structure-фреймворк** | Активно портируется: `StructureStart`/`StructurePiece`/`StructureManager`/`StructureCheck` (NaturalSpawner ✅, explosions ✅, mob spawner ✅ уже в «работает») |
+| **world/level — structure-генерация** | Конкретные структуры: `structure/structures/*` (~18 типов: village/mansion/stronghold/mineshaft/monument и т.д.), `templatesystem` (StructureTemplate/StructurePlaceSettings), `placement` (StructurePlacement/ConcentricRings), `pools` (Jigsaw-генерация), `StructureSet`/`StructureFeatureIndexSavedData` |
 
 ### 🔴 Осталось
 
 1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть нативов java.base не реализована в jvm25-rust.
-2. **World/level runtime** — structure-система (`StructureStart`/`Piece`/`Manager`/`Check`), `Level`/`ServerLevel` (chunk loading, generation pipeline, lighting engine, block-entity ticking).
+2. **World/level runtime** — `Level`/`ServerLevel` (chunk loading, generation pipeline, lighting engine, block-entity ticking), конкретные структуры (`structure/structures/*`, `templatesystem`, `placement`, `pools`).
 3. **Commands** — brigadier-база → `CommandNode`-дерево, dispatcher, argument types, synchronization (пакеты уже есть).
 4. **Entity-иерархия** — `Player` полный порт, projectile/item-entity Mob-операции через LevelReader-хуки.
 5. **Component payloads** — ~55 типов (`FoodProperties`, `Consumable`, `PotionContents`, `Equippable`, `Tool`...) + registry bootstrap (`HolderSet`/`EitherHolder`).
