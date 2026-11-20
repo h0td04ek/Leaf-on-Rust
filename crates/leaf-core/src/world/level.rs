@@ -76,3 +76,5 @@ pub mod storage;
 pub mod pathfinder;
 pub mod path_navigation_region;
 pub mod explosion;
+pub mod spawn_data;
+pub mod base_spawner;

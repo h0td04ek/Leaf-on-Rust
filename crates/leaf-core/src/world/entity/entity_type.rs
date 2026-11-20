@@ -385,3 +385,33 @@ pub fn holder_type_category(
         _ => None,
     }
 }
+
+/// Реестр типов сущностей (аналог `BuiltInRegistries.ENTITY_TYPE`
+/// для lookup по Identifier; заполняется bootstrap'ом).
+pub fn entity_type_registry() -> &'static std::sync::RwLock<Vec<EntityType>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<std::sync::RwLock<Vec<EntityType>>> = OnceLock::new();
+    REG.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Регистрация типа в реестре (id должен быть уникален).
+pub fn register_entity_type(entity_type: EntityType) -> i32 {
+    let mut reg = entity_type_registry().write().unwrap();
+    if let Some(i) = reg.iter().position(|t| t.id == entity_type.id) {
+        reg[i] = entity_type;
+        return i as i32;
+    }
+    reg.push(entity_type);
+    (reg.len() - 1) as i32
+}
+
+/// `BuiltInRegistries.ENTITY_TYPE.get(id)` / `EntityType.by(tag)` —
+/// поиск типа по Identifier.
+pub fn entity_type_by_identifier(id: &Identifier) -> Option<EntityType> {
+    entity_type_registry()
+        .read()
+        .unwrap()
+        .iter()
+        .find(|t| &t.id == id)
+        .cloned()
+}

@@ -908,6 +908,150 @@ pub trait LevelReader: Send + Sync {
         false
     }
 
+
+    /// `level.random.nextDouble()` — double [0,1) для спавнеров
+    /// и клиентской анимации. Default — через `next_int`.
+    fn level_random_next_double(&self) -> f64 {
+        self.level_random_next_int(i32::MAX) as f64 / i32::MAX as f64
+    }
+
+    /// `level.random.nextLong()` — long для LevelRandom-адаптера.
+    /// Default — два int'а.
+    fn level_random_next_long(&self) -> i64 {
+        (((self.level_random_next_int(i32::MAX) as u64) << 32)
+            | self.level_random_next_int(i32::MAX) as u64) as i64
+    }
+
+    // ---- BaseSpawner hooks ----
+
+    /// `hasNearbyAlivePlayerThatAffectsSpawningForSpawner(x,y,z,range)`
+    /// — игрок, влияющий на спавн, в радиусе. Default: false.
+    fn spawner_near_player(&self, _center: crate::world::phys::vec3::Vec3, _range: f64) -> bool {
+        false
+    }
+
+    /// `hasNeighborSignal(pos)` — редстоун-сигнал (Purpur
+    /// spawnerDeactivateByRedstone). Default: false.
+    fn has_neighbor_signal(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// `isSpawnerBlockEnabled()` — спавнер-блок включён
+    /// (gamerule doMobSpawning-подобный). Default: true.
+    fn spawner_block_enabled(&self) -> bool {
+        true
+    }
+
+    /// `tickRates.mobSpawner` — Paper tick rate (тиков между
+    /// серверными тиками спавнера). Default: 1.
+    fn spawner_tick_rate(&self) -> i32 {
+        1
+    }
+
+    /// `SpawnPlacements.checkSpawnRules(type, level, reason, pos, random)`
+    /// — проверка правил спавна (свет/блок/биом). Default: true
+    /// (полная проверка — после порта SpawnPlacements).
+    fn spawn_rules_valid(
+        &self,
+        _entity_type: &crate::world::entity::entity_type::EntityType,
+        _pos: BlockPos,
+    ) -> bool {
+        true
+    }
+
+    /// `getMaxLocalRawBrightness(pos)` — max(block, sky) raw light.
+    /// Default — через `get_brightness`.
+    fn get_max_local_raw_brightness(&self, pos: BlockPos) -> i32 {
+        self.get_brightness(crate::world::level::light_layer::LightLayer::Block, pos)
+            .max(self.get_brightness(crate::world::level::light_layer::LightLayer::Sky, pos))
+    }
+
+    /// `EntityTypeTest.forExactClass + NO_SPECTATORS` — подсчёт
+    /// сущностей точного типа в AABB (maxNearbyEntities спавнера).
+    /// Default: через `entities_in_box` + фильтр по type-id.
+    fn count_nearby_entities_in_box(
+        &self,
+        type_id: &crate::resources::identifier::Identifier,
+        aabb: &crate::world::phys::aabb::Aabb,
+    ) -> i32 {
+        self.entities_in_box(aabb)
+            .iter()
+            .filter(|e| {
+                !e.is_spectator()
+                    && crate::world::entity::entity_type::holder_type_id(&e.entity_type)
+                        .map(|id| &id == type_id)
+                        .unwrap_or(false)
+            })
+            .count() as i32
+    }
+
+    /// `EntityType.loadEntityRecursive(tag, level, SPAWNER, NOP)` —
+    /// создание сущности из NBT (detached, до добавления в мир).
+    /// Default: None — ServerLevel реализует с entity-реестром.
+    fn spawn_entity_from_nbt(
+        &self,
+        _entity_tag: &crate::nbt::compound::CompoundTag,
+        _pos_hint: crate::world::phys::vec3::Vec3,
+    ) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+
+    /// `mob.checkSpawnRules(level, SPAWNER)` — mob-правила спавна
+    /// (для non-mob сущностей — true). Default: true.
+    fn mob_check_spawn_rules(&self, _entity: &crate::world::entity::entity::Entity) -> bool {
+        true
+    }
+
+    /// `mob.checkSpawnObstruction(level)` — проверка преград
+    /// (для non-mob — true). Default: true.
+    fn mob_check_spawn_obstruction(&self, _entity: &crate::world::entity::entity::Entity) -> bool {
+        true
+    }
+
+    /// `mob.finalizeSpawn(level, difficulty, SPAWNER, null)` —
+    /// финализация спавна (экипировка/модификаторы). Default no-op.
+    fn finalize_spawner_spawn(
+        &self,
+        _entity: &mut crate::world::entity::entity::Entity,
+        _difficulty: crate::world::difficulty::Difficulty,
+    ) {
+    }
+
+    /// `mob.equip(equipmentTable)` — применение EquipmentTable.
+    /// Default no-op.
+    fn equip_spawner_entity(
+        &self,
+        _entity: &mut crate::world::entity::entity::Entity,
+        _equipment: &crate::entity::equipment_table::EquipmentTable,
+    ) {
+    }
+
+    /// `tryAddFreshEntityWithPassengers(entity, SPAWNER)` — добавить
+    /// сущность с пассажирами; возвращает false при неудаче.
+    /// Default: `add_fresh_entity` + true.
+    fn try_add_fresh_entity_with_passengers(
+        &self,
+        entity: crate::world::entity::entity::Entity,
+    ) -> bool {
+        self.add_fresh_entity(entity);
+        true
+    }
+
+    /// `mob.spawnAnim()` после добавления — по uuid (entity уже
+    /// в мире). Default no-op.
+    fn mob_spawn_anim(&self, _entity_uuid: crate::util::uuid::Uuid) {}
+
+    /// `level.getCurrentDifficultyAt(pos)` — сложность в позиции.
+    /// Default: уровеньная `difficulty()`.
+    fn current_difficulty_at(&self, _pos: BlockPos) -> crate::world::difficulty::Difficulty {
+        self.difficulty()
+    }
+
+    /// `addParticle(SMOKE/FLAME)` для clientTick спавнера —
+    /// пара частиц в точке. Default: `send_particles`-хуки нет —
+    /// no-op.
+    fn add_spawner_particles(&self, _x: f64, _y: f64, _z: f64) {}
+
 }
 
 
