@@ -56,6 +56,60 @@ impl BoundingBox {
         Self::new(i32::MIN, i32::MIN, i32::MIN, i32::MAX, i32::MAX, i32::MAX)
     }
 
+    /// `orientBox(structureMinX, structureMinY, structureMinZ,
+    /// xMin, yMin, zMin, xMax, yMax, zMax, facing)` — бокс куска
+    /// от offset-координат (используется NetherFortress и др.).
+    /// `xMax/yMax/zMax` — это max-координаты минус 1 внутри
+    /// (Java: `min + max - 1`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn orient_box_offsets(
+        structure_min_x: i32,
+        structure_min_y: i32,
+        structure_min_z: i32,
+        x_min: i32,
+        y_min: i32,
+        z_min: i32,
+        x_max: i32,
+        y_max: i32,
+        z_max: i32,
+        facing: Direction,
+    ) -> Self {
+        match facing {
+            Direction::NORTH => Self::new(
+                structure_min_x + x_min,
+                structure_min_y + y_min,
+                structure_min_z - z_max + 1 + z_min,
+                structure_min_x + x_max - 1 + x_min,
+                structure_min_y + y_max - 1 + y_min,
+                structure_min_z + z_min,
+            ),
+            Direction::WEST => Self::new(
+                structure_min_x - z_max + 1 + z_min,
+                structure_min_y + y_min,
+                structure_min_z + x_min,
+                structure_min_x + z_min,
+                structure_min_y + y_max - 1 + y_min,
+                structure_min_z + x_max - 1 + x_min,
+            ),
+            Direction::EAST => Self::new(
+                structure_min_x + z_min,
+                structure_min_y + y_min,
+                structure_min_z + x_min,
+                structure_min_x + z_max - 1 + z_min,
+                structure_min_y + y_max - 1 + y_min,
+                structure_min_z + x_max - 1 + x_min,
+            ),
+            _ => Self::new(
+                structure_min_x + x_min,
+                structure_min_y + y_min,
+                structure_min_z + z_min,
+                structure_min_x + x_max - 1 + x_min,
+                structure_min_y + y_max - 1 + y_min,
+                structure_min_z + z_max - 1 + z_min,
+            ),
+        }
+    }
+
     /// `orientBox(x, y, z, direction, width, depth, height)` —
     /// бокс для постройки заданного направления.
     pub fn orient_box(

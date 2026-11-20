@@ -17,6 +17,7 @@ pub mod ocean_ruin;
 pub mod ruined_portal;
 pub mod shipwreck;
 pub mod swamp_hut;
+pub mod nether_fortress;
 pub mod nether_fossil;
 pub mod woodland_mansion;
 
