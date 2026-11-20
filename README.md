@@ -176,7 +176,7 @@ cargo test -p leaf-core
 
 | Подсистема | Состояние |
 |---|---|
-| **world/level — structure-генерация** | `templatesystem` ✅ (StructureTemplate/Palette/StructureBlockInfo, `placeInWorld`/`processBlockInfos`/`placeEntities`, transform/mirror/rotation, NBT save-load, `StructureTemplateManager`, `StructurePlaceSettings`, все processors: Rule/Capped/Gravity/BlockRot/BlockIgnore/BlockAge/BlackstoneReplace/LavaSubmerged/JigsawReplacement/Protected + rule-tests), `placement` ✅ (StructurePlacement/FrequencyReductionMethod/ExclusionZone, RandomSpread, ConcentricRings, StructureSet+Placement dispatch), `pools` 🟡 (StructureTemplatePool/Projection/JigsawJunction, Single/LegacySingle/List/Empty/Feature pool elements, StructureProcessorList — остался JigsawPlacement-генератор), `structures/*` (~18 типов), `StructureFeatureIndexSavedData` |
+| **world/level — structure-генерация** | `templatesystem` ✅, `placement` ✅ (StructurePlacement/FrequencyReductionMethod/ExclusionZone, RandomSpread, ConcentricRings, StructureSet+Placement dispatch), `pools` ✅ **полностью**: StructureTemplatePool/Projection/JigsawJunction, все pool elements (Single/LegacySingle/List/Empty/Feature), StructureProcessorList, **`JigsawPlacement`** ✅ (weighted pool selection, PoolAliasLookup, projection Rigid/terrain, heightmap fallback, dimension padding, max-distance, collision через `VoxelShape::deflate_boxes`, max-depth recursion), `PoolElementStructurePiece` + `FrontAndTop`/`JigsawBlock`. Осталось: `structures/*` (~18 типов), `StructureFeatureIndexSavedData` |
 
 ### 🔴 Осталось
 
