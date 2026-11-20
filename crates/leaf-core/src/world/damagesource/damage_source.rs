@@ -295,6 +295,7 @@ impl Clone for crate::world::entity::entity::Entity {
             invulnerable: self.invulnerable,
             glowing: self.glowing,
             no_physics: self.no_physics,
+            blocks_building: self.blocks_building,
             shared_flags: self.shared_flags,
             data: self.data.clone(),
             tags: self.tags.clone(),

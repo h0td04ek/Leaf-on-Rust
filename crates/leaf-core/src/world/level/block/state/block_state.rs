@@ -143,6 +143,69 @@ impl BlockState {
         self.values.get(property).is_some()
     }
 
+    /// Int-значение свойства по имени (`getValue(RedStoneWireBlock.POWER)`
+    /// и подобные integer-property).
+    pub fn get_int_property(&self, name: &str) -> Option<i32> {
+        let prop = self.definition.get_property(name)?;
+        match self.values.get(prop.as_ref())? {
+            super::property::StateValue::Int(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// `state.is(block)` по registry-id (`minecraft:stone` и т.п.).
+    pub fn is_block_id(&self, id: &str) -> bool {
+        self.block.id.to_string() == id
+    }
+
+    /// `getSignal(level, pos, direction)` — `BlockBehaviour.getSignal`
+    /// (default 0).
+    pub fn get_signal(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+        direction: crate::core::direction::Direction,
+    ) -> i32 {
+        match &self.block.properties.get_signal {
+            Some(f) => f(self, level, pos, direction),
+            None => 0,
+        }
+    }
+
+    /// `getDirectSignal(level, pos, direction)` —
+    /// `BlockBehaviour.getDirectSignal` (default 0).
+    pub fn get_direct_signal(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+        direction: crate::core::direction::Direction,
+    ) -> i32 {
+        match &self.block.properties.get_direct_signal {
+            Some(f) => f(self, level, pos, direction),
+            None => 0,
+        }
+    }
+
+    /// `updateShape(level, scheduledTickAccess, pos, direction,
+    /// neighborPos, neighborState, random)` — `BlockBehaviour.updateShape`
+    /// (default: identity).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        scheduled_tick_access: &dyn crate::world::level::scheduled_tick_access::ScheduledTickAccess,
+        pos: crate::core::block_pos::BlockPos,
+        direction: crate::core::direction::Direction,
+        neighbor_pos: crate::core::block_pos::BlockPos,
+        neighbor_state: &BlockState,
+        random: std::sync::Arc<dyn crate::random::RandomSource>,
+    ) -> BlockState {
+        match &self.block.properties.update_shape {
+            Some(f) => f(self, level, scheduled_tick_access, pos, direction, neighbor_pos, neighbor_state, random),
+            None => self.clone(),
+        }
+    }
+
     /// Типизированный `getValue`.
     pub fn get_typed<T: super::property::PropertyValue>(
         &self,

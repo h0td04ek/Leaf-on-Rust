@@ -506,3 +506,31 @@ fn subtract_aabb(a: &Aabb, b: &Aabb) -> Vec<Aabb> {
         .filter(|r| r.max_x > r.min_x && r.max_y > r.min_y && r.max_z > r.min_z)
         .collect()
 }
+
+/// `moonrise$getSingleAABBRepresentation` — Some(AABB), если форма
+/// состоит ровно из одного бокса (moonrise `CollisionVoxelShape`).
+pub fn single_aabb_representation(shape: &VoxelShape) -> Option<Aabb> {
+    if shape.boxes.len() == 1 {
+        Some(shape.boxes[0])
+    } else {
+        None
+    }
+}
+
+/// `CollisionUtil.isEmpty(AABB)` — вырожденный бокс (< COLLISION_EPSILON
+/// по какому-либо измерению).
+pub fn collision_aabb_is_empty(aabb: &Aabb) -> bool {
+    (aabb.max_x - aabb.min_x) < COLLISION_EPSILON
+        || (aabb.max_y - aabb.min_y) < COLLISION_EPSILON
+        || (aabb.max_z - aabb.min_z) < COLLISION_EPSILON
+}
+
+/// `CollisionUtil.voxelShapeIntersectNoEmpty(voxel, aabb)` —
+/// пересечение формы с боксом (строгое, непустое).
+pub fn voxel_shape_intersect_no_empty(shape: &VoxelShape, aabb: &Aabb) -> bool {
+    !shape.is_empty()
+        && shape
+            .boxes
+            .iter()
+            .any(|b| b.intersects(aabb))
+}

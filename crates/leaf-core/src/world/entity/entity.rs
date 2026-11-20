@@ -127,6 +127,8 @@ pub struct Entity {
     pub glowing: bool,
     /// `noPhysics` — без физики.
     pub no_physics: bool,
+    /// `blocksBuilding` — публичное поле Java Entity (default true).
+    pub blocks_building: bool,
     /// `sharedFlags` — shared flags.
     pub shared_flags: u8,
     /// `data` — synced entity data.
@@ -216,6 +218,7 @@ impl Entity {
             invulnerable: false,
             glowing: false,
             no_physics: false,
+            blocks_building: true,
             shared_flags: 0,
             data: crate::network::syncher::synched_entity_data::SynchedEntityData::new(Vec::new()),
             tags: Vec::new(),
@@ -959,13 +962,13 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isAlliedTo(other)`.
     pub fn is_allied_to(&self, _other: &Entity) -> bool { false }
 
-    /// `canBeCollidedWith(box)`.
-    pub fn can_be_collided_with(&self, _box: Aabb) -> bool {
+    /// `canBeCollidedWith(box)` — `box` = `Option<Aabb>` (null → None).
+    pub fn can_be_collided_with(&self, _box: Option<Aabb>) -> bool {
         self.is_alive() && !self.is_removed()
     }
 
-    /// `canCollideWith(box)`.
-    pub fn can_collide_with(&self, _box: Aabb) -> bool {
+    /// `canCollideWith(box)` — `box` = `Option<Aabb>` (null → None).
+    pub fn can_collide_with(&self, _box: Option<Aabb>) -> bool {
         self.is_alive() && !self.is_removed()
     }
 
@@ -1271,6 +1274,17 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `isPlayer()` — переопределяется в `Player`.
     pub fn is_player(&self) -> bool { false }
+
+    /// `affectsSpawning` — поле Player (в Java — `Player.affectsSpawning`,
+    /// default true). Default false для не-игроков.
+    pub fn affects_spawning(&self) -> bool { false }
+
+    /// `instanceof Container` — сущность-контейнер
+    /// (`EntitySelector.CONTAINER_ENTITY_SELECTOR`). Default false.
+    pub fn is_container_entity(&self) -> bool { false }
+
+    /// `Player.isAfk()` (Purpur) — AFK-статус. Default false.
+    pub fn is_afk(&self) -> bool { false }
 
     /// `playSound(sound, volume, pitch)` — через level.
     pub fn play_sound(

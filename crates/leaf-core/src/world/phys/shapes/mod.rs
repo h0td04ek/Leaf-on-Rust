@@ -3,6 +3,7 @@
 pub mod voxel_shape;
 
 pub use voxel_shape::{
-    face_shape_occludes, merged_face_occludes, merged_may_occlude_block, BooleanOp, VoxelShape,
+    collision_aabb_is_empty, face_shape_occludes, merged_face_occludes, merged_may_occlude_block,
+    single_aabb_representation, voxel_shape_intersect_no_empty, BooleanOp, VoxelShape,
     COLLISION_EPSILON,
 };

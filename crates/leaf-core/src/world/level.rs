@@ -12,6 +12,47 @@ pub mod clip;
 #[derive(Debug)]
 pub struct Level;
 
+impl Level {
+    /// `RESOURCE_KEY_CODEC` — `ResourceKey.codec(Registries.DIMENSION)`.
+    /// (Кодек регистрируется в network-слое.)
+    /// `OVERWORLD`.
+    pub fn overworld() -> crate::resources::ResourceKey<Level> {
+        crate::resources::ResourceKey::create_with_registry_name(
+            crate::core::registry::registries::dimension(),
+            crate::resources::identifier::Identifier::with_default_namespace("overworld").unwrap(),
+        )
+    }
+
+    /// `NETHER`.
+    pub fn nether() -> crate::resources::ResourceKey<Level> {
+        crate::resources::ResourceKey::create_with_registry_name(
+            crate::core::registry::registries::dimension(),
+            crate::resources::identifier::Identifier::with_default_namespace("the_nether").unwrap(),
+        )
+    }
+
+    /// `END`.
+    pub fn end() -> crate::resources::ResourceKey<Level> {
+        crate::resources::ResourceKey::create_with_registry_name(
+            crate::core::registry::registries::dimension(),
+            crate::resources::identifier::Identifier::with_default_namespace("the_end").unwrap(),
+        )
+    }
+
+    /// `MAX_LEVEL_SIZE`.
+    pub const MAX_LEVEL_SIZE: i32 = 30_000_000;
+    /// `LONG_PARTICLE_CLIP_RANGE`.
+    pub const LONG_PARTICLE_CLIP_RANGE: i32 = 512;
+    /// `SHORT_PARTICLE_CLIP_RANGE`.
+    pub const SHORT_PARTICLE_CLIP_RANGE: i32 = 32;
+    /// `MAX_BRIGHTNESS`.
+    pub const MAX_BRIGHTNESS: i32 = 15;
+    /// `MAX_ENTITY_SPAWN_Y`.
+    pub const MAX_ENTITY_SPAWN_Y: i32 = 20_000_000;
+    /// `MIN_ENTITY_SPAWN_Y`.
+    pub const MIN_ENTITY_SPAWN_Y: i32 = -20_000_000;
+}
+
 /// `LevelData.RespawnData` — точка возрождения + yaw/pitch.
 /// (В Java — nested record в `LevelData`; интерфейс LevelData
 /// портируется вместе с Level.)
@@ -26,6 +67,15 @@ pub struct RespawnData {
 }
 
 impl RespawnData {
+    /// `DEFAULT` — overworld spawn (0,0,0), yaw/pitch 0.
+    pub fn default_respawn() -> Self {
+        Self::new(
+            crate::core::global_pos::GlobalPos::of(Level::overworld(), crate::core::block_pos::BlockPos::ZERO),
+            0.0,
+            0.0,
+        )
+    }
+
     /// `new RespawnData(globalPos, yaw, pitch)`.
     pub fn new(global_pos: crate::core::global_pos::GlobalPos, yaw: f32, pitch: f32) -> Self {
         Self { global_pos, yaw, pitch }
@@ -58,6 +108,32 @@ impl RespawnData {
         buf.write_float(self.yaw);
         buf.write_float(self.pitch);
     }
+
+    /// `dimension()`.
+    pub fn dimension(&self) -> &crate::resources::ResourceKey<Level> {
+        &self.global_pos.dimension
+    }
+
+    /// `pos()`.
+    pub fn pos(&self) -> crate::core::block_pos::BlockPos {
+        self.global_pos.pos
+    }
+
+    /// `withLevel(dimension)` (Paper).
+    pub fn with_level(&self, dimension: crate::resources::ResourceKey<Level>) -> Self {
+        Self::new(
+            crate::core::global_pos::GlobalPos::of(dimension, self.global_pos.pos),
+            self.yaw,
+            self.pitch,
+        )
+    }
+
+    /// `positionEquals(other)` (Paper) — pos+yaw+pitch без измерения.
+    pub fn position_equals(&self, other: &RespawnData) -> bool {
+        self.global_pos.pos == other.global_pos.pos
+            && self.yaw == other.yaw
+            && self.pitch == other.pitch
+    }
 }
 pub mod chunk;
 pub mod chunk_source;
@@ -83,3 +159,10 @@ pub mod potential_calculator;
 pub mod local_mob_cap_calculator;
 pub mod natural_spawner;
 pub mod noise_column;
+pub mod scheduled_tick_access;
+pub mod level_writer;
+pub mod level_simulated;
+pub mod common_level_accessor;
+pub mod entity_getter;
+pub mod redstone;
+pub mod level_accessor;

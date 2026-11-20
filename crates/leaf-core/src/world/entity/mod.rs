@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod entity;
+pub mod entity_selector;
 pub mod entity_event;
 pub mod entity_reference;
 pub mod entity_type;

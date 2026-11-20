@@ -35,6 +35,41 @@ pub struct Block {
     pub kind: BlockKind,
 }
 
+/// `Block.UpdateFlags` — битовые флаги обновления при setBlock.
+pub mod update_flags {
+    /// `UPDATE_NEIGHBORS`.
+    pub const UPDATE_NEIGHBORS: i32 = 1;
+    /// `UPDATE_CLIENTS`.
+    pub const UPDATE_CLIENTS: i32 = 2;
+    /// `UPDATE_INVISIBLE`.
+    pub const UPDATE_INVISIBLE: i32 = 4;
+    /// `UPDATE_IMMEDIATE`.
+    pub const UPDATE_IMMEDIATE: i32 = 8;
+    /// `UPDATE_KNOWN_SHAPE`.
+    pub const UPDATE_KNOWN_SHAPE: i32 = 16;
+    /// `UPDATE_SUPPRESS_DROPS`.
+    pub const UPDATE_SUPPRESS_DROPS: i32 = 32;
+    /// `UPDATE_MOVE_BY_PISTON`.
+    pub const UPDATE_MOVE_BY_PISTON: i32 = 64;
+    /// `UPDATE_SKIP_SHAPE_UPDATE_ON_WIRE`.
+    pub const UPDATE_SKIP_SHAPE_UPDATE_ON_WIRE: i32 = 128;
+    /// `UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS`.
+    pub const UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS: i32 = 256;
+    /// `UPDATE_SKIP_ON_PLACE`.
+    pub const UPDATE_SKIP_ON_PLACE: i32 = 512;
+    /// `UPDATE_NONE`.
+    pub const UPDATE_NONE: i32 = UPDATE_INVISIBLE | UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS;
+    /// `UPDATE_ALL`.
+    pub const UPDATE_ALL: i32 = UPDATE_NEIGHBORS | UPDATE_CLIENTS;
+    /// `UPDATE_ALL_IMMEDIATE`.
+    pub const UPDATE_ALL_IMMEDIATE: i32 = UPDATE_NEIGHBORS | UPDATE_CLIENTS | UPDATE_IMMEDIATE;
+    /// `UPDATE_SKIP_ALL_SIDEEFFECTS`.
+    pub const UPDATE_SKIP_ALL_SIDEEFFECTS: i32 =
+        UPDATE_KNOWN_SHAPE | UPDATE_SUPPRESS_DROPS | UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS | UPDATE_SKIP_ON_PLACE;
+    /// `UPDATE_LIMIT` — recursion limit для setBlock.
+    pub const UPDATE_LIMIT: i32 = 512;
+}
+
 /// `BlockKind` — тип блока, влияющий на `PathType` и
 /// проходимость (аналог instanceof-проверок в
 /// `WalkNodeEvaluator.getPathTypeFromState`).
@@ -88,6 +123,17 @@ pub struct BlockProperties {
     pub collision_shape: Option<crate::world::phys::shapes::VoxelShape>,
     /// `isSignalSource` — `BlockBehaviour.Properties.isSignalSource`.
     pub signal_source: bool,
+
+    /// `getSignal` — `BlockBehaviour.getSignal` (default: 0).
+    /// `Fn(&BlockState, &dyn LevelReader, BlockPos, Direction) -> i32`.
+    pub get_signal: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, crate::core::block_pos::BlockPos, crate::core::direction::Direction) -> i32 + Send + Sync>>,
+
+    /// `getDirectSignal` — `BlockBehaviour.getDirectSignal` (default: 0).
+    pub get_direct_signal: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, crate::core::block_pos::BlockPos, crate::core::direction::Direction) -> i32 + Send + Sync>>,
+
+    /// `updateShape` — `BlockBehaviour.updateShape`
+    /// (default: identity — возвращает входное состояние).
+    pub update_shape: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, &dyn crate::world::level::scheduled_tick_access::ScheduledTickAccess, crate::core::block_pos::BlockPos, crate::core::direction::Direction, crate::core::block_pos::BlockPos, &state::BlockState, std::sync::Arc<dyn crate::random::RandomSource>) -> state::BlockState + Send + Sync>>,
 
     /// `replaceable` — `BlockBehaviour.Properties.replaceable`.
     pub replaceable: bool,

@@ -142,3 +142,32 @@ pub fn all() -> Vec<GameEvent> {
         resonate_11(), resonate_12(), resonate_13(), resonate_14(), resonate_15(),
     ]
 }
+
+/// `GameEvent.Context` — источник события + затронутое состояние.
+#[derive(Clone)]
+pub struct Context {
+    /// `sourceEntity`.
+    pub source_entity: Option<std::sync::Arc<crate::world::entity::entity::Entity>>,
+    /// `affectedState`.
+    pub affected_state: Option<crate::world::level::block::state::block_state::BlockState>,
+}
+
+impl Context {
+    /// `of(sourceEntity)`.
+    pub fn of_entity(entity: Option<std::sync::Arc<crate::world::entity::entity::Entity>>) -> Self {
+        Self { source_entity: entity, affected_state: None }
+    }
+
+    /// `of(affectedState)`.
+    pub fn of_state(state: Option<crate::world::level::block::state::block_state::BlockState>) -> Self {
+        Self { source_entity: None, affected_state: state }
+    }
+
+    /// `of(sourceEntity, affectedState)`.
+    pub fn new(
+        source_entity: Option<std::sync::Arc<crate::world::entity::entity::Entity>>,
+        affected_state: Option<crate::world::level::block::state::block_state::BlockState>,
+    ) -> Self {
+        Self { source_entity, affected_state }
+    }
+}

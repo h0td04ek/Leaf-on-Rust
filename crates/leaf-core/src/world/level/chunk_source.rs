@@ -21,6 +21,11 @@ pub trait ChunkSource: Send + Sync {
     /// `getSectionsCount` — количество секций.
     fn get_sections_count(&self) -> i32;
 
+    /// `hasChunk(x, z)`.
+    fn has_chunk(&self, x: i32, z: i32) -> bool {
+        self.get_chunk_now(x, z).is_some()
+    }
+
     /// `getLightEngine` — light engine.
     fn get_light_engine(&self) -> Option<Arc<dyn crate::world::level::lighting::light_engine::LightEngine>> {
         None
