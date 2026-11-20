@@ -253,6 +253,27 @@ impl BlockState {
         self.block_shape(level, pos, false)
     }
 
+    /// `getInteractionShape(level, pos)` — форма для
+    /// raytrace-взаимодействия (default = `getShape`,
+    /// как в `BlockBehaviour`).
+    pub fn get_interaction_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        self.get_shape(level, pos)
+    }
+
+    /// `getVisualShape(level, pos)` — визуальная форма
+    /// (default = `getShape`, как в `BlockBehaviour`).
+    pub fn get_visual_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> crate::world::phys::shapes::VoxelShape {
+        self.get_shape(level, pos)
+    }
+
     /// `getCollisionShape(level, pos)`.
     pub fn get_collision_shape(
         &self,
@@ -370,6 +391,27 @@ impl BlockState {
         pos: crate::core::block_pos::BlockPos,
     ) -> bool {
         self.is_solid_render(level, pos)
+    }
+
+    /// `hasLargeCollisionShape()` — collision shape не является
+    /// полным кубом. Level-free вариант (unleveled-форма).
+    pub fn has_large_collision_shape(&self) -> bool {
+        !crate::world::level::block::Block::is_shape_full_block(
+            &self.collision_shape_unleveled(),
+        )
+    }
+
+    /// `isSuffocating()` — полный solid-рендер без жидкости
+    /// (unleveled; Java-сигнатура `(BlockGetter, BlockPos)`).
+    pub fn is_suffocating(&self) -> bool {
+        crate::world::level::block::Block::is_shape_full_block(
+            &self.collision_shape_unleveled(),
+        ) && self.get_fluid_state().is_empty()
+    }
+
+    /// `is(Blocks.MOVING_PISTON)` — движущийся поршень.
+    pub fn is_moving_piston(&self) -> bool {
+        self.is_block_id("minecraft:moving_piston")
     }
 
     /// `getId`-эквивалент — числовой id состояния в реестре

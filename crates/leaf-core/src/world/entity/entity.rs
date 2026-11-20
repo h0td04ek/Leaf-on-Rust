@@ -1275,6 +1275,19 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `isPlayer()` — переопределяется в `Player`.
     pub fn is_player(&self) -> bool { false }
 
+    /// `isDescending()` — спуск на элитрах (Player переопределит
+    /// при порте; Elytra-логика ставит флаг).
+    pub fn is_descending(&self) -> bool { false }
+
+    /// `canStandOnFluid(fluid)` — `LivingEntity.canStandOnFluid`
+    /// (только для живых сущностей; база — false).
+    pub fn can_stand_on_fluid(
+        &self,
+        _fluid: &crate::world::level::block::state::fluid_state::FluidState,
+    ) -> bool {
+        false
+    }
+
     /// `affectsSpawning` — поле Player (в Java — `Player.affectsSpawning`,
     /// default true). Default false для не-игроков.
     pub fn affects_spawning(&self) -> bool { false }

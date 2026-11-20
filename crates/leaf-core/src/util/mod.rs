@@ -34,6 +34,7 @@ pub mod keyframe;
 pub mod keyframe_track;
 pub mod keyframe_track_sampler;
 pub mod lerp_function;
+pub mod list;
 pub mod linear_congruential_generator;
 pub mod memory_reserve;
 pub mod month_day;

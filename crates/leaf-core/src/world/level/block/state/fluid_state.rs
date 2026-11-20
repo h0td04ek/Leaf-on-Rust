@@ -89,7 +89,7 @@ impl Fluid {
     }
 
     /// `getShape(state, level, pos)` — форма (AABB).
-    pub fn get_shape(&self, _state: &FluidState, _level: &dyn crate::world::level::level_height_accessor::LevelHeightAccessor, _pos: crate::core::block_pos::BlockPos) -> Option<crate::world::phys::aabb::Aabb> {
+    pub fn get_shape(&self, _state: &FluidState, _level: &dyn crate::world::level::level_reader::LevelReader, _pos: crate::core::block_pos::BlockPos) -> Option<crate::world::phys::aabb::Aabb> {
         None
     }
 
@@ -153,6 +153,24 @@ impl FluidState {
     /// иначе `fluid.getExplosionResistance()`.
     pub fn get_explosion_resistance(&self) -> f32 {
         if self.is_empty() { 0.0 } else { self.fluid.get_explosion_resistance() }
+    }
+
+    /// `getShape(level, pos)` — `fluid.getShape(this, level, pos)`
+    /// → `VoxelShape` (Java). AABB-форма → single-box shape.
+    pub fn get_shape(
+        &self,
+        level: &dyn crate::world::level::level_reader::LevelReader,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> crate::world::phys::shapes::voxel_shape::VoxelShape {
+        self.fluid
+            .get_shape(self, level, pos)
+            .map(crate::world::phys::shapes::voxel_shape::VoxelShape::of)
+            .unwrap_or_else(crate::world::phys::shapes::voxel_shape::VoxelShape::empty)
+    }
+
+    /// `isSame(other)` — тот же тип жидкости (`getType()` равенство).
+    pub fn is_same_type(&self, other: &FluidState) -> bool {
+        self.fluid.id == other.fluid.id
     }
 
     /// `is(TagKey<Fluid>)` по именованному тегу.

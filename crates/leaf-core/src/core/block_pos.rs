@@ -288,6 +288,23 @@ impl BlockPos {
         dx * dx + dy * dy + dz * dz
     }
 
+    /// `compareTo(Vec3i)` — порядок (y, z, x), как в Java
+    /// `Vec3i.compareTo`.
+    pub fn compare_to(&self, other: &BlockPos) -> std::cmp::Ordering {
+        self.y
+            .cmp(&other.y)
+            .then_with(|| self.z.cmp(&other.z))
+            .then_with(|| self.x.cmp(&other.x))
+    }
+
+    /// `distToCenterSqr(Vec3)` — расстояние до центра блока.
+    pub fn dist_to_center_sqr(&self, x: f64, y: f64, z: f64) -> f64 {
+        let dx = x - (self.x as f64 + 0.5);
+        let dy = y - (self.y as f64 + 0.5);
+        let dz = z - (self.z as f64 + 0.5);
+        dx * dx + dy * dy + dz * dz
+    }
+
     pub fn relative_n(&self, direction: Direction, distance: i32) -> Self {
         if distance == 0 {
             *self

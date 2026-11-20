@@ -88,6 +88,12 @@ impl BlockTags {
     pub fn slabs() -> Identifier {
         Identifier::minecraft("slabs")
     }
+    /// `BlockTags.FALL_DAMAGE_RESETTING` — блоки, сбрасывающие
+    /// fall-distance (сено, sweet berry bush, water в powder snow
+    /// и т.п.).
+    pub fn fall_damage_resetting() -> Identifier {
+        Identifier::minecraft("fall_damage_resetting")
+    }
 }
 
 /// `bootstrap()` — ванильное содержимое используемых блочных

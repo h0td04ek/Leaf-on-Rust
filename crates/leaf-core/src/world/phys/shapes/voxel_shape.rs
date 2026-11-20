@@ -167,8 +167,11 @@ impl VoxelShape {
             BooleanOp::Or => Self {
                 boxes: [self.boxes.clone(), other.boxes.clone()].concat(),
             },
-            BooleanOp::OnlyFirst => self.clone(),
-            BooleanOp::OnlySecond => other.clone(),
+            // ONLY_FIRST = `first && !second` — разность `a \ b`
+            // (совпадает с `Not` в нашей AABB-модели).
+            BooleanOp::OnlyFirst => self.join(other, BooleanOp::Not),
+            // ONLY_SECOND = `!first && second` — `b \ a`.
+            BooleanOp::OnlySecond => other.join(self, BooleanOp::Not),
             BooleanOp::Not => {
                 // self \ other — вычитание каждого бокса other
                 // из каждого бокса self.
@@ -211,6 +214,25 @@ impl VoxelShape {
         }
     }
 
+    /// `closestPointTo(pos)` — ближайшая к `pos` точка формы.
+    /// `None` для пустой формы.
+    pub fn closest_point_to(&self, pos: &crate::world::phys::vec3::Vec3) -> Option<crate::world::phys::vec3::Vec3> {
+        let mut best: Option<(f64, crate::world::phys::vec3::Vec3)> = None;
+        for b in &self.boxes {
+            let x = pos.x.clamp(b.min_x, b.max_x);
+            let y = pos.y.clamp(b.min_y, b.max_y);
+            let z = pos.z.clamp(b.min_z, b.max_z);
+            let dx = pos.x - x;
+            let dy = pos.y - y;
+            let dz = pos.z - z;
+            let d = dx * dx + dy * dy + dz * dz;
+            if best.as_ref().map_or(true, |(bd, _)| d < *bd) {
+                best = Some((d, crate::world::phys::vec3::Vec3::new(x, y, z)));
+            }
+        }
+        best.map(|(_, v)| v)
+    }
+
     /// `join(Shapes.or(...))` — объединение нескольких форм.
     pub fn join_all(shapes: &[&VoxelShape]) -> Self {
         let mut boxes = Vec::new();
@@ -218,6 +240,51 @@ impl VoxelShape {
             boxes.extend(s.boxes.iter().cloned());
         }
         Self { boxes }.optimize()
+    }
+
+    /// `clip(from, to, pos)` — ближайшее пересечение луча
+    /// `[from,to]` с формой в мировых координатах
+    /// (`pos` — позиция блока). `None` — нет пересечения.
+    pub fn clip(
+        &self,
+        from: &crate::world::phys::vec3::Vec3,
+        to: &crate::world::phys::vec3::Vec3,
+        pos: crate::core::block_pos::BlockPos,
+    ) -> Option<crate::world::phys::hit_result::BlockHitResult> {
+        if self.is_empty() {
+            return None;
+        }
+        let offset = crate::world::phys::vec3::Vec3::new(
+            pos.get_x() as f64,
+            pos.get_y() as f64,
+            pos.get_z() as f64,
+        );
+        let local = crate::world::phys::vec3::Vec3::new(
+            from.x - offset.x,
+            from.y - offset.y,
+            from.z - offset.z,
+        );
+        let mut best: Option<(crate::world::phys::vec3::Vec3, f64)> = None;
+        for aabb in &self.boxes {
+            if let Some(loc) = aabb.clip(from, to) {
+                let d = loc.distance_to_sqr(from);
+                if best.as_ref().map(|(_, bd)| d < *bd).unwrap_or(true) {
+                    best = Some((loc, d));
+                }
+            }
+        }
+        let (loc, _) = best?;
+        let inside = self.contains(local.x, local.y, local.z);
+        let face = crate::core::direction::Direction::get_approximate_nearest_vec(
+            &crate::world::phys::vec3::Vec3::new(
+                loc.x - offset.x - 0.5,
+                loc.y - offset.y - 0.5,
+                loc.z - offset.z - 0.5,
+            ),
+        );
+        Some(crate::world::phys::hit_result::BlockHitResult::new(
+            loc, face, pos, inside,
+        ))
     }
 
     /// Проверка: содержит ли форма точку (block-local координаты).
@@ -533,4 +600,10 @@ pub fn voxel_shape_intersect_no_empty(shape: &VoxelShape, aabb: &Aabb) -> bool {
             .boxes
             .iter()
             .any(|b| b.intersects(aabb))
+}
+
+/// `Shapes.joinIsNotEmpty(shape1, shape2, op)` — результат
+/// булевой операции непуст.
+pub fn join_is_not_empty(shape1: &VoxelShape, shape2: &VoxelShape, op: BooleanOp) -> bool {
+    !shape1.join(shape2, op).is_empty()
 }
