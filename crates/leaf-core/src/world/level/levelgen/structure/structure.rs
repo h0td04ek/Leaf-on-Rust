@@ -62,6 +62,10 @@ pub struct GenerationContext<'a> {
     pub level: &'a dyn LevelReader,
     /// `validBiome` — предикат допустимого биома.
     pub valid_biome: Box<dyn Fn(&Biome) -> bool + 'a>,
+    /// `structureTemplateManager` — шаблоны структур
+    /// (из LevelReader-хука; `None` если уровень их не даёт).
+    pub template_manager:
+        Option<std::sync::Arc<crate::world::level::levelgen::structure::templatesystem::structure_template_manager::StructureTemplateManager>>,
 }
 
 impl<'a> GenerationContext<'a> {
@@ -87,6 +91,7 @@ impl<'a> GenerationContext<'a> {
             random: Self::make_random(seed, chunk_pos),
             level,
             valid_biome,
+            template_manager: level.structure_template_manager(),
         }
     }
 }

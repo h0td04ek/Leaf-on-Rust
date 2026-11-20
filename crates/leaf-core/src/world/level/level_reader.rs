@@ -763,6 +763,45 @@ pub trait LevelReader: Send + Sync {
         self.min_build_height()
     }
 
+    /// `ChunkGenerator.getBaseHeight(x, z, heightmap, level,
+    /// randomState)` — высота сгенерированной колонны
+    /// (без пост-обработки). Default: `get_height`.
+    fn get_base_height(
+        &self,
+        ty: crate::world::level::levelgen::heightmap::HeightmapType,
+        x: i32,
+        z: i32,
+    ) -> i32 {
+        self.get_height(ty, x, z)
+    }
+
+    /// `ChunkGenerator.getBaseColumn(x, z, level, randomState)` —
+    /// `NoiseColumn` сгенерированного ландшафта. Default: колонна
+    /// из `get_block_state`.
+    fn get_base_column(
+        &self,
+        x: i32,
+        z: i32,
+    ) -> crate::world::level::noise_column::NoiseColumn {
+        crate::world::level::noise_column::NoiseColumn::build_from_level(self, x, z)
+    }
+
+    /// `BiomeSource.getBiomesWithin(x, y, z, radius, sampler)` —
+    /// биомы в радиусе (к genuinely quart-координатах вызывающий
+    /// код уже поделил). Default: один биом в центре.
+    fn biomes_within(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        _radius: i32,
+    ) -> Vec<crate::core::holder::Holder<crate::world::level::biome::biome::Biome>> {
+        self.biome_at(BlockPos::new(x, y, z))
+            .cloned()
+            .into_iter()
+            .collect()
+    }
+
     /// `getNearestPlayer(targeting, mob, x, y, z, aabb)` —
     /// ближайший игрок (для LookAtPlayerGoal и др.).
     /// Default: нет сущностей (ServerLevel переопределит).
@@ -1189,6 +1228,16 @@ pub trait LevelReader: Send + Sync {
     /// `level.markPosForPostprocessing(pos)` — отложенная проверка
     /// формы после пост-обработки структур. Default: no-op.
     fn mark_pos_for_postprocessing(&self, _pos: BlockPos) {}
+
+    /// `getStructureTemplateManager()` — менеджер шаблонов
+    /// структур (для structure-фреймворка); `None` у уровней
+    /// без шаблонов.
+    fn structure_template_manager(
+        &self,
+    ) -> Option<Arc<crate::world::level::levelgen::structure::templatesystem::structure_template_manager::StructureTemplateManager>>
+    {
+        None
+    }
 
     /// `level.placeLootContainer`/`BlockEntity.setLootTable` —
     /// наполнение контейнера лутом при спавне. Default: no-op

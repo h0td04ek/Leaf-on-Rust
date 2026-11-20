@@ -8,6 +8,8 @@ pub mod density_functions;
 pub mod heightmap;
 pub mod blending;
 pub mod blockpredicates;
+pub mod vertical_anchor;
+pub mod heightproviders;
 pub mod feature;
 pub mod placement;
 pub mod carver;
