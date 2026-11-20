@@ -19,3 +19,4 @@ pub mod entity;
 pub mod difficulty;
 pub mod interaction_hand;
 pub mod simple_container;
+pub mod ticks;
