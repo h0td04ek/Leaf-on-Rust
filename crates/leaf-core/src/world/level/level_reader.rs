@@ -65,6 +65,23 @@ pub trait LevelReader: Send + Sync {
         None
     }
 
+    /// `BiomeSource.getNoiseBiome(x, y, z, sampler)` — шумовой биом
+    /// в quart-координатах (x/y/z — quart pos). Default: `biome_at`
+    /// по block-позиции (`QuartPos::to_block`).
+    fn noise_biome_at(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Option<crate::core::holder::Holder<crate::world::level::biome::biome::Biome>> {
+        let pos = BlockPos::new(
+            crate::core::quart_pos::to_block(x),
+            crate::core::quart_pos::to_block(y),
+            crate::core::quart_pos::to_block(z),
+        );
+        self.biome_at(pos).cloned()
+    }
+
     /// `getStructureAt(pos, holderSet)` — структура в holder-set.
     fn structure_at(
         &self,

@@ -73,6 +73,17 @@ impl BlockTags {
     pub fn stairs() -> Identifier {
         Identifier::minecraft("stairs")
     }
+
+    /// `BlockTags.ICE` — ice/packed_ice/blue_ice/frosted_ice.
+    pub fn ice() -> Identifier {
+        Identifier::minecraft("ice")
+    }
+
+    /// `BlockTags.FEATURES_CANNOT_REPLACE` — блоки, которые
+    /// структурная генерация не должна заменять.
+    pub fn features_cannot_replace() -> Identifier {
+        Identifier::minecraft("features_cannot_replace")
+    }
     /// `BlockTags.SLABS` — все плиты.
     pub fn slabs() -> Identifier {
         Identifier::minecraft("slabs")
@@ -160,6 +171,21 @@ pub fn bootstrap() {
     }
     crate::tags::register_block_tag(Id::with_default_namespace("stairs").unwrap(), stairs);
     crate::tags::register_block_tag(Id::with_default_namespace("slabs").unwrap(), slabs);
+    // ice (BlockTags.ICE)
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("ice").unwrap(),
+        ids(&["ice", "packed_ice", "blue_ice", "frosted_ice"]),
+    );
+    // features_cannot_replace (BlockTags.FEATURES_CANNOT_REPLACE)
+    crate::tags::register_block_tag(
+        Id::with_default_namespace("features_cannot_replace").unwrap(),
+        ids(&[
+            "bedrock", "barrier", "command_block", "chain_command_block",
+            "repeating_command_block", "end_portal", "end_portal_frame",
+            "end_gateway", "jigsaw", "structure_block", "structure_void",
+            "light", "moving_piston", "piston_head",
+        ]),
+    );
 }
 
 /// `bootstrap_once()` — идемпотентный bootstrap.

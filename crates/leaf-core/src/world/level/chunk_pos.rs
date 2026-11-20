@@ -59,6 +59,12 @@ impl ChunkPos {
         this_block_coord(self.z, 8)
     }
 
+    /// `getWorldPosition()` — `BlockPos(minBlockX, 0, minBlockZ)`.
+    pub fn get_world_position(&self) -> crate::core::block_pos::BlockPos {
+        crate::core::block_pos::BlockPos::new(self.get_min_block_x(), 0, self.get_min_block_z())
+    }
+
+    /// `getMiddleBlockX`-зеркало для Z нет — см. `get_middle_block_z`.
     pub fn get_min_block_x(&self) -> i32 {
         this_block_coord(self.x, 0)
     }

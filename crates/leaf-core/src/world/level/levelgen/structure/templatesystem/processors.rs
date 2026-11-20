@@ -241,8 +241,36 @@ impl StructureProcessor for GravityProcessor {
     }
 }
 
-/// `BlockRotProcessor` — поворот mirror/rotation блоков.
-pub struct BlockRotProcessor;
+/// `BlockRotProcessor` — случайное "гниение" блоков: блок
+/// удаляется с вероятностью `1 - integrity` (для блоков из
+/// `rottableBlocks`, либо всех при `None`).
+pub struct BlockRotProcessor {
+    /// `integrity` — шанс сохранить блок.
+    pub integrity: f32,
+    /// `rottableBlocks` — `None` = все блоки.
+    pub rottable_blocks: Option<Vec<crate::resources::identifier::Identifier>>,
+}
+
+impl BlockRotProcessor {
+    /// `new(integrity)` — все блоки.
+    pub fn new(integrity: f32) -> Self {
+        Self {
+            integrity,
+            rottable_blocks: None,
+        }
+    }
+
+    /// `new(rottableBlocks, integrity)`.
+    pub fn with_rottable_blocks(
+        rottable_blocks: Vec<crate::resources::identifier::Identifier>,
+        integrity: f32,
+    ) -> Self {
+        Self {
+            integrity,
+            rottable_blocks: Some(rottable_blocks),
+        }
+    }
+}
 
 impl StructureProcessor for BlockRotProcessor {
     fn process_block(
@@ -250,30 +278,24 @@ impl StructureProcessor for BlockRotProcessor {
         _level: &dyn LevelReader,
         _offset: BlockPos,
         _pos: BlockPos,
-        _block_info: &StructureBlockInfo,
+        block_info: &StructureBlockInfo,
         relative_block_info: &StructureBlockInfo,
         settings: &StructurePlaceSettings,
     ) -> Option<StructureBlockInfo> {
-        let mut state = relative_block_info.state.clone();
-        // mirror/rotation применение — через property-aware
-        // трансформации (state_mirror/state_rotate из structure_piece).
-        if settings.mirror != Mirror::NONE {
-            state = crate::world::level::levelgen::structure::structure_piece::state_mirror(
-                state,
-                settings.mirror,
-            );
+        let matches = match &self.rottable_blocks {
+            None => true,
+            Some(ids) => ids.contains(&block_info.state.block.id),
+        };
+        // Java: `random.nextFloat() <= integrity ? relative : null`.
+        if matches
+            && settings
+                .get_random(Some(relative_block_info.pos))
+                .next_float()
+                > self.integrity
+        {
+            return None;
         }
-        if settings.rotation != Rotation::NONE {
-            state = crate::world::level::levelgen::structure::structure_piece::state_rotate(
-                state,
-                settings.rotation,
-            );
-        }
-        Some(StructureBlockInfo {
-            pos: relative_block_info.pos,
-            state,
-            nbt: relative_block_info.nbt.clone(),
-        })
+        Some(relative_block_info.clone())
     }
 }
 

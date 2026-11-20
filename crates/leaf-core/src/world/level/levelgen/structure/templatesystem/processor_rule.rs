@@ -34,6 +34,39 @@ impl RuleBlockEntityModifier for Passthrough {
     }
 }
 
+/// `AppendLoot` — `rule.blockentity.AppendLoot`: добавляет
+/// `LootTable`/`LootTableSeed` в NBT block entity.
+pub struct AppendLoot {
+    /// `lootTable` — `ResourceKey<LootTable>` (храним Identifier).
+    pub loot_table: crate::resources::identifier::Identifier,
+}
+
+impl AppendLoot {
+    /// `new(lootTable)`.
+    pub fn new(loot_table: crate::resources::identifier::Identifier) -> Self {
+        Self { loot_table }
+    }
+}
+
+impl RuleBlockEntityModifier for AppendLoot {
+    fn apply(
+        &self,
+        random: &mut dyn RandomSource,
+        tag: Option<&CompoundTag>,
+    ) -> Option<CompoundTag> {
+        let mut tag = tag.cloned().unwrap_or_default();
+        tag.put(
+            "LootTable",
+            crate::nbt::tag::Tag::String(self.loot_table.to_string()),
+        );
+        tag.put(
+            "LootTableSeed",
+            crate::nbt::tag::Tag::Long(random.next_long()),
+        );
+        Some(tag)
+    }
+}
+
 /// `ProcessorRule` — правило замены в `RuleProcessor`.
 pub struct ProcessorRule {
     /// `inputPredicate`.
