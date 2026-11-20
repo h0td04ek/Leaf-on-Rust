@@ -78,3 +78,5 @@ pub mod path_navigation_region;
 pub mod explosion;
 pub mod spawn_data;
 pub mod base_spawner;
+pub mod potential_calculator;
+pub mod local_mob_cap_calculator;
