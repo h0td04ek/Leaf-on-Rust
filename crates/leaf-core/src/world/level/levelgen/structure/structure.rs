@@ -77,6 +77,13 @@ pub struct GenerationContext<'a> {
     /// (из LevelReader-хука; `None` если уровень их не даёт).
     pub template_manager:
         Option<std::sync::Arc<crate::world::level::levelgen::structure::templatesystem::structure_template_manager::StructureTemplateManager>>,
+    /// `pools` — реестр `worldgen/template_pool`
+    /// (из LevelReader-хука; нужен JigsawPlacement).
+    pub pool_registry:
+        Option<std::sync::Arc<dyn crate::world::level::levelgen::structure::pools::jigsaw_placement::PoolRegistryAccess>>,
+    /// `chunkGenerator` — для pool-элементов (heightmap/sea level).
+    pub pool_generator:
+        Option<std::sync::Arc<dyn crate::world::level::levelgen::structure::pools::structure_pool_element::PoolGeneratorAccess>>,
 }
 
 impl<'a> GenerationContext<'a> {
@@ -103,6 +110,8 @@ impl<'a> GenerationContext<'a> {
             level,
             valid_biome,
             template_manager: level.structure_template_manager(),
+            pool_registry: level.pool_registry(),
+            pool_generator: level.pool_generator(),
         }
     }
 }

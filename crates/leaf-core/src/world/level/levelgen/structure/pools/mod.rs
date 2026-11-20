@@ -6,6 +6,7 @@ pub mod feature_pool_element;
 pub mod jigsaw_placement;
 pub mod legacy_single_pool_element;
 pub mod list_pool_element;
+pub mod pool_alias;
 pub mod single_pool_element;
 pub mod structure_pool_element;
 pub mod structure_template_pool;

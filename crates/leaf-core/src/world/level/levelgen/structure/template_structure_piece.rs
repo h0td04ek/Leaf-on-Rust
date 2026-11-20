@@ -154,6 +154,20 @@ impl TemplateStructurePiece {
         self.template_position = self.template_position.offset(x, y, z);
     }
 
+    /// `StructurePiece.move(x, y, z)` — АБСОЛЮТНОЕ перемещение:
+    /// boundingBox.min := (x,y,z), templatePosition := (x,y,z).
+    /// (Java `StructurePiece.move` передаёт дельту в
+    /// `BoundingBox.move`; `TemplateStructurePiece.move`
+    /// выставляет templatePosition напрямую.)
+    pub fn move_to(&mut self, x: i32, y: i32, z: i32) {
+        self.bounding_box.move_(
+            x - self.bounding_box.min_x,
+            y - self.bounding_box.min_y,
+            z - self.bounding_box.min_z,
+        );
+        self.template_position = BlockPos::new(x, y, z);
+    }
+
     /// Общая часть `postProcess` — вызывается из `post_process`
     /// наследника (после его собственной логики или вместо неё).
     #[allow(clippy::too_many_arguments)]

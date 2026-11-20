@@ -1256,6 +1256,26 @@ pub trait LevelReader: Send + Sync {
         None
     }
 
+    /// Реестр `worldgen/template_pool` для JigsawPlacement.
+    /// Default: `None` (Jigsaw-структуры без реестра не генерируются).
+    fn pool_registry(
+        &self,
+    ) -> Option<
+        Arc<dyn crate::world::level::levelgen::structure::pools::jigsaw_placement::PoolRegistryAccess>,
+    > {
+        None
+    }
+
+    /// `ChunkGenerator`-доступ для pool-элементов
+    /// (`get_first_free_height`, sea level). Default: `None`.
+    fn pool_generator(
+        &self,
+    ) -> Option<
+        Arc<dyn crate::world::level::levelgen::structure::pools::structure_pool_element::PoolGeneratorAccess>,
+    > {
+        None
+    }
+
     /// `level.placeLootContainer`/`BlockEntity.setLootTable` —
     /// наполнение контейнера лутом при спавне. Default: no-op
     /// (подключится с BlockEntity/Container wiring).
@@ -1266,6 +1286,13 @@ pub trait LevelReader: Send + Sync {
         _seed: i64,
     ) {
     }
+    /// `Level.isInSpawnableBounds(pos)` — позиция в пределах
+    /// спавнябельной высоты (vanilla: -64 <= y < 320).
+    /// Default: жёсткие ванильные границы.
+    fn is_in_spawnable_bounds(&self, pos: crate::core::block_pos::BlockPos) -> bool {
+        pos.get_y() >= -64 && pos.get_y() < 320
+    }
+
     /// `level.isChunkLoaded`-эквивалент — загружен ли чанк
     /// (для StructureManager.checkStructurePresence). Default:
     /// `has_chunk_at` по центру чанка.
