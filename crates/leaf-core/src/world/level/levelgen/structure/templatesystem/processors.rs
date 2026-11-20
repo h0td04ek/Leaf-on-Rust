@@ -43,6 +43,12 @@ pub trait StructureProcessor {
         Some(relative_block_info.clone())
     }
 
+    /// `asBlockIgnore` — downcast для `popProcessor`-логики
+    /// (LegacySinglePoolElement).
+    fn as_block_ignore(&self) -> Option<&BlockIgnoreProcessor> {
+        None
+    }
+
     /// `finalizeProcessing` — пост-обработка всего списка.
     fn finalize_processing(
         &self,
@@ -279,7 +285,30 @@ pub struct BlockIgnoreProcessor {
     pub to_ignore: Vec<Identifier>,
 }
 
+impl BlockIgnoreProcessor {
+    /// `STRUCTURE_BLOCK` — игнорирует только structure_block.
+    pub fn structure_block() -> Rc<dyn StructureProcessor> {
+        Rc::new(Self {
+            to_ignore: vec![Identifier::minecraft("structure_block")],
+        })
+    }
+
+    /// `STRUCTURE_AND_AIR` — игнорирует structure_block и air.
+    pub fn structure_and_air() -> Rc<dyn StructureProcessor> {
+        Rc::new(Self {
+            to_ignore: vec![
+                Identifier::minecraft("structure_block"),
+                Identifier::minecraft("air"),
+            ],
+        })
+    }
+}
+
 impl StructureProcessor for BlockIgnoreProcessor {
+    fn as_block_ignore(&self) -> Option<&BlockIgnoreProcessor> {
+        Some(self)
+    }
+
     fn process_block(
         &self,
         _level: &dyn LevelReader,

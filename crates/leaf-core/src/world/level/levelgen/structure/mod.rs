@@ -2,6 +2,8 @@
 
 pub mod bounding_box;
 pub mod pieces_container;
+pub mod placement;
+pub mod pools;
 pub mod scattered_feature_piece;
 pub mod single_piece_structure;
 pub mod structure;
@@ -10,6 +12,7 @@ pub mod structure_check_result;
 pub mod structure_manager;
 pub mod structure_piece;
 pub mod structure_spawn_override;
+pub mod structure_set;
 pub mod structure_start;
 pub mod templatesystem;
 pub mod structure_type;

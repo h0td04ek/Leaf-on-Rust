@@ -6,6 +6,7 @@ pub mod processor_rule;
 pub mod processors;
 pub mod rule_tests;
 pub mod structure_place_settings;
+pub mod structure_processor_list;
 pub mod structure_template;
 pub mod structure_template_manager;
 
