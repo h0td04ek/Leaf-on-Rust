@@ -168,24 +168,24 @@ impl ChunkAccess {
 
     /// `getSection` — секция по индексу.
     pub fn get_section(&self, section: i32) -> Option<&LevelChunkSection> {
-        let idx = (section - self.get_min_section()) as usize;
+        let idx = self.get_section_index_from_section_y(section) as usize;
         self.sections.get(idx)
     }
 
     /// `getSection_mut` — изменяемая секция.
     pub fn get_section_mut(&mut self, section: i32) -> Option<&mut LevelChunkSection> {
-        let idx = (section - self.get_min_section()) as usize;
+        let idx = self.get_section_index_from_section_y(section) as usize;
         self.sections.get_mut(idx)
     }
 
     /// `getSectionYFromSectionIndex` — sectionY по 0-based индексу секции.
     pub fn get_section_y_from_section_index(&self, section_index: i32) -> i32 {
-        section_index + self.get_min_section()
+        self.level_height_accessor.get_section_y_from_section_index(section_index)
     }
 
     /// `getSectionIndexFromSectionY` — 0-based индекс секции по sectionY.
     pub fn get_section_index_from_section_y(&self, section_y: i32) -> i32 {
-        section_y - self.get_min_section()
+        self.level_height_accessor.get_section_index_from_section_y(section_y)
     }
 
     /// `getHighestFilledSectionIndex` — индекс (0-based) самой высокой
@@ -206,11 +206,8 @@ impl ChunkAccess {
         predicate: &dyn Fn(&BlockState) -> bool,
         output: &mut dyn FnMut(BlockPos, &BlockState),
     ) {
-        for section_y in self.get_min_section()..=self.get_max_section() {
-            let section_idx = self.get_section_index_from_section_y(section_y);
-            let Some(section) = self.get_section(section_idx) else {
-                continue;
-            };
+        for (index, section) in self.sections.iter().enumerate() {
+            let section_y = self.get_section_y_from_section_index(index as i32);
             if !section.maybe_has(predicate) {
                 continue;
             }
@@ -561,4 +558,45 @@ fn block_state_at(
     sections.get(section_index as usize).map_or_else(BlockState::air, |section| {
         section.get_block_state(x, SectionPos::section_relative(y), z)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::holder::Holder;
+    use crate::resources::Identifier;
+    use crate::world::level::block::Block;
+    use crate::world::level::chunk::level_chunk_section::{
+        create_biomes_container, create_block_states_container,
+    };
+    use crate::world::level::level_height_accessor::SimpleLevelHeightAccessor;
+
+    #[test]
+    fn finds_blocks_in_all_sections_at_negative_world_height() {
+        let height = SimpleLevelHeightAccessor::create(-64, 80);
+        assert_eq!(height.get_section_index(-63), 0);
+        assert_eq!(height.get_section_index_from_section_y(0), 4);
+        assert_eq!(height.get_section_y_from_section_index(4), 0);
+
+        let pos = ChunkPos::new(-3, 5);
+        let sections = (0..height.get_sections_count())
+            .map(|_| LevelChunkSection::new(
+                create_block_states_container(BlockState::air()),
+                create_biomes_container(Holder::Reference(0)),
+            ))
+            .collect();
+        let mut chunk = ChunkAccess::new(pos, Box::new(height), sections);
+        let stone = BlockState::without_properties(Arc::new(Block::new(Identifier::minecraft("stone"))));
+        let positions = [
+            BlockPos::new(-48, -64, 80),
+            BlockPos::new(-44, -30, 89),
+            BlockPos::new(-34, 15, 94),
+        ];
+        for position in &positions {
+            assert!(chunk.set_block_state(position, stone.clone()));
+        }
+        let mut found = Vec::new();
+        chunk.find_blocks(&|state| state.is_block_id("minecraft:stone"), &mut |pos, _| found.push(pos));
+        assert_eq!(found, positions);
+    }
 }

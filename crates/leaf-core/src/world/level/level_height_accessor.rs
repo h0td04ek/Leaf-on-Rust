@@ -32,13 +32,17 @@ pub trait LevelHeightAccessor: Send + Sync {
     fn is_outside_build_height(&self, y: i32) -> bool {
         y < self.get_min_y() || y > self.get_max_y()
     }
-    /// `getSectionIndex(sectionIndex)` — 0-based от minSection.
-    fn get_section_index(&self, section_index: i32) -> i32 {
-        section_index - self.get_min_section_y()
+    /// `getSectionIndex(y)` — индекс секции по координате блока.
+    fn get_section_index(&self, y: i32) -> i32 {
+        self.get_section_index_from_section_y(SectionPos::block_to_section_coord(y))
     }
-    /// `getSectionIndexFromSectionY`.
+    /// `getSectionIndexFromSectionY` — индекс секции по абсолютной координате секции.
     fn get_section_index_from_section_y(&self, section_y: i32) -> i32 {
-        section_y + self.get_min_section_y()
+        section_y - self.get_min_section_y()
+    }
+    /// `getSectionYFromSectionIndex` — абсолютная координата секции по индексу.
+    fn get_section_y_from_section_index(&self, index: i32) -> i32 {
+        index + self.get_min_section_y()
     }
 }
 
