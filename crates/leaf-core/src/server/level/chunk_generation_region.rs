@@ -120,10 +120,7 @@ impl<'a> ChunkGenerationRegion<'a> {
     }
 
     fn distance(&self, pos: ChunkPos) -> u32 {
-        self.center
-            .x
-            .abs_diff(pos.x)
-            .max(self.center.z.abs_diff(pos.z))
+        self.center.chessboard_distance(pos)
     }
 }
 

@@ -209,8 +209,7 @@ impl ChunkTasks {
             let mut block_engine = interface.get_block_light_engine();
 
             let chunk_coordinate = handle.lock().unwrap().chunk_coordinate;
-            let chunk_x = (chunk_coordinate >> 32) as i32;
-            let chunk_z = chunk_coordinate as i32;
+            let ChunkPos { x: chunk_x, z: chunk_z } = ChunkPos::of(chunk_coordinate);
 
             let has_changes =
                 !positions.is_empty() || section_changes.is_some();
@@ -446,8 +445,7 @@ impl ServerChunkTasks {
     ) -> Self {
         let inner: ChunkTasksHandle = Arc::new(Mutex::new(ChunkTasks::new(chunk_coordinate)));
         let task = scheduler.map(|s| {
-            let chunk_x = (chunk_coordinate >> 32) as i32;
-            let chunk_z = chunk_coordinate as i32;
+            let ChunkPos { x: chunk_x, z: chunk_z } = ChunkPos::of(chunk_coordinate);
             let write_radius = ChunkStatus::Light.write_radius();
             let inner_clone = inner.clone();
             let queue_clone = queue.clone();

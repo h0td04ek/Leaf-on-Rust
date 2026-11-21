@@ -1,5 +1,5 @@
 //! Перенос `net.minecraft.world.level.ChunkPos`.
-//! Codec — TODO (network layer).
+//! Формат packed long совпадает с сетевым и дисковым форматом Leaf.
 
 
 /// `ChunkPos` — пара int-координат чанка, упакованная в long.
@@ -16,11 +16,11 @@ impl ChunkPos {
 
     /// `ChunkPos.asLong(x, z)` — статическая упаковка.
     pub fn as_long_static(x: i32, z: i32) -> i64 {
-        ((x as i64) & 0xFFFFFFFF) << 32 | ((z as i64) & 0xFFFFFFFF)
+        i64::from(x as u32) | (i64::from(z as u32) << 32)
     }
 
     pub fn of(packed: i64) -> Self {
-        Self::new((packed >> 32) as i32, packed as i32)
+        Self::new(packed as i32, (packed >> 32) as i32)
     }
 
     pub fn get_region_x(x: i32) -> i32 {
@@ -110,6 +110,11 @@ impl ChunkPos {
         [*pos, Self::new(pos.x + 1, pos.z), Self::new(pos.x, pos.z + 1), Self::new(pos.x + 1, pos.z + 1)]
     }
 
+    /// Расстояние между чанками по большей из горизонтальных осей.
+    pub fn chessboard_distance(&self, other: Self) -> u32 {
+        self.x.abs_diff(other.x).max(self.z.abs_diff(other.z))
+    }
+
     /// `manhattanDistance`
     pub fn manhattan_distance(&self, other: &Self) -> i32 {
         (self.x - other.x).abs() + (self.z - other.z).abs()
@@ -152,6 +157,21 @@ mod tests {
         for (x, z) in [(0, 0), (1, -1), (-30000000, 30000000), (i32::MAX, i32::MIN)] {
             assert_eq!(ChunkPos::of(ChunkPos::as_long_static(x, z)), ChunkPos::new(x, z));
         }
+    }
+
+    #[test]
+    fn packed_coordinates_match_the_leaf_wire_format() {
+        use crate::network::friendly_byte_buf::FriendlyByteBuf;
+
+        let bytes = [0xff, 0xff, 0xff, 0xee, 0x00, 0x00, 0x00, 0x2a];
+        let packed = i64::from_be_bytes(bytes);
+        let chunk = ChunkPos::new(42, -18);
+        assert_eq!(chunk.as_long(), packed);
+        let mut input = FriendlyByteBuf::from_bytes(&bytes);
+        assert_eq!(input.read_chunk_pos(), chunk);
+        let mut output = FriendlyByteBuf::new();
+        output.write_chunk_pos(&chunk);
+        assert_eq!(output.read_long(), packed);
     }
 
     #[test]

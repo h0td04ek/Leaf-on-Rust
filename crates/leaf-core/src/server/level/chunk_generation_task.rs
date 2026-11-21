@@ -124,11 +124,7 @@ impl ChunkGenerationTask {
         let target = LOADING_PYRAMID.get_step_to(self.target_status);
         let radius = target.accumulated_radius_of(ChunkStatus::Empty).unwrap();
         chunks_within(self.center, radius).all(|pos| {
-            let distance = self
-                .center
-                .x
-                .abs_diff(pos.x)
-                .max(self.center.z.abs_diff(pos.z));
+            let distance = self.center.chessboard_distance(pos);
             let required = target.required_status_at_radius(distance as usize);
             required.is_some_and(|required| {
                 map.persisted_status(pos)

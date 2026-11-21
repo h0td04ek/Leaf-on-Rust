@@ -111,6 +111,7 @@ impl LoadedChunk {
         let sections = write_sections(access, &tag, registries, light_correct, has_sky_light)?;
         tag.put("sections", sections);
         write_heightmaps(access, &mut tag)?;
+        write_structure_references(access, &mut tag);
 
         let mut block_entities = access.pending_block_entities.clone();
         for (pos, entity) in &access.block_entities {
@@ -289,6 +290,7 @@ impl SerializableChunkData {
         }
 
         read_heightmaps(&mut chunk, tag.get_compound("Heightmaps"));
+        read_structure_references(&mut chunk, &tag);
         for block_entity in tag
             .get_list_or_empty("block_entities")
             .iter()
@@ -462,6 +464,85 @@ fn write_block_state(state: BlockState) -> CompoundTag {
         tag.put("Properties", Tag::Compound(properties));
     }
     tag
+}
+
+const MAX_STRUCTURE_DISTANCE: u32 = 8;
+
+fn read_structure_references(chunk: &mut ChunkAccess, tag: &CompoundTag) {
+    let Some(references) = tag
+        .get_compound("structures")
+        .and_then(|structures| structures.get_compound("References"))
+    else {
+        return;
+    };
+
+    for (name, value) in references.iter() {
+        let (Ok(id), Tag::LongArray(positions)) = (Identifier::parse(name), value) else {
+            continue;
+        };
+        chunk
+            .structures_references
+            .entry(id.to_string())
+            .or_default()
+            .extend(
+                positions
+                    .iter()
+                    .copied()
+                    .filter(|&packed| is_local_structure_reference(chunk.chunk_pos, packed)),
+            );
+    }
+    for positions in chunk.structures_references.values_mut() {
+        positions.sort_unstable();
+        positions.dedup();
+    }
+    chunk
+        .structures_references
+        .retain(|_, positions| !positions.is_empty());
+}
+
+fn write_structure_references(chunk: &ChunkAccess, tag: &mut CompoundTag) {
+    let Some(mut structures) = tag
+        .get_compound("structures")
+        .cloned()
+        .or_else(|| (!chunk.structures_references.is_empty()).then(CompoundTag::new))
+    else {
+        return;
+    };
+
+    let mut references = CompoundTag::new();
+    if let Some(saved) = structures.get_compound("References") {
+        for (name, value) in saved.iter() {
+            if Identifier::parse(name).is_err() || !matches!(value, Tag::LongArray(_)) {
+                references.put(name.as_str(), value.clone());
+            }
+        }
+    }
+
+    let mut normalized = BTreeMap::<String, Vec<i64>>::new();
+    for (name, positions) in &chunk.structures_references {
+        let Ok(id) = Identifier::parse(name) else {
+            continue;
+        };
+        normalized.entry(id.to_string()).or_default().extend(
+            positions
+                .iter()
+                .copied()
+                .filter(|&packed| is_local_structure_reference(chunk.chunk_pos, packed)),
+        );
+    }
+    for (name, mut positions) in normalized {
+        positions.sort_unstable();
+        positions.dedup();
+        if !positions.is_empty() {
+            references.put(name, Tag::LongArray(positions));
+        }
+    }
+    structures.put("References", Tag::Compound(references));
+    tag.put("structures", Tag::Compound(structures));
+}
+
+fn is_local_structure_reference(chunk: ChunkPos, packed: i64) -> bool {
+    chunk.chessboard_distance(ChunkPos::of(packed)) <= MAX_STRUCTURE_DISTANCE
 }
 
 fn read_heightmaps(chunk: &mut ChunkAccess, tag: Option<&CompoundTag>) {
@@ -1063,5 +1144,63 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn reads_and_updates_leaf_structure_references_without_rewriting_starts() {
+        let pos = ChunkPos::new(-23, 71);
+        let height = SimpleLevelHeightAccessor::create(-64, 16);
+        let context = ChunkLoadingContext {
+            height: &height,
+            palettes: &TestPalettes,
+            data_fixer: None,
+            has_sky_light: false,
+        };
+        let nearby = 0x0000_0047_ffff_ffeau64 as i64; // (-22, 71) in Leaf
+        let far_away = 0x0000_0047_ffff_ffd6u64 as i64; // (-42, 71)
+        let mut references = CompoundTag::new();
+        references.put_long_array("village_plains", &[nearby, nearby, far_away]);
+        references.put_string("fixture:extension", "untouched");
+        let mut starts = CompoundTag::new();
+        starts.put_string("fixture:example", "saved start data");
+        let mut structures = CompoundTag::new();
+        structures.put("starts", Tag::Compound(starts.clone()));
+        structures.put("References", Tag::Compound(references));
+        let mut tag = CompoundTag::new();
+        crate::nbt::utils::add_current_data_version(&mut tag);
+        tag.put_int("xPos", pos.x);
+        tag.put_int("zPos", pos.z);
+        tag.put_string("Status", "minecraft:full");
+        tag.put("structures", Tag::Compound(structures));
+
+        let mut loaded = SerializableChunkData::parse(tag, pos, &context)
+            .unwrap()
+            .into_runtime(None);
+        assert_eq!(
+            loaded
+                .chunk
+                .access()
+                .get_structures_references("minecraft:village_plains")
+                .unwrap(),
+            &[nearby]
+        );
+        let at_limit = ChunkPos::new(-23, 79).as_long();
+        loaded
+            .chunk
+            .access_mut()
+            .set_structures_references("minecraft:village_plains".into(), vec![at_limit]);
+        let saved = loaded.to_nbt(1, &RegistryAccess::new(), false).unwrap();
+        let structures = saved.get_compound("structures").unwrap();
+        assert_eq!(structures.get_compound("starts"), Some(&starts));
+        let references = structures.get_compound("References").unwrap();
+        assert_eq!(
+            references.get_long_array("minecraft:village_plains"),
+            Some([at_limit].as_slice())
+        );
+        assert!(references.get("village_plains").is_none());
+        assert_eq!(
+            references.get_string("fixture:extension"),
+            Some("untouched")
+        );
     }
 }
