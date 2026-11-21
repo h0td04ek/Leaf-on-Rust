@@ -1,15 +1,18 @@
-//! Чтение регионов Anvil и вынесенных файлов чанков.
+//! Чтение и запись регионов Anvil и вынесенных файлов чанков.
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use flate2::read::{MultiGzDecoder, ZlibDecoder};
+use fs2::FileExt;
 use twox_hash::XxHash32;
 
 use crate::nbt::accounter::{NbtAccounter, UNCOMPRESSED_NBT_QUOTA};
 use crate::nbt::{io as nbt_io, CompoundTag};
 use crate::world::level::chunk_pos::ChunkPos;
+
+mod writer;
 
 const SECTOR_BYTES: u64 = 4096;
 const HEADER_BYTES: u64 = 2 * SECTOR_BYTES;
@@ -30,14 +33,13 @@ impl RegionFileStorage {
     /// Читает запись чанка, включая отдельный файл `c.<x>.<z>.mcc`.
     /// Отсутствующий регион или пустая запись возвращают `Ok(None)`.
     pub fn read(&self, pos: ChunkPos) -> io::Result<Option<CompoundTag>> {
-        let path = self
-            .directory
-            .join(format!("r.{}.{}.mca", pos.x >> 5, pos.z >> 5));
+        let path = self.region_path(pos);
         let region = match File::open(path) {
             Ok(region) => region,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
+        FileExt::lock_shared(&region)?;
         let file_len = region.metadata()?.len();
         if file_len == 0 {
             return Ok(None);
@@ -47,8 +49,7 @@ impl RegionFileStorage {
         }
 
         let mut region = BufReader::new(region);
-        let location_index = ((pos.x & 31) + (pos.z & 31) * 32) as u64;
-        region.seek(SeekFrom::Start(location_index * 4))?;
+        region.seek(SeekFrom::Start(location_offset(pos)))?;
         let location = read_u32_be(&mut region)?;
         if location == 0 {
             return Ok(None);
@@ -80,13 +81,26 @@ impl RegionFileStorage {
                     "external chunk also declares an inline payload",
                 ));
             }
-            let path = self.directory.join(format!("c.{}.{}.mcc", pos.x, pos.z));
+            let path = self.external_path(pos);
             decode_chunk(BufReader::new(File::open(path)?), compression)?
         } else {
             decode_chunk(region.take(length - 1), compression)?
         };
         Ok(Some(tag))
     }
+
+    fn region_path(&self, pos: ChunkPos) -> PathBuf {
+        self.directory
+            .join(format!("r.{}.{}.mca", pos.x >> 5, pos.z >> 5))
+    }
+
+    fn external_path(&self, pos: ChunkPos) -> PathBuf {
+        self.directory.join(format!("c.{}.{}.mcc", pos.x, pos.z))
+    }
+}
+
+fn location_offset(pos: ChunkPos) -> u64 {
+    u64::from(((pos.x & 31) + (pos.z & 31) * 32) as u32) * 4
 }
 
 fn read_u32_be(reader: &mut impl Read) -> io::Result<u32> {
@@ -219,14 +233,7 @@ mod tests {
 
     #[test]
     fn reads_negative_region_coordinates_and_external_payloads() {
-        let unique_id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("leaf-anvil-{}-{unique_id}", std::process::id()));
-        fs::create_dir(&directory).unwrap();
-        let directory = TestDirectory(directory);
+        let directory = test_directory();
         let storage = RegionFileStorage::new(&directory.0);
         let pos = ChunkPos::new(-1, -33);
         assert!(storage.read(pos).unwrap().is_none());
@@ -257,6 +264,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn writes_inline_and_external_chunks_without_losing_neighbours() {
+        use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+        let directory = test_directory();
+        let storage = RegionFileStorage::new(&directory.0);
+        let pos = ChunkPos::new(-1, -33);
+        let neighbour = ChunkPos::new(-2, -33);
+        let mut tag = CompoundTag::new();
+        tag.put_int("xPos", pos.x);
+        tag.put_int("zPos", pos.z);
+        let mut other = CompoundTag::new();
+        other.put_int("xPos", neighbour.x);
+        other.put_int("zPos", neighbour.z);
+        std::thread::scope(|scope| {
+            let storage2 = RegionFileStorage::new(&directory.0);
+            let other = &other;
+            let neighbour_write = scope.spawn(move || storage2.write(neighbour, other));
+            storage.write(pos, &tag).unwrap();
+            neighbour_write.join().unwrap().unwrap();
+        });
+        assert_eq!(storage.read(pos).unwrap(), Some(tag.clone()));
+        assert_eq!(storage.read(neighbour).unwrap(), Some(other.clone()));
+
+        let mut random = vec![0; 1100 * 1024];
+        StdRng::seed_from_u64(42).fill_bytes(&mut random);
+        tag.put(
+            "payload",
+            crate::nbt::Tag::ByteArray(random.into_iter().map(|byte| byte as i8).collect()),
+        );
+        storage.write(pos, &tag).unwrap();
+        assert!(storage.external_path(pos).is_file());
+        assert_eq!(storage.read(pos).unwrap(), Some(tag.clone()));
+        assert_eq!(storage.read(neighbour).unwrap(), Some(other.clone()));
+
+        tag.put_bool("edited", true);
+        storage.write(pos, &tag).unwrap();
+        assert_eq!(storage.read(pos).unwrap(), Some(tag.clone()));
+        tag.remove("payload");
+        storage.write(pos, &tag).unwrap();
+        assert!(!storage.external_path(pos).exists());
+        assert_eq!(storage.read(pos).unwrap(), Some(tag));
+        assert_eq!(storage.read(neighbour).unwrap(), Some(other));
+    }
+
+    fn test_directory() -> TestDirectory {
+        let unique_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("leaf-anvil-{}-{unique_id}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        TestDirectory(directory)
+    }
+
     fn region_bytes(compression: u8, data: &[u8]) -> Vec<u8> {
         let mut region = vec![0; HEADER_BYTES as usize];
         // Last location slot, pointing to sector 2 for one sector.
@@ -271,8 +334,10 @@ mod tests {
 
     impl Drop for TestDirectory {
         fn drop(&mut self) {
-            for file in ["r.-1.-2.mca", "c.-1.-33.mcc"] {
-                let _ = fs::remove_file(self.0.join(file));
+            if let Ok(files) = fs::read_dir(&self.0) {
+                for file in files.flatten() {
+                    let _ = fs::remove_file(file.path());
+                }
             }
             let _ = fs::remove_dir(&self.0);
         }
