@@ -78,22 +78,42 @@ impl BlockState {
 
     /// `getLightBlock` — блокировка света.
     pub fn get_light_block(&self) -> i32 {
-        15 // Placeholder — requires block properties
+        let properties = &self.block.properties;
+        if let Some(dampening) = &properties.light_dampening {
+            return i32::from(dampening(self).min(15));
+        }
+
+        let full = if let Some(shape) = &properties.occlusion_shape {
+            crate::world::phys::shapes::voxel_shape::occludes_full_block(&shape(self))
+        } else if let Some(shape) = &properties.collision_shape {
+            crate::world::phys::shapes::voxel_shape::occludes_full_block(shape)
+        } else {
+            self.blocks_motion() && !self.is_air() && !self.is_liquid_block()
+        };
+        if full && self.can_occlude() {
+            15
+        } else {
+            i32::from(full || !self.fluid_state.is_empty())
+        }
     }
 
     /// `getLightEmission` — излучение света.
     pub fn get_light_emission(&self) -> u8 {
-        0 // Placeholder — requires block properties
+        self.block
+            .properties
+            .light_emission
+            .as_ref()
+            .map_or(0, |emission| emission(self).min(15))
     }
 
     /// `useShapeForLightOcclusion` — использовать форму для окклюзии.
     pub fn use_shape_for_light_occlusion(&self) -> bool {
-        false // Placeholder — requires block properties
+        self.block.properties.use_shape_for_light_occlusion
     }
 
     /// `canOcclude` — может ли блокировать.
     pub fn can_occlude(&self) -> bool {
-        true // Placeholder — requires block properties
+        self.block.properties.can_occlude
     }
 
     /// `getBlock() instanceof LiquidBlock`.
@@ -355,18 +375,18 @@ impl BlockState {
         if !self.can_occlude() || !self.use_shape_for_light_occlusion() {
             return crate::world::phys::shapes::VoxelShape::empty();
         }
-        self.block_shape_static()
+        self.block.properties.occlusion_shape.as_ref().map_or_else(
+            || self.block_shape_static(),
+            |shape| shape(self),
+        )
     }
 
-    /// `getFaceOcclusionShape(direction)` — форма окклюзии грани.
-    /// Направление зарезервировано (vanilla различает формы по
-    /// направлениям; в текущей модели форм направления не
-    /// различаются).
+    /// Возвращает форму на грани, обращённой к соседнему блоку.
     pub fn face_occlusion_shape_unleveled(
         &self,
-        _direction: crate::core::direction::Direction,
+        direction: crate::core::direction::Direction,
     ) -> crate::world::phys::shapes::VoxelShape {
-        self.occlusion_shape_unleveled()
+        self.occlusion_shape_unleveled().face_shape(direction)
     }
 
     /// `isCollisionShapeFullBlock(level, pos)` —
@@ -565,5 +585,60 @@ impl BlockState {
     /// `isDestroyable()` — `getExplosionResistance() < 3600000.0`.
     pub fn is_destroyable(&self) -> bool {
         self.get_explosion_resistance() < 3600000.0
+    }
+}
+
+#[cfg(test)]
+mod lighting_tests {
+    use super::*;
+    use crate::core::direction::Direction;
+    use crate::resources::Identifier;
+    use crate::world::level::block::state::property::StateValue;
+    use crate::world::phys::aabb::Aabb;
+    use crate::world::phys::shapes::{face_shape_occludes, VoxelShape};
+
+    #[test]
+    fn resolves_emission_opacity_and_occlusion_faces_from_block_state() {
+        let air = BlockState::air();
+        assert_eq!(air.get_light_block(), 0);
+        assert!(!air.can_occlude());
+
+        let mut stone = Block::new(Identifier::minecraft("stone"));
+        stone.properties.has_collision = true;
+        stone.properties.can_occlude = true;
+        assert_eq!(BlockState::without_properties(Arc::new(stone)).get_light_block(), 15);
+
+        let mut slab = Block::new(Identifier::minecraft("stone_slab"));
+        slab.properties.has_collision = true;
+        slab.properties.can_occlude = true;
+        slab.properties.use_shape_for_light_occlusion = true;
+        slab.properties.occlusion_shape = Some(Arc::new(|_| {
+            VoxelShape::of(Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0))
+        }));
+        let slab = BlockState::without_properties(Arc::new(slab));
+        assert_eq!(slab.get_light_block(), 0);
+        assert!(slab.starlight_is_conditionally_full_opaque());
+        assert!(slab.face_occlusion_shape_unleveled(Direction::UP).is_empty());
+        assert!(face_shape_occludes(
+            &slab.face_occlusion_shape_unleveled(Direction::DOWN),
+            &VoxelShape::empty(),
+        ));
+        assert!(!face_shape_occludes(
+            &slab.face_occlusion_shape_unleveled(Direction::EAST),
+            &VoxelShape::empty(),
+        ));
+
+        let mut lamp = Block::new(Identifier::minecraft("redstone_lamp"));
+        lamp.properties.light_emission = Some(Arc::new(|state| {
+            if state.values.get_by_name("lit") == Some(StateValue::Bool(true)) {
+                15
+            } else {
+                0
+            }
+        }));
+        let mut lamp = BlockState::without_properties(Arc::new(lamp));
+        assert_eq!(lamp.get_light_emission(), 0);
+        lamp.values.set_erased("lit", StateValue::Bool(true));
+        assert_eq!(lamp.get_light_emission(), 15);
     }
 }

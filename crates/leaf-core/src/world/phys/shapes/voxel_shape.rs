@@ -67,6 +67,21 @@ impl VoxelShape {
         self.boxes.is_empty()
     }
 
+    /// Проецирует части, касающиеся выбранной грани, на единичный слой.
+    pub fn face_shape(&self, direction: crate::core::direction::Direction) -> Self {
+        let axis = direction.get_axis();
+        let boxes = face_rects(self, direction)
+            .into_iter()
+            .filter(|&(u_min, v_min, u_max, v_max)| u_min < u_max && v_min < v_max)
+            .map(|(u_min, v_min, u_max, v_max)| match axis {
+                Axis::X => Aabb::new(0.0, v_min, u_min, 1.0, v_max, u_max),
+                Axis::Y => Aabb::new(u_min, 0.0, v_min, u_max, 1.0, v_max),
+                Axis::Z => Aabb::new(u_min, v_min, 0.0, u_max, v_max, 1.0),
+            })
+            .collect();
+        Self { boxes }
+    }
+
     /// `bounds` — ограничивающий объём (null у пустой — в Java
     /// возвращает `Optional.empty()`; здесь `None`).
     pub fn bounds(&self) -> Option<Aabb> {
@@ -325,7 +340,7 @@ pub fn merged_may_occlude_block(shape1: &VoxelShape, shape2: &VoxelShape) -> boo
 /// Точная проверка: разбиение по всем координатам граней брусов и
 /// проверка покрытия каждой ячейки (union AABB покрывает куб тогда
 /// и только тогда, когда покрыта каждая ячейка сетки).
-fn occludes_full_block(shape: &VoxelShape) -> bool {
+pub(crate) fn occludes_full_block(shape: &VoxelShape) -> bool {
     if shape.is_empty() {
         return false;
     }

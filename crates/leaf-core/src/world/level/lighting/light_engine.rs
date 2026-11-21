@@ -29,8 +29,8 @@ pub trait LightEngine: Send + Sync {
 
     /// `getChunkAt` — получить чанк по позиции.
     fn get_chunk_at(&self, pos: &BlockPos) -> Option<Arc<crate::world::level::chunk::chunk_access::ChunkAccess>> {
-        let section_x = SectionPos::block_to_section_coord(pos.get_x() >> 4);
-        let section_z = SectionPos::block_to_section_coord(pos.get_z() >> 4);
+        let section_x = SectionPos::block_to_section_coord(pos.get_x());
+        let section_z = SectionPos::block_to_section_coord(pos.get_z());
         self.get_chunk(section_x, section_z)
     }
 

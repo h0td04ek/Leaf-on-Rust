@@ -97,6 +97,10 @@ pub type ProjectileHitHandler = std::sync::Arc<
         + Sync,
 >;
 
+pub type BlockLightLevel = std::sync::Arc<dyn Fn(&state::BlockState) -> u8 + Send + Sync>;
+pub type BlockOcclusionShape =
+    std::sync::Arc<dyn Fn(&state::BlockState) -> crate::world::phys::shapes::VoxelShape + Send + Sync>;
+
 /// Подмножество `BlockBehaviour.Properties` — флаги,
 /// влияющие на wire/предикаты.
 #[derive(Clone, Default)]
@@ -127,6 +131,13 @@ pub struct BlockProperties {
     /// `isPathfindable` — переопределение проходимости
     /// (`None` → дефолт `BlockBehaviour.isPathfindable`).
     pub pathfindable: Option<bool>,
+    /// Свет блока, зависящий от свойств состояния (например, lit).
+    pub light_emission: Option<BlockLightLevel>,
+    /// Переопределение поглощения света для конкретного типа блока.
+    pub light_dampening: Option<BlockLightLevel>,
+    pub use_shape_for_light_occlusion: bool,
+    pub occlusion_shape: Option<BlockOcclusionShape>,
+
     /// `collisionShape` — форма коллизии блока
     /// (`None` → полный куб для твёрдых, пусто для air/liquid).
     pub collision_shape: Option<crate::world::phys::shapes::VoxelShape>,
