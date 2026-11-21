@@ -29,7 +29,7 @@ pub struct LevelTicks<T: TickType> {
 /// Внутреннее состояние `LevelTicks`.
 struct LevelTicksState<T: TickType> {
     /// `allContainers` — chunkPos.toLong → LevelChunkTicks.
-    all_containers: HashMap<i64, Arc<Mutex<LevelChunkTicks<T>>>>,
+    all_containers: HashMap<i64, Arc<LevelChunkTicks<T>>>,
     /// `nextTickForContainer` — chunkPos.toLong → triggerTick головы.
     next_tick_for_container: HashMap<i64, i64>,
     /// `containersToTick` — PriorityQueue по INTRA_TICK_DRAIN_ORDER голов.
@@ -44,7 +44,7 @@ struct LevelTicksState<T: TickType> {
 
 /// Обёртка контейнера для priority-очереди; Ord читает `peek()` живьём
 /// (как Java PriorityQueue с компаратором по peek).
-struct ContainerOrd<T: TickType>(Arc<Mutex<LevelChunkTicks<T>>>);
+struct ContainerOrd<T: TickType>(Arc<LevelChunkTicks<T>>);
 
 impl<T: TickType> PartialEq for ContainerOrd<T> {
     fn eq(&self, other: &Self) -> bool {
@@ -61,8 +61,8 @@ impl<T: TickType> Ord for ContainerOrd<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse-семантика через вызов извне: здесь — прямой порядок
         // INTRA_TICK_DRAIN_ORDER по головам контейнеров.
-        let pa = self.0.lock().unwrap().peek();
-        let pb = other.0.lock().unwrap().peek();
+        let pa = self.0.peek();
+        let pb = other.0.peek();
         match (pa, pb) {
             (Some(a), Some(b)) => intra_tick_drain_order_cmp(&a, &b),
             (None, None) => std::cmp::Ordering::Equal,
@@ -89,46 +89,46 @@ impl<T: TickType + Clone> LevelTicks<T> {
         }
     }
 
-
     /// `addContainer(chunkPos, chunkTicks)`.
     /// `chunk_ticks` — уже созданный `Arc<Mutex<LevelChunkTicks>>`;
     /// если `None` — создаётся пустой.
     pub fn add_container(
         &self,
         chunk_pos: ChunkPos,
-        chunk_ticks: Option<Arc<Mutex<LevelChunkTicks<T>>>>,
-    ) -> Arc<Mutex<LevelChunkTicks<T>>> {
+        chunk_ticks: Option<Arc<LevelChunkTicks<T>>>,
+    ) -> Arc<LevelChunkTicks<T>> {
         let packed = chunk_pos.as_long();
-        let container = chunk_ticks.unwrap_or_else(|| Arc::new(Mutex::new(LevelChunkTicks::new())));
+        let container = chunk_ticks.unwrap_or_else(|| Arc::new(LevelChunkTicks::new()));
 
         // onTickAdded: если добавленный тик стал головой — обновить
         // nextTickForContainer (аналог chunkScheduleUpdater).
         let state_weak = Arc::downgrade(&self.state);
         let container_weak = Arc::downgrade(&container);
-        let cb: OnTickAdded<T> = Arc::new(move |tick| {
-            let (Some(state), Some(container)) =
-                (state_weak.upgrade(), container_weak.upgrade())
+        let cb: OnTickAdded<T> = Arc::new(move |_| {
+            let (Some(state), Some(container)) = (state_weak.upgrade(), container_weak.upgrade())
             else {
                 return;
             };
-            let is_head = container
-                .lock()
-                .unwrap()
-                .peek()
-                .map(|p| p.tick_eq_full(tick))
-                .unwrap_or(false);
-            if is_head {
-                let mut s = state.lock().unwrap();
-                s.next_tick_for_container
-                    .insert(ChunkPos::as_long_static(tick.pos.get_x() >> 4, tick.pos.get_z() >> 4), tick.trigger_tick);
+            let mut s = state.lock().unwrap();
+            if s.all_containers
+                .get(&packed)
+                .is_some_and(|c| Arc::ptr_eq(c, &container))
+            {
+                if let Some(head) = container.peek() {
+                    s.next_tick_for_container.insert(packed, head.trigger_tick);
+                }
             }
         });
-        container.lock().unwrap().set_on_tick_added(Some(cb));
 
         let mut s = self.state.lock().unwrap();
-        s.all_containers.insert(packed, container.clone());
-        if let Some(head) = container.lock().unwrap().peek() {
+        if let Some(previous) = s.all_containers.insert(packed, container.clone()) {
+            previous.set_on_tick_added(None);
+        }
+        container.set_on_tick_added(Some(cb));
+        if let Some(head) = container.peek() {
             s.next_tick_for_container.insert(packed, head.trigger_tick);
+        } else {
+            s.next_tick_for_container.remove(&packed);
         }
         container
     }
@@ -139,7 +139,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
         let mut s = self.state.lock().unwrap();
         if let Some(container) = s.all_containers.remove(&packed) {
             s.next_tick_for_container.remove(&packed);
-            container.lock().unwrap().set_on_tick_added(None);
+            container.set_on_tick_added(None);
         }
     }
 
@@ -190,7 +190,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
                     s.next_tick_for_container.remove(&key);
                 }
                 Some(container) => {
-                    let head = container.lock().unwrap().peek();
+                    let head = container.peek();
                     match head {
                         None => {
                             s.next_tick_for_container.remove(&key);
@@ -201,8 +201,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
                         Some(_) => {
                             if (self.tick_check)(key) {
                                 s.next_tick_for_container.remove(&key);
-                                s.containers_to_tick
-                                    .push(Reverse(ContainerOrd(container)));
+                                s.containers_to_tick.push(Reverse(ContainerOrd(container)));
                             }
                         }
                     }
@@ -224,20 +223,15 @@ impl<T: TickType + Clone> LevelTicks<T> {
             let Some(container) = container else { break };
 
             // poll одного тика из контейнера
-            let first = container.0.lock().unwrap().poll();
+            let first = container.0.poll();
             let Some(first) = first else { continue };
-            self.state
-                .lock()
-                .unwrap()
-                .to_run_this_tick
-                .push_back(first);
+            self.state.lock().unwrap().to_run_this_tick.push_back(first);
 
             self.drain_from_current_container(&container.0, game_time, max_allowed_ticks);
 
-            let head = container.0.lock().unwrap().peek();
+            let head = container.0.peek();
             if let Some(tick) = head {
-                if tick.trigger_tick <= game_time
-                    && self.can_schedule_more_ticks(max_allowed_ticks)
+                if tick.trigger_tick <= game_time && self.can_schedule_more_ticks(max_allowed_ticks)
                 {
                     self.state
                         .lock()
@@ -253,30 +247,22 @@ impl<T: TickType + Clone> LevelTicks<T> {
 
     /// `rescheduleLeftoverContainers`.
     fn reschedule_leftover_containers(&self) {
-        // вытаскиваем все оставшиеся контейнеры, обновляем scheduling,
-        // кладём обратно (BinaryHeap не даёт итерации без pop)
         let mut s = self.state.lock().unwrap();
-        let mut leftovers = Vec::new();
-        while let Some(Reverse(c)) = s.containers_to_tick.pop() {
-            leftovers.push(c);
-        }
-        for c in &leftovers {
-            if let Some(head) = c.0.lock().unwrap().peek() {
+        let leftovers = std::mem::take(&mut s.containers_to_tick);
+        for Reverse(c) in leftovers {
+            if let Some(head) = c.0.peek() {
                 s.next_tick_for_container.insert(
                     ChunkPos::as_long_static(head.pos.get_x() >> 4, head.pos.get_z() >> 4),
                     head.trigger_tick,
                 );
             }
         }
-        for c in leftovers {
-            s.containers_to_tick.push(Reverse(c));
-        }
     }
 
     /// `drainFromCurrentContainer`.
     fn drain_from_current_container(
         &self,
-        container: &Arc<Mutex<LevelChunkTicks<T>>>,
+        container: &Arc<LevelChunkTicks<T>>,
         game_time: i64,
         max_allowed_ticks: usize,
     ) {
@@ -286,16 +272,14 @@ impl<T: TickType + Clone> LevelTicks<T> {
         // peek следующего контейнера в очереди для INTRA_TICK_DRAIN_ORDER
         let next_container_head = {
             let s = self.state.lock().unwrap();
-            s.containers_to_tick
-                .peek()
-                .and_then(|r| r.0.0.lock().unwrap().peek())
+            s.containers_to_tick.peek().and_then(|r| r.0 .0.peek())
         };
 
         loop {
             if !self.can_schedule_more_ticks(max_allowed_ticks) {
                 break;
             }
-            let head = container.lock().unwrap().peek();
+            let head = container.peek();
             let Some(head) = head else { break };
             if head.trigger_tick > game_time {
                 break;
@@ -305,7 +289,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
                     break;
                 }
             }
-            let tick = container.lock().unwrap().poll();
+            let tick = container.poll();
             if let Some(tick) = tick {
                 self.state.lock().unwrap().to_run_this_tick.push_back(tick);
             }
@@ -346,7 +330,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
     fn for_containers_in_area(
         &self,
         area: &BoundingBox,
-        action: &mut dyn FnMut(i64, &Arc<Mutex<LevelChunkTicks<T>>>),
+        action: &mut dyn FnMut(i64, &Arc<LevelChunkTicks<T>>),
     ) {
         let section_min_x = SectionPos::block_to_section_coord(area.min_x_());
         let section_min_z = SectionPos::block_to_section_coord(area.min_z_());
@@ -369,17 +353,18 @@ impl<T: TickType + Clone> LevelTicks<T> {
         let mut collected = Vec::new();
         self.for_containers_in_area(area, &mut |pos, c| collected.push((pos, c.clone())));
         for (pos, container) in collected {
-            let before = container.lock().unwrap().peek();
-            container
-                .lock()
-                .unwrap()
-                .remove_if(&|t: &ScheduledTick<T>| area.is_inside_pos(t.pos));
-            let after = container.lock().unwrap().peek();
+            let before = container.peek();
+            container.remove_if(&|t: &ScheduledTick<T>| area.is_inside_pos(t.pos));
+            let after = container.peek();
             if tick_head_changed(&before, &after) {
                 if let Some(t) = &after {
                     self.update_container_scheduling(t);
                 } else {
-                    self.state.lock().unwrap().next_tick_for_container.remove(&pos);
+                    self.state
+                        .lock()
+                        .unwrap()
+                        .next_tick_for_container
+                        .remove(&pos);
                 }
             }
         }
@@ -388,6 +373,8 @@ impl<T: TickType + Clone> LevelTicks<T> {
         s.already_run_this_tick
             .retain(|t| !area.is_inside_pos(t.pos));
         s.to_run_this_tick.retain(|t| !area.is_inside_pos(t.pos));
+        s.to_run_this_tick_set
+            .retain(|key| !area.is_inside_pos(key.pos));
     }
 
     /// `copyArea(area, offset)`.
@@ -414,7 +401,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
         let mut containers = Vec::new();
         self.for_containers_in_area(area, &mut |_, c| containers.push(c.clone()));
         for c in containers {
-            for t in c.lock().unwrap().get_all() {
+            for t in c.get_all() {
                 if area.is_inside_pos(t.pos) {
                     list.push(t);
                 }
@@ -457,7 +444,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
         let mut containers = Vec::new();
         other.for_containers_in_area(area, &mut |_, c| containers.push(c.clone()));
         for c in containers {
-            for t in c.lock().unwrap().get_all() {
+            for t in c.get_all() {
                 if area.is_inside_pos(t.pos) {
                     list.push(t);
                 }
@@ -481,7 +468,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
     }
 
     /// Доступ к контейнеру чанка (для LevelChunk::getBlockTicks).
-    pub fn get_container(&self, chunk_pos: ChunkPos) -> Option<Arc<Mutex<LevelChunkTicks<T>>>> {
+    pub fn get_container(&self, chunk_pos: ChunkPos) -> Option<Arc<LevelChunkTicks<T>>> {
         self.state
             .lock()
             .unwrap()
@@ -497,7 +484,7 @@ impl<T: TickType + Clone> LevelTicks<T> {
             .unwrap()
             .all_containers
             .values()
-            .map(|c| c.lock().unwrap().count())
+            .map(|c| c.count())
             .sum()
     }
 }
@@ -513,11 +500,14 @@ impl<T: TickType + Clone> TickAccess<T> for LevelTicks<T> {
             .get(&packed)
             .cloned();
         match container {
-            Some(c) => c.lock().unwrap().schedule(tick),
+            Some(c) => c.schedule(tick),
             None => {
                 // Util.logAndPauseIfInIde — логируем через eprintln в debug
                 #[cfg(debug_assertions)]
-                eprintln!("Trying to schedule tick in not loaded position {:?}", tick.pos);
+                eprintln!(
+                    "Trying to schedule tick in not loaded position {:?}",
+                    tick.pos
+                );
             }
         }
     }
@@ -529,7 +519,7 @@ impl<T: TickType + Clone> TickAccess<T> for LevelTicks<T> {
             .unwrap()
             .all_containers
             .get(&packed)
-            .map(|c| c.lock().unwrap().has_scheduled_tick(pos, type_))
+            .map(|c| c.has_scheduled_tick(pos, type_))
             .unwrap_or(false)
     }
 
@@ -568,5 +558,78 @@ fn tick_head_changed<T: TickType + Clone>(
         (None, None) => false,
         (Some(a), Some(b)) => !a.tick_eq_full(b),
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::level::scheduled_tick_access::BlockTickType;
+    use crate::world::ticks::{SavedTick, TickPriority};
+
+    fn ty() -> BlockTickType {
+        BlockTickType {
+            id: "minecraft:stone".to_owned(),
+        }
+    }
+
+    #[test]
+    fn runs_earliest_ticks_and_resumes_after_the_per_tick_limit() {
+        let ticks = LevelTicks::new(Arc::new(|_| true));
+        let west = ChunkPos::new(-1, 0);
+        let east = ChunkPos::new(0, 0);
+        let late = BlockPos::new(-2, 0, 0);
+        let early = BlockPos::new(-1, 0, 0);
+        let high = BlockPos::ZERO;
+        let saved = LevelChunkTicks::with_pending_ticks(vec![
+            SavedTick::new(ty(), late, 20, TickPriority::ExtremelyHigh),
+            SavedTick::new(ty(), early, 4, TickPriority::Normal),
+        ]);
+        ticks.add_container(west, Some(Arc::new(saved))).unpack(100);
+        ticks.add_container(east, None);
+        ticks.schedule(ScheduledTick::new(ty(), high, 104, TickPriority::High, 0));
+
+        let mut run = Vec::new();
+        ticks.tick(103, 8, &mut |pos, _| run.push(pos));
+        assert!(run.is_empty());
+        ticks.tick(104, 1, &mut |pos, _| run.push(pos));
+        assert_eq!(run, [high]);
+        ticks.tick(105, 8, &mut |pos, _| run.push(pos));
+        assert_eq!(run, [high, early]);
+        ticks.tick(120, 8, &mut |pos, _| run.push(pos));
+        assert_eq!(run, [high, early, late]);
+    }
+
+    #[test]
+    fn replaces_containers_without_running_detached_ticks() {
+        let ticks = LevelTicks::new(Arc::new(|_| true));
+        let pos = ChunkPos::new(0, 0);
+        let old = ticks.add_container(pos, None);
+        old.schedule(ScheduledTick::with_default_priority(
+            ty(),
+            BlockPos::ZERO,
+            10,
+            0,
+        ));
+
+        let new = ticks.add_container(pos, None);
+        old.schedule(ScheduledTick::with_default_priority(
+            ty(),
+            BlockPos::new(1, 0, 0),
+            11,
+            0,
+        ));
+        new.schedule(ScheduledTick::with_default_priority(
+            ty(),
+            BlockPos::new(2, 0, 0),
+            13,
+            0,
+        ));
+
+        let mut run = Vec::new();
+        ticks.tick(11, 64, &mut |pos, _| run.push(pos));
+        assert!(run.is_empty());
+        ticks.tick(13, 64, &mut |pos, _| run.push(pos));
+        assert_eq!(run, [BlockPos::new(2, 0, 0)]);
     }
 }

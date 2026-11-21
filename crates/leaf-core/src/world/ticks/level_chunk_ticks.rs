@@ -9,49 +9,42 @@ use crate::core::block_pos::BlockPos;
 use super::scheduled_tick::{drain_order_cmp, SavedTick, ScheduledTick, TickKey, TickType};
 use super::tick_access::{SerializableTickContainer, TickAccess, TickContainerAccess};
 
-/// Обёртка для min-heap по `DRAIN_ORDER` (BinaryHeap — max-heap, поэтому Reverse).
-#[derive(Debug)]
 struct DrainOrdered<T: TickType>(ScheduledTick<T>);
 
 impl<T: TickType> PartialEq for DrainOrdered<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.tick_eq_full(&other.0)
+        self.cmp(other).is_eq()
     }
 }
+
 impl<T: TickType> Eq for DrainOrdered<T> {}
+
 impl<T: TickType> PartialOrd for DrainOrdered<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
+
 impl<T: TickType> Ord for DrainOrdered<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Reverse: верх кучи = наименьший по DRAIN_ORDER
-        drain_order_cmp(&other.0, &self.0)
+        drain_order_cmp(&self.0, &other.0)
     }
 }
 
-/// `BiConsumer<LevelChunkTicks<T>, ScheduledTick<T>> onTickAdded` —
-/// упрощённо до `Fn(&ScheduledTick<T>)` (контейнер передаётся через Weak
-/// у LevelTicks).
+/// Вызывается после добавления тика и освобождения блокировки очереди.
 pub type OnTickAdded<T> = Arc<dyn Fn(&ScheduledTick<T>) + Send + Sync>;
 
-/// `LevelChunkTicks<T>`.
 pub struct LevelChunkTicks<T: TickType> {
-    /// `tickQueue` — PriorityQueue по DRAIN_ORDER.
-    tick_queue: Mutex<BinaryHeap<Reverse<DrainOrdered<T>>>>,
-    /// `pendingTicks` — тики, ещё не распакованные (из NBT).
-    pending_ticks: Mutex<Option<Vec<SavedTick<T>>>>,
-    /// `ticksPerPosition` — множество уникальных тиков.
-    ticks_per_position: Mutex<HashSet<TickKey>>,
-    /// `onTickAdded`.
-    on_tick_added: Mutex<Option<OnTickAdded<T>>>,
+    state: Mutex<TickQueue<T>>,
+}
 
-    // Paper — rewrite chunk system: dirty-флаг для отложенного сохранения
-    /// `dirty`.
-    dirty: Mutex<bool>,
-    /// `lastSaved`.
-    last_saved: Mutex<i64>,
+struct TickQueue<T: TickType> {
+    scheduled: BinaryHeap<Reverse<DrainOrdered<T>>>,
+    pending: Vec<SavedTick<T>>,
+    keys: HashSet<TickKey>,
+    on_tick_added: Option<OnTickAdded<T>>,
+    dirty: bool,
+    last_saved: i64,
 }
 
 impl<T: TickType> Default for LevelChunkTicks<T> {
@@ -61,189 +54,163 @@ impl<T: TickType> Default for LevelChunkTicks<T> {
 }
 
 impl<T: TickType> LevelChunkTicks<T> {
-    /// `new()`.
     pub fn new() -> Self {
+        Self::with_pending_ticks(Vec::new())
+    }
+
+    pub fn with_pending_ticks(mut pending: Vec<SavedTick<T>>) -> Self {
+        let mut keys = HashSet::with_capacity(pending.len());
+        pending.retain(|tick| keys.insert(tick.key()));
         Self {
-            tick_queue: Mutex::new(BinaryHeap::new()),
-            pending_ticks: Mutex::new(None),
-            ticks_per_position: Mutex::new(HashSet::new()),
-            on_tick_added: Mutex::new(None),
-            dirty: Mutex::new(false),
-            last_saved: Mutex::new(i64::MIN),
+            state: Mutex::new(TickQueue {
+                scheduled: BinaryHeap::new(),
+                pending,
+                keys,
+                on_tick_added: None,
+                dirty: false,
+                last_saved: i64::MIN,
+            }),
         }
     }
 
-    /// `new(pendingTicks)` — из сохранённого списка.
-    pub fn with_pending_ticks(pending_ticks: Vec<SavedTick<T>>) -> Self
-    where
-        T: Clone,
-    {
-        let this = Self::new();
-        {
-            let mut set = this.ticks_per_position.lock().unwrap();
-            for t in &pending_ticks {
-                set.insert(t.key());
-            }
-        }
-        *this.pending_ticks.lock().unwrap() = Some(pending_ticks);
-        this
+    pub fn set_on_tick_added(&self, callback: Option<OnTickAdded<T>>) {
+        self.state.lock().unwrap().on_tick_added = callback;
     }
 
-    /// `setOnTickAdded(onTickAdded)`.
-    pub fn set_on_tick_added(&self, on_tick_added: Option<OnTickAdded<T>>) {
-        *self.on_tick_added.lock().unwrap() = on_tick_added;
+    pub fn peek(&self) -> Option<ScheduledTick<T>> {
+        let state = self.state.lock().unwrap();
+        state.scheduled.peek().map(|Reverse(item)| item.0.clone())
     }
 
-    /// `peek()`.
-    pub fn peek(&self) -> Option<ScheduledTick<T>>
-    where
-        T: Clone,
-    {
-        self.tick_queue
-            .lock()
-            .unwrap()
-            .peek()
-            .map(|r| r.0 .0.clone())
+    pub fn poll(&self) -> Option<ScheduledTick<T>> {
+        let mut state = self.state.lock().unwrap();
+        let Reverse(item) = state.scheduled.pop()?;
+        state.keys.remove(&item.0.key());
+        state.dirty = true;
+        Some(item.0)
     }
 
-    /// `poll()`.
-    pub fn poll(&self) -> Option<ScheduledTick<T>>
-    where
-        T: Clone,
-    {
-        let tick = self.tick_queue.lock().unwrap().pop().map(|r| r.0 .0);
-        if let Some(t) = &tick {
-            self.ticks_per_position.lock().unwrap().remove(&t.key());
-            *self.dirty.lock().unwrap() = true;
-        }
-        tick
-    }
-
-    /// `scheduleUnchecked(tick)` — без проверки уникальности.
-    fn schedule_unchecked(&self, tick: ScheduledTick<T>) {
-        self.tick_queue
-            .lock()
-            .unwrap()
-            .push(Reverse(DrainOrdered(tick.clone())));
-        let cb = self.on_tick_added.lock().unwrap().clone();
-        if let Some(cb) = cb {
-            cb(&tick);
-        }
-    }
-
-    /// `removeIf(predicate)`.
     pub fn remove_if(&self, predicate: &dyn Fn(&ScheduledTick<T>) -> bool) {
-        let mut queue = self.tick_queue.lock().unwrap();
-        let mut set = self.ticks_per_position.lock().unwrap();
-        let old = std::mem::take(&mut *queue);
-        let mut kept = BinaryHeap::new();
-        for Reverse(item) in old {
+        let mut state = self.state.lock().unwrap();
+        let TickQueue {
+            scheduled,
+            keys,
+            dirty,
+            ..
+        } = &mut *state;
+        scheduled.retain(|Reverse(item)| {
             if predicate(&item.0) {
-                set.remove(&item.0.key());
-                *self.dirty.lock().unwrap() = true;
+                keys.remove(&item.0.key());
+                *dirty = true;
+                false
             } else {
-                kept.push(Reverse(item));
+                true
             }
-        }
-        *queue = kept;
+        });
     }
 
-    /// `getAll()` — stream всех тиков в очереди.
-    pub fn get_all(&self) -> Vec<ScheduledTick<T>>
-    where
-        T: Clone,
-    {
-        self.tick_queue
-            .lock()
-            .unwrap()
+    pub fn get_all(&self) -> Vec<ScheduledTick<T>> {
+        let state = self.state.lock().unwrap();
+        state
+            .scheduled
             .iter()
-            .map(|r| r.0 .0.clone())
+            .map(|Reverse(item)| item.0.clone())
             .collect()
     }
 
-    /// `moonrise$isDirty(tick)`.
     pub fn moonrise_is_dirty(&self, tick: i64) -> bool {
-        *self.dirty.lock().unwrap()
-            || (!self.tick_queue.lock().unwrap().is_empty()
-                && tick != *self.last_saved.lock().unwrap())
+        let state = self.state.lock().unwrap();
+        state.dirty || (!state.scheduled.is_empty() && tick != state.last_saved)
     }
 
-    /// `moonrise$clearDirty()`.
     pub fn moonrise_clear_dirty(&self) {
-        *self.dirty.lock().unwrap() = false;
+        self.state.lock().unwrap().dirty = false;
     }
 
-    /// `unpack(gameTime)` — распаковать pendingTicks в очередь.
-    pub fn unpack(&self, game_time: i64)
-    where
-        T: Clone,
-    {
-        let pending = self.pending_ticks.lock().unwrap().take();
-        if let Some(pending) = pending {
-            *self.last_saved.lock().unwrap() = game_time;
-            let mut i = -(pending.len() as i64);
-            for saved in &pending {
-                self.schedule_unchecked(saved.unpack(game_time, i));
-                i += 1;
+    /// Привязывает сохранённые задержки к моменту активации чанка.
+    pub fn unpack(&self, game_time: i64) {
+        let (callback, unpacked) = {
+            let mut state = self.state.lock().unwrap();
+            let pending = std::mem::take(&mut state.pending);
+            if pending.is_empty() {
+                return;
+            }
+            state.last_saved = game_time;
+            let order = -(pending.len() as i64);
+            let unpacked: Vec<_> = pending
+                .iter()
+                .enumerate()
+                .map(|(index, tick)| tick.unpack(game_time, order + index as i64))
+                .collect();
+            state.scheduled.extend(
+                unpacked
+                    .iter()
+                    .cloned()
+                    .map(|tick| Reverse(DrainOrdered(tick))),
+            );
+            (state.on_tick_added.clone(), unpacked)
+        };
+        if let Some(callback) = callback {
+            for tick in &unpacked {
+                callback(tick);
             }
         }
     }
 
-    /// Доступ к pending ticks (для NBT-загрузки).
-    pub fn pending_ticks(&self) -> Option<Vec<SavedTick<T>>>
-    where
-        T: Clone,
-    {
-        self.pending_ticks.lock().unwrap().clone()
+    pub fn pending_ticks(&self) -> Option<Vec<SavedTick<T>>> {
+        let state = self.state.lock().unwrap();
+        (!state.pending.is_empty()).then(|| state.pending.clone())
     }
 }
 
-impl<T: TickType + Clone> TickAccess<T> for LevelChunkTicks<T> {
+impl<T: TickType> TickAccess<T> for LevelChunkTicks<T> {
     fn schedule(&self, tick: ScheduledTick<T>) {
-        if self
-            .ticks_per_position
-            .lock()
-            .unwrap()
-            .insert(tick.key())
-        {
-            self.schedule_unchecked(tick);
-            *self.dirty.lock().unwrap() = true;
+        let callback = {
+            let mut state = self.state.lock().unwrap();
+            if !state.keys.insert(tick.key()) {
+                return;
+            }
+            state.scheduled.push(Reverse(DrainOrdered(tick.clone())));
+            state.dirty = true;
+            state.on_tick_added.clone()
+        };
+        if let Some(callback) = callback {
+            callback(&tick);
         }
     }
 
     fn has_scheduled_tick(&self, pos: BlockPos, type_: &T) -> bool {
-        // probe-ключ: ScheduledTick::probe(type, pos).key()
-        // TickKey не зависит от trigger/priority — достаточно pos+type_hash
-        self.ticks_per_position
+        self.state
             .lock()
             .unwrap()
+            .keys
             .contains(&TickKey::of(pos, type_))
     }
 
     fn count(&self) -> usize {
-        self.tick_queue.lock().unwrap().len()
-            + self
-                .pending_ticks
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|p| p.len())
-                .unwrap_or(0)
+        let state = self.state.lock().unwrap();
+        state.pending.len() + state.scheduled.len()
     }
 }
 
-impl<T: TickType + Clone> TickContainerAccess<T> for LevelChunkTicks<T> {}
+impl<T: TickType> TickContainerAccess<T> for LevelChunkTicks<T> {}
 
-impl<T: TickType + Clone> SerializableTickContainer<T> for LevelChunkTicks<T> {
+impl<T: TickType> SerializableTickContainer<T> for LevelChunkTicks<T> {
     fn pack(&self, game_time: i64) -> Vec<SavedTick<T>> {
-        *self.last_saved.lock().unwrap() = game_time;
-        let mut list = Vec::new();
-        if let Some(pending) = self.pending_ticks.lock().unwrap().as_ref() {
-            list.extend(pending.iter().cloned());
-        }
-        for Reverse(item) in self.tick_queue.lock().unwrap().iter() {
-            list.push(item.0.to_saved_tick(game_time));
-        }
+        let mut state = self.state.lock().unwrap();
+        state.last_saved = game_time;
+        let mut list = state.pending.clone();
+        let mut scheduled: Vec<_> = state
+            .scheduled
+            .iter()
+            .map(|Reverse(item)| &item.0)
+            .collect();
+        scheduled.sort_unstable_by(|a, b| drain_order_cmp(a, b));
+        list.extend(
+            scheduled
+                .into_iter()
+                .map(|tick| tick.to_saved_tick(game_time)),
+        );
         list
     }
 }
