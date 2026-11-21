@@ -151,8 +151,8 @@ impl Player {
         )
     }
 
-    pub fn add_additional_save_data(&self, tag: &mut CompoundTag) {
-        self.living.add_additional_save_data(tag);
+    pub fn add_additional_save_data(&self, tag: &mut CompoundTag) -> Result<(), String> {
+        self.living.add_additional_save_data(tag)?;
         crate::nbt::utils::add_current_data_version(tag);
         tag.put_float("XpP", self.experience.progress);
         tag.put_int("XpLevel", self.experience.level);
@@ -161,10 +161,11 @@ impl Player {
         tag.put_int("Score", self.experience.score);
         self.food_data.add_additional_save_data(tag);
         tag.put("abilities", Tag::Compound(self.abilities.pack().to_nbt()));
+        Ok(())
     }
 
-    pub fn read_additional_save_data(&mut self, tag: &CompoundTag) {
-        self.living.read_additional_save_data(tag);
+    pub fn read_additional_save_data(&mut self, tag: &CompoundTag) -> Result<(), String> {
+        self.living.read_additional_save_data(tag)?;
         self.living.entity.uuid = self.profile.id;
         self.experience.progress = tag
             .get_float("XpP")
@@ -188,6 +189,7 @@ impl Player {
         {
             speed.set_base_value(f64::from(self.abilities.walking_speed));
         }
+        Ok(())
     }
 
     pub fn can_eat(&self, can_always_eat: bool) -> bool {
@@ -275,14 +277,31 @@ mod tests {
         player.experience.enchantment_seed = 41;
         player.abilities.set_walking_speed(0.24);
         player.food_data.food_level = 15;
+        let mut item = CompoundTag::new();
+        item.put_string("id", "fixture:equipped_item");
+        let mut components = CompoundTag::new();
+        components.put_int("damage", 12);
+        item.put("components", Tag::Compound(components));
+        let hand = crate::entity::equipment_slot::EquipmentSlot::Mainhand;
+        player.living.last_equipment_items.insert(
+            hand,
+            crate::world::item::item_stack::ItemStack::from_nbt(&item).unwrap(),
+        );
 
         let mut tag = CompoundTag::new();
-        player.add_additional_save_data(&mut tag);
+        player.add_additional_save_data(&mut tag).unwrap();
         let mut restored = Player::new(profile, None);
-        restored.read_additional_save_data(&tag);
+        restored.read_additional_save_data(&tag).unwrap();
         assert_eq!(restored.experience, player.experience);
         assert_eq!(restored.abilities.walking_speed, 0.24);
         assert_eq!(restored.food_data.food_level, 15);
+        assert_eq!(
+            restored
+                .living
+                .get_item_by_slot(hand)
+                .get_component::<i32>(&crate::resources::Identifier::minecraft("damage"),),
+            Some(12),
+        );
     }
 
     #[test]

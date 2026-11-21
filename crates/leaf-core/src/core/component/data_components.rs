@@ -209,6 +209,115 @@ macro_rules! payload_codec {
     };
 }
 
+fn with_nbt<T>(
+    mut ty: DataComponentType,
+    encode: impl Fn(&T) -> Result<Tag, String> + Send + Sync + 'static,
+    decode: impl Fn(&Tag) -> Result<T, String> + Send + Sync + 'static,
+) -> DataComponentType
+where
+    T: Clone + Send + Sync + PartialEq + std::fmt::Debug + 'static,
+{
+    ty.nbt_codec = Some(ComponentNbtCodec::new(encode, decode));
+    ty
+}
+
+fn int_component(id: &str, min: i32, max: i32, ignore_swap: bool) -> DataComponentType {
+    int_nbt(mk(id, false, ignore_swap, var_int()), min, max, |value| *value, |value| value)
+}
+
+fn int_nbt<T>(
+    ty: DataComponentType,
+    min: i32,
+    max: i32,
+    unwrap: fn(&T) -> i32,
+    wrap: fn(i32) -> T,
+) -> DataComponentType
+where
+    T: Clone + Send + Sync + PartialEq + std::fmt::Debug + 'static,
+{
+    let check = move |value| {
+        if (min..=max).contains(&value) {
+            Ok(value)
+        } else {
+            Err(format!("expected integer in {min}..={max}, got {value}"))
+        }
+    };
+    with_nbt(
+        ty,
+        move |value| check(unwrap(value)).map(Tag::Int),
+        move |tag| {
+            let value = tag.as_long().and_then(|value| i32::try_from(value).ok())
+                .ok_or("expected an integer")?;
+            check(value).map(wrap)
+        },
+    )
+}
+
+fn float_component(id: &str, min: f32, max: f32) -> DataComponentType {
+    let check = move |value| {
+        if (min..=max).contains(&value) {
+            Ok(value)
+        } else {
+            Err(format!("expected float in {min}..={max}, got {value}"))
+        }
+    };
+    with_nbt(
+        mk(id, false, false, float()),
+        move |value: &f32| check(*value).map(Tag::Float),
+        move |tag| check(tag.as_float().ok_or("expected a number")?),
+    )
+}
+
+fn unit_component(id: &str) -> DataComponentType {
+    with_nbt(mk(id, false, false, unit()),
+        |_: &Unit| Ok(Tag::Compound(CompoundTag::new())),
+        |tag| tag.as_compound().map(|_| Unit).ok_or_else(|| "expected a compound".to_owned()),
+    )
+}
+
+fn identifier_component(id: &str) -> DataComponentType {
+    with_nbt(mk(id, false, false, identifier()),
+        |value: &Identifier| Ok(Tag::String(value.to_string())),
+        |tag| Identifier::parse(tag.as_string().ok_or("expected an identifier")?)
+            .map_err(|error| error.to_string()),
+    )
+}
+
+fn encode_chat(value: &Component) -> Result<Tag, String> {
+    crate::nbt::json::tag_from_json(&component_json::component_to_json(value))
+}
+
+fn decode_chat(tag: &Tag) -> Result<Component, String> {
+    component_json::component_from_json(&crate::nbt::json::json_from_tag(tag)?)
+}
+
+fn lore_component() -> DataComponentType {
+    with_nbt(mk("lore", false, false, payload_codec!(ItemLore, ItemLore::stream_codec())),
+        |lore: &ItemLore| {
+            if lore.lines.len() > 256 {
+                return Err("lore must contain at most 256 lines".into());
+            }
+            lore.lines.iter().map(encode_chat).collect::<Result<Vec<_>, _>>().map(Tag::List)
+        },
+        |tag| {
+            let Tag::List(lines) = tag else { return Err("expected a lore list".into()); };
+            if lines.len() > 256 {
+                return Err("lore must contain at most 256 lines".into());
+            }
+            let lines = lines.iter().map(decode_chat).collect::<Result<Vec<_>, _>>()?;
+            Ok(ItemLore::new(lines))
+        },
+    )
+}
+
+fn dye_component(id: &str) -> DataComponentType {
+    with_nbt(mk(id, false, false, dye_color()),
+        |value: &DyeColor| Ok(Tag::String(value.get_serialized_name().to_owned())),
+        |tag| DyeColor::by_name(tag.as_string().ok_or("expected a dye name")?)
+            .ok_or_else(|| "unknown dye color".into()),
+    )
+}
+
 fn register_builtin_types() {
     register_data_component_type(persistent(
         "custom_data",
@@ -223,23 +332,23 @@ fn register_builtin_types() {
         },
     ));
     // 2-5. скалярные.
-    register_data_component_type(mk("max_stack_size", false, false, var_int()));
-    register_data_component_type(mk("max_damage", false, false, var_int()));
-    register_data_component_type(mk("damage", false, true, var_int()));
-    register_data_component_type(mk("unbreakable", false, false, unit()));
+    register_data_component_type(int_component("max_stack_size", 1, 99, false));
+    register_data_component_type(int_component("max_damage", 1, i32::MAX, false));
+    register_data_component_type(int_component("damage", 0, i32::MAX, true));
+    register_data_component_type(unit_component("unbreakable"));
     // 6. use_effects — UseEffects.STREAM_CODEC (payload портируется).
     register_data_component_type(mk("use_effects", false, false, payload_codec!(UseEffects, UseEffects::stream_codec())));
     // 7-8.
-    register_data_component_type(mk("custom_name", false, false, component()));
-    register_data_component_type(mk("minimum_attack_charge", false, false, float()));
+    register_data_component_type(with_nbt(mk("custom_name", false, false, component()), encode_chat, decode_chat));
+    register_data_component_type(float_component("minimum_attack_charge", 0.0, 1.0));
     // 9. damage_type — EitherHolder<DAMAGE_TYPE>.
     register_data_component_type(mk("damage_type", false, false, damage_type_either()));
     // 10-12.
-    register_data_component_type(mk("item_name", false, false, component()));
-    register_data_component_type(mk("item_model", false, false, identifier()));
-    register_data_component_type(mk("lore", false, false, payload_codec!(ItemLore, ItemLore::stream_codec()))); // ItemLore
+    register_data_component_type(with_nbt(mk("item_name", false, false, component()), encode_chat, decode_chat));
+    register_data_component_type(identifier_component("item_model"));
+    register_data_component_type(lore_component());
     // 13.
-    register_data_component_type(mk("rarity", false, false, rarity()));
+    register_data_component_type(with_nbt(mk("rarity", false, false, rarity()), |value: &Rarity| Ok(Tag::String(value.get_serialized_name().to_owned())), |tag| Rarity::by_name(tag.as_string().ok_or("expected a rarity name")?).ok_or_else(|| "unknown rarity".into())));
     // 14-19.
     register_data_component_type(mk("enchantments", false, false, payload_codec!(ItemEnchantments, ItemEnchantments::stream_codec())));
     register_data_component_type(mk("can_place_on", false, false, payload_codec!(AdventureModePredicate, AdventureModePredicate::stream_codec()))); // AdventureModePredicate
@@ -248,9 +357,9 @@ fn register_builtin_types() {
     register_data_component_type(mk("custom_model_data", false, false, payload_codec!(CustomModelData, CustomModelData::stream_codec()))); // CustomModelData
     register_data_component_type(mk("tooltip_display", false, false, payload_codec!(TooltipDisplay, TooltipDisplay::stream_codec()))); // TooltipDisplay
     // 20-23.
-    register_data_component_type(mk("repair_cost", false, false, var_int()));
+    register_data_component_type(int_component("repair_cost", 0, i32::MAX, false));
     register_data_component_type(mk("creative_slot_lock", true, false, unit()));
-    register_data_component_type(mk("enchantment_glint_override", false, false, bool_codec()));
+    register_data_component_type(with_nbt(mk("enchantment_glint_override", false, false, bool_codec()), |value: &bool| Ok(Tag::Byte(i8::from(*value))), |tag| tag.as_byte().map(|value| value != 0).ok_or_else(|| "expected a boolean byte".into())));
     register_data_component_type(persistent(
         "intangible_projectile",
         |_: &Unit| Ok(Tag::Compound(CompoundTag::new())),
@@ -268,12 +377,12 @@ fn register_builtin_types() {
     register_data_component_type(mk("tool", false, false, payload_codec!(Tool, Tool::stream_codec())));
     register_data_component_type(mk("weapon", false, false, payload_codec!(Weapon, Weapon::stream_codec())));
     register_data_component_type(mk("attack_range", false, false, payload_codec!(AttackRange, AttackRange::stream_codec())));
-    register_data_component_type(mk("enchantable", false, false, payload_codec!(Enchantable, Enchantable::stream_codec())));
+    register_data_component_type(int_nbt(mk("enchantable", false, false, payload_codec!(Enchantable, Enchantable::stream_codec())), 1, i32::MAX, |value: &Enchantable| value.value, Enchantable::new));
     register_data_component_type(mk("equippable", false, false, payload_codec!(Equippable, Equippable::stream_codec())));
     register_data_component_type(mk("repairable", false, false, payload_codec!(Repairable, Repairable::stream_codec())));
-    register_data_component_type(mk("glider", false, false, unit()));
+    register_data_component_type(unit_component("glider"));
     // 36-45.
-    register_data_component_type(mk("tooltip_style", false, false, identifier()));
+    register_data_component_type(identifier_component("tooltip_style"));
     register_data_component_type(mk("death_protection", false, false, payload_codec!(DeathProtection, DeathProtection::stream_codec())));
     register_data_component_type(mk("blocks_attacks", false, false, payload_codec!(BlocksAttacks, BlocksAttacks::stream_codec())));
     register_data_component_type(mk("piercing_weapon", false, false, payload_codec!(PiercingWeapon, PiercingWeapon::stream_codec())));
@@ -281,8 +390,8 @@ fn register_builtin_types() {
     register_data_component_type(mk("swing_animation", false, false, payload_codec!(SwingAnimation, SwingAnimation::stream_codec())));
     register_data_component_type(mk("stored_enchantments", false, false, payload_codec!(ItemEnchantments, ItemEnchantments::stream_codec())));
     register_data_component_type(mk("dyed_color", false, false, payload_codec!(DyedItemColor, DyedItemColor::stream_codec()))); // DyedItemColor
-    register_data_component_type(mk("map_color", false, false, payload_codec!(MapItemColor, MapItemColor::stream_codec())));
-    register_data_component_type(mk("map_id", false, false, payload_codec!(MapId, MapId::stream_codec()))); // MapId
+    register_data_component_type(int_nbt(mk("map_color", false, false, payload_codec!(MapItemColor, MapItemColor::stream_codec())), i32::MIN, i32::MAX, |value: &MapItemColor| value.rgb, MapItemColor::new));
+    register_data_component_type(int_nbt(mk("map_id", false, false, payload_codec!(MapId, MapId::stream_codec())), i32::MIN, i32::MAX, |value: &MapId| value.0, MapId)); // MapId
     // 46-49.
     register_data_component_type(persistent_compound("map_decorations"));
     register_data_component_type(mk("map_post_processing", true, false, payload_codec!(MapPostProcessing, MapPostProcessing::stream_codec())));
@@ -290,7 +399,7 @@ fn register_builtin_types() {
     register_data_component_type(mk("bundle_contents", false, false, payload_codec!(BundleContents, BundleContents::stream_codec())));
     // 50-55.
     register_data_component_type(mk("potion_contents", false, false, payload_codec!(PotionContents, PotionContents::stream_codec())));
-    register_data_component_type(mk("potion_duration_scale", false, false, float()));
+    register_data_component_type(float_component("potion_duration_scale", 0.0, f32::MAX));
     register_data_component_type(mk("suspicious_stew_effects", false, false, payload_codec!(SuspiciousStewEffects, SuspiciousStewEffects::stream_codec()))); // SuspiciousStewEffects
     register_data_component_type(mk("writable_book_content", false, false, payload_codec!(WritableBookContent, WritableBookContent::stream_codec())));
     register_data_component_type(mk("written_book_content", false, false, payload_codec!(WrittenBookContent, WrittenBookContent::stream_codec())));
@@ -302,7 +411,7 @@ fn register_builtin_types() {
     register_data_component_type(mk("block_entity_data", false, false, Some(stream_codec_of::<TypedEntityData<Holder<BlockEntityType>>, _>(TypedEntityData::stream_codec(crate::core::holder::holder_registry_stream_codec::<BlockEntityType>())))));
     register_data_component_type(mk("instrument", false, false, payload_codec!(InstrumentComponent, InstrumentComponent::stream_codec())));
     register_data_component_type(mk("provides_trim_material", false, false, payload_codec!(ProvidesTrimMaterial, ProvidesTrimMaterial::stream_codec())));
-    register_data_component_type(mk("ominous_bottle_amplifier", false, false, payload_codec!(OminousBottleAmplifier, OminousBottleAmplifier::stream_codec()))); // OminousBottleAmplifier
+    register_data_component_type(int_nbt(mk("ominous_bottle_amplifier", false, false, payload_codec!(OminousBottleAmplifier, OminousBottleAmplifier::stream_codec())), 0, 4, |value: &OminousBottleAmplifier| value.value, |value| OminousBottleAmplifier { value })); // OminousBottleAmplifier
     register_data_component_type(mk("jukebox_playable", false, false, payload_codec!(JukeboxPlayable, JukeboxPlayable::stream_codec())));
     register_data_component_type(mk("provides_banner_patterns", false, false, Some(stream_codec_of::<TagKey<crate::world::level::block::entity::banner_pattern::BannerPattern>, _>(TagKey::stream_codec(crate::resources::resource_key::ResourceKey::create_registry_key(Identifier::parse("minecraft:banner_pattern").expect("banner_pattern registry")))))));
     register_data_component_type(persistent(
@@ -315,9 +424,9 @@ fn register_builtin_types() {
     register_data_component_type(mk("firework_explosion", false, false, payload_codec!(FireworkExplosion, FireworkExplosion::stream_codec())));
     register_data_component_type(mk("fireworks", false, false, payload_codec!(Fireworks, Fireworks::stream_codec())));
     register_data_component_type(mk("profile", false, false, payload_codec!(ResolvableProfile, ResolvableProfile::stream_codec()))); // ResolvableProfile
-    register_data_component_type(mk("note_block_sound", false, false, identifier()));
+    register_data_component_type(identifier_component("note_block_sound"));
     register_data_component_type(mk("banner_patterns", false, false, payload_codec!(BannerPatternLayers, BannerPatternLayers::stream_codec())));
-    register_data_component_type(mk("base_color", false, false, dye_color()));
+    register_data_component_type(dye_component("base_color"));
     register_data_component_type(mk("pot_decorations", false, false, payload_codec!(PotDecorations, PotDecorations::stream_codec())));
     register_data_component_type(mk("container", false, false, payload_codec!(ItemContainerContents, ItemContainerContents::stream_codec())));
     register_data_component_type(mk("block_state", false, false, payload_codec!(BlockItemStateProperties, BlockItemStateProperties::stream_codec())));
@@ -329,13 +438,13 @@ fn register_builtin_types() {
     register_data_component_type(mk("villager/variant", false, false, holder_registry::<VillagerType>())); // VillagerType
     register_data_component_type(mk("wolf/variant", false, false, holder_registry::<WolfVariant>())); // WolfVariant
     register_data_component_type(mk("wolf/sound_variant", false, false, holder_registry::<WolfSoundVariant>())); // WolfSoundVariant
-    register_data_component_type(mk("wolf/collar", false, false, dye_color()));
+    register_data_component_type(dye_component("wolf/collar"));
     register_data_component_type(mk("fox/variant", false, false, payload_codec!(FoxVariant, FoxVariant::stream_codec()))); // Fox.Variant
     register_data_component_type(mk("salmon/size", false, false, payload_codec!(SalmonSize, SalmonSize::stream_codec()))); // Salmon.Variant
     register_data_component_type(mk("parrot/variant", false, false, payload_codec!(ParrotVariant, ParrotVariant::stream_codec()))); // Parrot.Variant
     register_data_component_type(mk("tropical_fish/pattern", false, false, payload_codec!(TropicalFishPattern, TropicalFishPattern::stream_codec()))); // TropicalFish.Pattern
-    register_data_component_type(mk("tropical_fish/base_color", false, false, dye_color()));
-    register_data_component_type(mk("tropical_fish/pattern_color", false, false, dye_color()));
+    register_data_component_type(dye_component("tropical_fish/base_color"));
+    register_data_component_type(dye_component("tropical_fish/pattern_color"));
     register_data_component_type(mk("mooshroom/variant", false, false, payload_codec!(MooshroomVariant, MooshroomVariant::stream_codec()))); // MushroomCow.Variant
     register_data_component_type(mk("rabbit/variant", false, false, payload_codec!(RabbitVariant, RabbitVariant::stream_codec()))); // Rabbit.Variant
     register_data_component_type(mk("pig/variant", false, false, holder_registry::<PigVariant>())); // PigVariant

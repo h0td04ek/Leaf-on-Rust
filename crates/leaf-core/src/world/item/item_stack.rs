@@ -12,9 +12,11 @@
 
 use crate::core::component::{DataComponentPatch, PatchedDataComponentMap};
 use crate::core::holder::Holder;
+use crate::core::registry::registries;
+use crate::nbt::{CompoundTag, Tag};
 use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
-use crate::resources::identifier::Identifier;
+use crate::resources::{Identifier, ResourceKey};
 use crate::world::item::item;
 use std::hash::{Hash, Hasher};
 
@@ -52,13 +54,13 @@ impl ItemStack {
 
     /// `new(item, count, patch)` — Java-конструктор из optional-кодека.
     pub fn with_patch(item: Holder<item::Item>, count: i32, patch: DataComponentPatch) -> Self {
+        let mut components = PatchedDataComponentMap::empty();
+        // Удаления из сохранения сохраняются до загрузки прототипов предметов.
+        components.restore_patch(&patch);
         Self {
             item: Some(item),
             count,
-            components: PatchedDataComponentMap::from_patch(
-                Default::default(),
-                &patch,
-            ),
+            components,
         }
     }
 
@@ -92,22 +94,54 @@ impl ItemStack {
         self.clone()
     }
 
-    /// `save(tag)` — сериализация в NBT (id, count, components).
-    pub fn save(&self, mut tag: crate::nbt::compound::CompoundTag) -> crate::nbt::tag::Tag {
-        if let Some(id) = self.item_identifier() {
-            tag.put("id", crate::nbt::tag::Tag::String(id.to_string()));
+    /// Persistent-формат Java. Пустая стопка использует пустой compound.
+    pub fn save(&self, mut tag: CompoundTag) -> Result<Tag, String> {
+        if self.is_empty() {
+            for key in ["id", "count", "components"] {
+                tag.remove(key);
+            }
+            return Ok(Tag::Compound(tag));
         }
-        tag.put("count", crate::nbt::tag::Tag::Int(self.get_count()));
-        // components — сохраняем по id типа компонента
-        let mut comps = crate::nbt::compound::CompoundTag::new();
-        for tc in self.components.iter() {
-            let key = crate::core::component::data_component_type::data_component_type_id(&tc.component_type)
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            comps.put(&key, crate::nbt::tag::Tag::String("component".to_string()));
+
+        let id = self.item_identifier().ok_or("item has no registered identifier")?;
+        if id == Identifier::minecraft("air") {
+            return Err("cannot save air as an item stack".into());
         }
-        tag.put("components", crate::nbt::tag::Tag::Compound(comps));
-        crate::nbt::tag::Tag::Compound(tag)
+        let count = checked_stack_count(self.count)?;
+        let components = self.components.as_patch().to_nbt()?;
+        tag.put_string("id", &id.to_string());
+        tag.put_int("count", count);
+        if components.is_empty() {
+            tag.remove("components");
+        } else {
+            tag.put("components", Tag::Compound(components));
+        }
+        Ok(Tag::Compound(tag))
+    }
+
+    pub fn from_nbt(tag: &CompoundTag) -> Result<Self, String> {
+        if tag.is_empty() || (!tag.contains("id") && tag.get_int("count") == Some(0)) {
+            return Ok(Self::empty());
+        }
+        let id = Identifier::parse(tag.get_string("id").ok_or("expected an item id")?)
+            .map_err(|error| error.to_string())?;
+        if id == Identifier::minecraft("air") {
+            return Err("cannot decode air as an item stack".into());
+        }
+        let count = match tag.get("count") {
+            Some(data) => checked_stack_count(
+                data.as_long().and_then(|value| i32::try_from(value).ok()).ok_or("expected an item count")?
+            )?,
+            None => 1,
+        };
+        let patch = match tag.get("components") {
+            Some(data) => DataComponentPatch::from_nbt(data.as_compound().ok_or("expected components compound")?)?,
+            None => DataComponentPatch::empty(),
+        };
+        let item = item::item_holder_by_identifier(&id).unwrap_or_else(|| {
+            Holder::Key(ResourceKey::create_with_registry_name(registries::item(), id))
+        });
+        Ok(Self::with_patch(item, count, patch))
     }
 
     /// `getUseDuration(entity)` — `Item.getUseDuration(stack, entity)`.
@@ -152,7 +186,7 @@ impl ItemStack {
         if let Some(c) = self.components.get_by_id::<crate::network::chat::component::Component>(&id) {
             return c.clone();
         }
-        match self.item_holder().and_then(|h| h.key().map(|k| k.id().clone())) {
+        match self.item_identifier() {
             Some(id) => crate::network::chat::component::Component::translatable(
                 format!("item.{}.{}", id.get_namespace(), id.get_path()),
                 vec![],
@@ -353,7 +387,7 @@ impl ItemStack {
         attacker: &crate::world::entity::living_entity::LivingEntity,
         fallback: impl FnOnce() -> crate::world::damagesource::damage_source::DamageSource,
     ) -> crate::world::damagesource::damage_source::DamageSource {
-        use crate::resources::identifier::Identifier;
+        use crate::resources::{Identifier, ResourceKey};
         use crate::util::either::Either;
         use crate::world::damagesource::damage_type::DamageType;
         use crate::world::item::either_holder::EitherHolder;
@@ -522,6 +556,14 @@ impl ItemStack {
     }
 }
 
+fn checked_stack_count(count: i32) -> Result<i32, String> {
+    if (1..=99).contains(&count) {
+        Ok(count)
+    } else {
+        Err(format!("item count {count} is outside 1..=99"))
+    }
+}
+
 impl PartialEq for ItemStack {
     fn eq(&self, other: &Self) -> bool {
         self.item == other.item && self.count == other.count
@@ -543,5 +585,62 @@ impl crate::core::component::data_component_getter::DataComponentGetter for Item
             .into_iter()
             .map(|t| (t.component_type.id.clone(), Some(t.value)))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use crate::core::component::data_component_type::data_component_type_by_identifier;
+    use crate::world::item::component::item_lore::ItemLore;
+
+    #[test]
+    fn restores_typed_item_components_and_removed_patch_entries() {
+        let id = Identifier::parse("fixture:durable_item").unwrap();
+        let wire_id = item::register_item(item::Item::new(id.clone()));
+        let mut styled = CompoundTag::new();
+        styled.put_string("text", "Second");
+        styled.put_bool("bold", true);
+        let mut patch = CompoundTag::new();
+        patch.put_int("damage", 7);
+        patch.put_string("custom_name", "Leaf blade");
+        patch.put("minecraft:!invalid", Tag::Compound(CompoundTag::new()));
+        assert!(DataComponentPatch::from_nbt(&patch).is_err());
+        patch.remove("minecraft:!invalid");
+        patch.put("!minecraft:unbreakable", Tag::Compound(CompoundTag::new()));
+        patch.put("lore", Tag::List(vec![Tag::String("First".into()), Tag::Compound(styled)]));
+        let mut nbt = CompoundTag::new();
+        nbt.put_string("id", &id.to_string());
+        nbt.put("components", Tag::Compound(patch));
+
+        let stack = ItemStack::from_nbt(&nbt).unwrap();
+        assert_eq!(stack.item_holder(), Some(&Holder::Reference(wire_id)));
+        assert_eq!(stack.get_count(), 1);
+        assert_eq!(stack.get_component::<i32>(&Identifier::minecraft("damage")), Some(7));
+        let lore = stack.get_component::<ItemLore>(&Identifier::minecraft("lore")).unwrap();
+        assert_eq!(lore.lines.len(), 2);
+        assert_eq!(lore.lines[1].style.bold, Some(true));
+
+        let saved = stack.save(CompoundTag::new()).unwrap();
+        let components = saved.as_compound().unwrap().get_compound("components").unwrap();
+        assert_eq!(components.get_int("minecraft:damage"), Some(7));
+        assert!(components.get_compound("!minecraft:unbreakable").unwrap().is_empty());
+        assert_eq!(components.get_string("minecraft:custom_name"), Some("Leaf blade"));
+        let bytes = crate::nbt::io::write(saved.as_compound().unwrap()).unwrap();
+        let reread = crate::nbt::io::read_bytes_unlimited(&bytes).unwrap();
+        let reread = ItemStack::from_nbt(&reread).unwrap();
+        assert_eq!(reread.components.as_patch().to_nbt().unwrap(), *components);
+    }
+
+    #[test]
+    fn invalid_component_values_report_errors_without_serializing_placeholders() {
+        let component = data_component_type_by_identifier(&Identifier::minecraft("damage")).unwrap();
+        let mut patch = DataComponentPatch::builder();
+        patch.set(&component, -5_i32);
+        let stack = ItemStack::with_patch(
+            Holder::Direct(item::Item::new(Identifier::minecraft("stone"))), 1, patch.build(),
+        );
+        assert!(stack.save(CompoundTag::new()).unwrap_err().contains("minecraft:damage"));
+        assert!(ItemStack::from_nbt(&CompoundTag::new()).unwrap().is_empty());
     }
 }

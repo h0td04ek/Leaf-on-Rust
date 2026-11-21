@@ -101,6 +101,11 @@ pub fn item_by_identifier(id: &Identifier) -> Option<Arc<Item>> {
     registry().read().unwrap().iter().find(|i| i.id == *id).cloned()
 }
 
+pub fn item_holder_by_identifier(id: &Identifier) -> Option<Holder<Item>> {
+    registry().read().unwrap().iter().position(|item| item.id == *id)
+        .map(|wire_id| Holder::Reference(wire_id as i32))
+}
+
 /// Id предмета в реестре (None — не зарегистрирован).
 pub fn item_registry_id(item: &Item) -> Option<i32> {
     registry().read().unwrap().iter().position(|i| i.id == item.id).map(|i| i as i32)

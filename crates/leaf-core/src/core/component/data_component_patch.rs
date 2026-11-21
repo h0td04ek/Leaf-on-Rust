@@ -11,6 +11,7 @@ use crate::core::component::data_component_type::{
     data_component_type_arc_by_id, data_component_type_id_by_identifier,
     data_component_type_stream_codec, ComponentValue, DataComponentType,
 };
+use crate::nbt::{CompoundTag, Tag};
 use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::{CodecError, FriendlyByteBuf};
 use crate::resources::identifier::Identifier;
@@ -121,6 +122,57 @@ impl DataComponentPatch {
             }
         }
         (added, removed)
+    }
+
+    /// Persistent-формат Java. Удаление записывается как "!namespace:key": {}.
+    pub fn to_nbt(&self) -> Result<CompoundTag, String> {
+        let mut tag = CompoundTag::new();
+        for (id, value) in &self.entries {
+            let component = type_arc(id).map_err(|error| error.0)?;
+            if component.transient {
+                continue;
+            }
+
+            match value {
+                ComponentPatchValue::Removed => {
+                    tag.put(format!("!{id}"), Tag::Compound(CompoundTag::new()));
+                }
+                ComponentPatchValue::Set(value) => {
+                    let codec = component.nbt_codec.as_ref()
+                        .ok_or_else(|| format!("component '{id}' has no persistent codec"))?;
+                    let data = codec.encode(value.as_any()).map_err(|error| format!("{id}: {error}"))?;
+                    tag.put(id.to_string(), data);
+                }
+            }
+        }
+        Ok(tag)
+    }
+
+    pub fn from_nbt(tag: &CompoundTag) -> Result<Self, String> {
+        let mut builder = Self::builder();
+        let mut seen = HashSet::new();
+        for (key, value) in tag.iter() {
+            let removed = key.strip_prefix('!');
+            let id = Identifier::parse(removed.unwrap_or(key))
+                .map_err(|error| format!("invalid component key '{key}': {error}"))?;
+            let component = type_arc(&id).map_err(|error| error.0)?;
+            if component.transient || !seen.insert(id.clone()) {
+                return Err(format!("transient or duplicate component '{id}'"));
+            }
+
+            if removed.is_some() {
+                if value.as_compound().is_none_or(|tag| !tag.is_empty()) {
+                    return Err(format!("removed component '{id}' requires an empty compound"));
+                }
+                builder.remove(&component);
+            } else {
+                let codec = component.nbt_codec.as_ref()
+                    .ok_or_else(|| format!("component '{id}' has no persistent codec"))?;
+                let data = codec.decode(value).map_err(|error| format!("{id}: {error}"))?;
+                builder.set_boxed(id, data);
+            }
+        }
+        Ok(builder.build())
     }
 
     fn encode_inner(

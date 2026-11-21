@@ -109,7 +109,8 @@ impl ComponentNbtCodec {
     {
         Self {
             encode: Arc::new(move |v| {
-                let t = v.downcast_ref::<T>().expect("component nbt value type mismatch");
+                let t = v.downcast_ref::<T>()
+                    .ok_or_else(|| "component NBT value type mismatch".to_owned())?;
                 encode(t)
             }),
             decode: Arc::new(move |tag| {

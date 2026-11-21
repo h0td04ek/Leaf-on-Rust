@@ -1718,7 +1718,16 @@ impl LivingEntity {
     }
 
     /// `addAdditionalSaveData(tag)`.
-    pub fn add_additional_save_data(&self, tag: &mut CompoundTag) {
+    pub fn add_additional_save_data(&self, tag: &mut CompoundTag) -> Result<(), String> {
+        let mut equipment = CompoundTag::new();
+        for (slot, stack) in &self.last_equipment_items {
+            if !stack.is_empty() {
+                let item = stack.save(CompoundTag::new()).map_err(|error| {
+                    format!("equipment slot {}: {error}", slot.get_name())
+                })?;
+                equipment.put(slot.get_name(), item);
+            }
+        }
         tag.put("Health", Tag::Float(self.health));
         tag.put("AbsorptionAmount", Tag::Float(self.absorption_amount));
         tag.put("HurtTime", Tag::Int(self.hurt_time));
@@ -1737,17 +1746,27 @@ impl LivingEntity {
             let effects: Vec<Tag> = self.active_effects.values().map(|i| i.to_nbt()).collect();
             tag.put("ActiveEffects", Tag::List(effects));
         }
-        let mut equipment = CompoundTag::new();
-        for (slot, stack) in &self.last_equipment_items {
-            if !stack.is_empty() {
-                equipment.put(&format!("{:?}", slot).to_lowercase(), stack.save(CompoundTag::new()));
-            }
-        }
         tag.put("equipment", Tag::Compound(equipment));
+        Ok(())
     }
 
     /// `readAdditionalSaveData(tag)`.
-    pub fn read_additional_save_data(&mut self, tag: &CompoundTag) {
+    pub fn read_additional_save_data(&mut self, tag: &CompoundTag) -> Result<(), String> {
+        let mut equipment = HashMap::new();
+        if let Some(items) = tag.get("equipment") {
+            let items = items.as_compound().ok_or("expected equipment compound")?;
+            for slot in EquipmentSlot::VALUES {
+                let Some(item) = items.get(slot.get_name()) else { continue };
+                let item = item.as_compound().ok_or_else(|| format!("invalid equipment slot {}", slot.get_name()))?;
+                let stack = ItemStack::from_nbt(item).map_err(|error| {
+                    format!("equipment slot {}: {error}", slot.get_name())
+                })?;
+                if !stack.is_empty() {
+                    equipment.insert(slot, stack);
+                }
+            }
+        }
+        self.last_equipment_items = equipment;
         if let Some(Tag::Float(h)) = tag.get("Health") { self.health = *h; }
         if let Some(Tag::Float(a)) = tag.get("AbsorptionAmount") { self.absorption_amount = *a; }
         if let Some(Tag::Int(ht)) = tag.get("HurtTime") { self.hurt_time = *ht; }
@@ -1767,6 +1786,7 @@ impl LivingEntity {
                 }
             }
         }
+        Ok(())
     }
 
     /// `tickEffects()` — серверный цикл `MobEffectInstance.tickServer`
