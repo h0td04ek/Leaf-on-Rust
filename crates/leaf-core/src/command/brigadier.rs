@@ -21,7 +21,7 @@ pub(crate) enum NodeKind {
 }
 
 type Requirement<S> = Box<dyn Fn(&S) -> bool + Send + Sync>;
-type Command<S> = Box<dyn Fn(&mut S, &CommandContext) -> i32 + Send + Sync>;
+type Command<S> = Box<dyn Fn(&mut S, &CommandContext) -> Result<i32, Box<Component>> + Send + Sync>;
 type SuggestionProvider<S> =
     Box<dyn Fn(&S, &CommandContext, &str, &mut Vec<CommandSuggestion>) + Send + Sync>;
 
@@ -75,6 +75,7 @@ pub enum CommandErrorKind {
     InvalidArgument,
     ExpectedSeparator,
     IncompleteCommand,
+    ExecutionFailed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +92,23 @@ impl std::fmt::Display for CommandError {
 }
 
 impl std::error::Error for CommandError {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommandExecutionError {
+    Syntax(CommandError),
+    Feedback(Box<Component>),
+}
+
+impl std::fmt::Display for CommandExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Syntax(error) => error.fmt(f),
+            Self::Feedback(message) => f.write_str(&message.get_string()),
+        }
+    }
+}
+
+impl std::error::Error for CommandExecutionError {}
 
 impl<S> CommandNode<S> {
     pub fn literal(name: impl Into<String>) -> Self {
@@ -115,8 +133,15 @@ impl<S> CommandNode<S> {
     }
 
     pub fn executes(
-        mut self,
+        self,
         command: impl Fn(&mut S, &CommandContext) -> i32 + Send + Sync + 'static,
+    ) -> Self {
+        self.try_executes(move |source, context| Ok(command(source, context)))
+    }
+
+    pub fn try_executes(
+        mut self,
+        command: impl Fn(&mut S, &CommandContext) -> Result<i32, Box<Component>> + Send + Sync + 'static,
     ) -> Self {
         self.command = Some(Box::new(command));
         self
@@ -226,9 +251,27 @@ impl<S> CommandDispatcher<S> {
 
     /// Разбирает и выполняет команду. Вход уже очищен от начального '/'.
     pub fn execute(&self, input: &str, source: &mut S) -> Result<i32, CommandError> {
-        let parsed = self.parse(input, source)?;
+        self.execute_with_feedback(input, source)
+            .map_err(|error| match error {
+                CommandExecutionError::Syntax(error) => error,
+                CommandExecutionError::Feedback(_) => CommandError {
+                    cursor: input.len(),
+                    kind: CommandErrorKind::ExecutionFailed,
+                },
+            })
+    }
+
+    /// Выполняет команду с сохранением сообщения об игровой ошибке.
+    pub fn execute_with_feedback(
+        &self,
+        input: &str,
+        source: &mut S,
+    ) -> Result<i32, CommandExecutionError> {
+        let parsed = self
+            .parse(input, source)
+            .map_err(CommandExecutionError::Syntax)?;
         let command = self.node(parsed.node).command.as_ref().unwrap();
-        Ok(command(source, &parsed.context))
+        command(source, &parsed.context).map_err(CommandExecutionError::Feedback)
     }
 
     fn children(&self, id: NodeId) -> &[NodeId] {
