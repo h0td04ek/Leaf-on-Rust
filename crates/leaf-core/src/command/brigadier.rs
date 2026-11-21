@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use super::brigadier_argument::{ArgumentType, ArgumentValue};
+use crate::network::chat::component::Component;
 use crate::resources::Identifier;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -10,6 +11,7 @@ pub struct NodeId(usize);
 
 pub struct CommandDispatcher<S> {
     nodes: Vec<CommandNode<S>>,
+    suggestions: HashMap<Identifier, SuggestionProvider<S>>,
 }
 
 pub(crate) enum NodeKind {
@@ -20,6 +22,21 @@ pub(crate) enum NodeKind {
 
 type Requirement<S> = Box<dyn Fn(&S) -> bool + Send + Sync>;
 type Command<S> = Box<dyn Fn(&mut S, &CommandContext) -> i32 + Send + Sync>;
+type SuggestionProvider<S> =
+    Box<dyn Fn(&S, &CommandContext, &str, &mut Vec<CommandSuggestion>) + Send + Sync>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommandSuggestion {
+    pub text: String,
+    pub tooltip: Option<Component>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommandSuggestions {
+    /// Диапазон замены в байтах UTF-8.
+    pub range: std::ops::Range<usize>,
+    pub entries: Vec<CommandSuggestion>,
+}
 
 pub struct CommandNode<S> {
     pub(crate) kind: NodeKind,
@@ -152,6 +169,7 @@ impl<S> CommandDispatcher<S> {
     pub fn new() -> Self {
         Self {
             nodes: vec![CommandNode::new(NodeKind::Root, String::new())],
+            suggestions: HashMap::new(),
         }
     }
 
@@ -213,6 +231,129 @@ impl<S> CommandDispatcher<S> {
         Ok(command(source, &parsed.context))
     }
 
+    fn children(&self, id: NodeId) -> &[NodeId] {
+        &self.node(self.node(id).redirect.unwrap_or(id)).children
+    }
+
+    fn relevant_children<'a>(
+        &'a self,
+        node: NodeId,
+        token: &str,
+        source: &'a S,
+    ) -> impl DoubleEndedIterator<Item = NodeId> + 'a {
+        let children = self.children(node);
+        let exact = children.iter().copied().find(|&id| {
+            let child = self.node(id);
+            matches!(child.kind, NodeKind::Literal) && child.name == token
+        });
+        children.iter().copied().filter(move |&id| {
+            (exact == Some(id)
+                || (exact.is_none() && matches!(self.node(id).kind, NodeKind::Argument(_))))
+                && self.can_use(id, source)
+        })
+    }
+
+    pub fn register_suggestion_provider(
+        &mut self,
+        id: Identifier,
+        provider: impl Fn(&S, &CommandContext, &str, &mut Vec<CommandSuggestion>)
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.suggestions.insert(id, Box::new(provider));
+    }
+
+    /// Подсказки для ввода до курсора. Начальный '/' допускается.
+    pub fn complete(&self, input: &str, cursor: usize, source: &S) -> CommandSuggestions {
+        let Some(prefix) = input.get(..cursor) else {
+            return CommandSuggestions {
+                range: 0..0,
+                entries: Vec::new(),
+            };
+        };
+        let start = usize::from(prefix.starts_with('/'));
+        let mut branches = vec![ParseBranch {
+            node: self.root(),
+            cursor: start,
+            context: CommandContext::default(),
+        }];
+        let mut frontier = Vec::new();
+        let mut furthest = start;
+        while let Some(branch) = branches.pop() {
+            if branch.cursor > furthest {
+                frontier.clear();
+                furthest = branch.cursor;
+            }
+            let remaining = &prefix[branch.cursor..];
+            let literal = remaining.split(' ').next().unwrap();
+            for id in self.relevant_children(branch.node, literal, source).rev() {
+                let child = self.node(id);
+                let (value, end) = match child.kind {
+                    NodeKind::Literal => (None, branch.cursor + literal.len()),
+                    NodeKind::Argument(argument) => {
+                        let Some((value, end)) = argument.parse(prefix, branch.cursor) else {
+                            continue;
+                        };
+                        (Some(value), end)
+                    }
+                    NodeKind::Root => unreachable!(),
+                };
+                if prefix.as_bytes().get(end) == Some(&b' ') {
+                    let mut context = branch.context.clone();
+                    if let Some(value) = value {
+                        context.arguments.insert(child.name.clone(), value);
+                    }
+                    branches.push(ParseBranch {
+                        node: id,
+                        cursor: end + 1,
+                        context,
+                    });
+                }
+            }
+            if branch.cursor == furthest {
+                frontier.push(branch);
+            }
+        }
+
+        let remaining = &prefix[furthest..];
+        let lower = remaining.to_lowercase();
+        let mut entries = Vec::new();
+        for branch in frontier {
+            for id in self
+                .children(branch.node)
+                .iter()
+                .copied()
+                .filter(|&id| self.can_use(id, source))
+            {
+                let child = self.node(id);
+                match child.kind {
+                    NodeKind::Literal => add_matching(&mut entries, &child.name, &lower),
+                    NodeKind::Argument(argument) => {
+                        if let Some(provider) = child
+                            .suggestion_provider
+                            .as_ref()
+                            .and_then(|id| self.suggestions.get(id))
+                        {
+                            provider(source, &branch.context, remaining, &mut entries);
+                        } else if argument == ArgumentType::Bool {
+                            add_matching(&mut entries, "true", &lower);
+                            add_matching(&mut entries, "false", &lower);
+                        }
+                    }
+                    NodeKind::Root => unreachable!(),
+                }
+            }
+        }
+        entries.retain(|entry| entry.text != remaining);
+        entries.sort_by_cached_key(|entry| (entry.text.to_lowercase(), entry.text.clone()));
+        entries.dedup_by(|a, b| a.text == b.text);
+        CommandSuggestions {
+            range: furthest..cursor,
+            entries,
+        }
+    }
+
     fn parse(&self, input: &str, source: &S) -> Result<ParseBranch, CommandError> {
         let mut branches = vec![ParseBranch {
             node: self.root(),
@@ -241,21 +382,13 @@ impl<S> CommandDispatcher<S> {
 
             let remaining = &input[branch.cursor..];
             let literal = remaining.split(' ').next().unwrap();
-            let children = &self.node(node.redirect.unwrap_or(branch.node)).children;
-            let exact = children.iter().copied().find(|&id| {
-                let child = self.node(id);
-                matches!(child.kind, NodeKind::Literal) && child.name == literal
-            });
-
             record_error(&mut best, branch.cursor, CommandErrorKind::UnknownCommand);
-            for &id in children.iter().rev() {
+            for id in self.relevant_children(branch.node, literal, source).rev() {
                 let child = self.node(id);
                 let mut context = branch.context.clone();
                 let end = match child.kind {
-                    NodeKind::Literal if exact == Some(id) && self.can_use(id, source) => {
-                        branch.cursor + literal.len()
-                    }
-                    NodeKind::Argument(argument) if exact.is_none() && self.can_use(id, source) => {
+                    NodeKind::Literal => branch.cursor + literal.len(),
+                    NodeKind::Argument(argument) => {
                         let Some((value, end)) = argument.parse(input, branch.cursor) else {
                             record_error(
                                 &mut best,
@@ -267,7 +400,7 @@ impl<S> CommandDispatcher<S> {
                         context.arguments.insert(child.name.clone(), value);
                         end
                     }
-                    _ => continue,
+                    NodeKind::Root => unreachable!(),
                 };
                 let cursor = match input.as_bytes().get(end) {
                     None => end,
@@ -285,6 +418,15 @@ impl<S> CommandDispatcher<S> {
             }
         }
         Err(best)
+    }
+}
+
+fn add_matching(entries: &mut Vec<CommandSuggestion>, text: &str, lower_prefix: &str) {
+    if text.to_lowercase().starts_with(lower_prefix) {
+        entries.push(CommandSuggestion {
+            text: text.to_owned(),
+            tooltip: None,
+        });
     }
 }
 
@@ -370,5 +512,45 @@ mod tests {
             dispatcher.execute("set 4", &mut true).unwrap_err().kind,
             CommandErrorKind::InvalidArgument
         );
+    }
+
+    #[test]
+    fn completes_permissions_redirects_and_builtin_bool_before_the_cursor() {
+        let mut dispatcher = CommandDispatcher::<bool>::new();
+        let root = dispatcher.root();
+        let set = dispatcher
+            .add_node(root, CommandNode::literal("set"))
+            .unwrap();
+        dispatcher
+            .add_node(set, CommandNode::argument("flag", ArgumentType::Bool))
+            .unwrap();
+        dispatcher
+            .add_node(
+                set,
+                CommandNode::literal("hidden").requires(|source| *source),
+            )
+            .unwrap();
+        dispatcher
+            .add_node(root, CommandNode::literal("s").redirects_to(set))
+            .unwrap();
+        let cases = [
+            ("/SE", 3, false, 1..3, vec!["set"]),
+            ("/s Tr trailing", 5, false, 3..5, vec!["true"]),
+            ("/s ", 3, false, 3..3, vec!["false", "true"]),
+            ("/s ", 3, true, 3..3, vec!["false", "hidden", "true"]),
+        ];
+        for (input, cursor, source, range, expected) in cases {
+            let actual = dispatcher.complete(input, cursor, &source);
+            assert_eq!(actual.range, range, "{input}");
+            assert_eq!(
+                actual
+                    .entries
+                    .iter()
+                    .map(|entry| entry.text.as_str())
+                    .collect::<Vec<_>>(),
+                expected,
+                "{input}"
+            );
+        }
     }
 }
