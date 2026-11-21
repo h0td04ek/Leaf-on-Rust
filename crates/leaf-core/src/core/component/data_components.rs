@@ -66,6 +66,7 @@ use crate::tags::tag_key::TagKey;
 use crate::world::item::either_holder::EitherHolder;
 use crate::world::item::dye_color::DyeColor;
 use crate::world::item::rarity::Rarity;
+use crate::world::item::item_stack::ItemStack;
 use crate::world::level::saveddata::maps::MapId;
 use std::sync::Once;
 
@@ -318,6 +319,78 @@ fn dye_component(id: &str) -> DataComponentType {
     )
 }
 
+fn encode_stack(stack: &ItemStack) -> Result<Tag, String> {
+    if stack.is_empty() {
+        return Err("expected a nonempty item stack".into());
+    }
+    stack.save(CompoundTag::new())
+}
+
+fn decode_stack(tag: &Tag) -> Result<ItemStack, String> {
+    let stack = ItemStack::from_nbt(tag.as_compound().ok_or("expected an item stack compound")?)?;
+    if stack.is_empty() {
+        return Err("expected a nonempty item stack".into());
+    }
+    Ok(stack)
+}
+
+fn check_item_list_size(len: usize, max: usize) -> Result<(), String> {
+    if len > max {
+        return Err(format!("expected at most {max} item entries"));
+    }
+    Ok(())
+}
+
+fn encode_item_list(items: &[ItemStack], max: usize) -> Result<Tag, String> {
+    check_item_list_size(items.len(), max)?;
+    items.iter().map(encode_stack).collect::<Result<Vec<_>, _>>().map(Tag::List)
+}
+
+fn decode_item_list(tag: &Tag, max: usize) -> Result<Vec<ItemStack>, String> {
+    let items = tag.as_list().ok_or("expected a list of item stacks")?;
+    check_item_list_size(items.len(), max)?;
+    items.iter().map(decode_stack).collect()
+}
+
+fn container_component() -> DataComponentType {
+    let ty = mk("container", false, false, payload_codec!(ItemContainerContents, ItemContainerContents::stream_codec()));
+    with_nbt(
+        ty,
+        |container: &ItemContainerContents| {
+            check_item_list_size(container.items.len(), ItemContainerContents::MAX_SIZE)?;
+            let mut slots = Vec::new();
+            for (index, item) in container.items.iter().enumerate() {
+                if item.is_empty() {
+                    continue;
+                }
+                let mut slot = CompoundTag::new();
+                slot.put_int("slot", index as i32);
+                slot.put("item", encode_stack(item)?);
+                slots.push(Tag::Compound(slot));
+            }
+            Ok(Tag::List(slots))
+        },
+        |tag| {
+            let slots = tag.as_list().ok_or("expected a list of container slots")?;
+            check_item_list_size(slots.len(), ItemContainerContents::MAX_SIZE)?;
+            let mut items = Vec::new();
+            for slot in slots {
+                let slot = slot.as_compound().ok_or("expected a container slot compound")?;
+                let index = slot.get("slot").and_then(Tag::as_long)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .filter(|&value| value < ItemContainerContents::MAX_SIZE)
+                    .ok_or("expected container slot in 0..=255")?;
+                let stack = decode_stack(slot.get("item").ok_or("missing container slot item")?)?;
+                if index >= items.len() {
+                    items.resize_with(index + 1, ItemStack::empty);
+                }
+                items[index] = stack;
+            }
+            Ok(ItemContainerContents::new(items))
+        },
+    )
+}
+
 fn register_builtin_types() {
     register_data_component_type(persistent(
         "custom_data",
@@ -371,7 +444,11 @@ fn register_builtin_types() {
     // 24-35.
     register_data_component_type(mk("food", false, false, payload_codec!(FoodProperties, FoodProperties::stream_codec()))); // FoodProperties
     register_data_component_type(mk("consumable", false, false, payload_codec!(Consumable, Consumable::stream_codec()))); // Consumable
-    register_data_component_type(mk("use_remainder", false, false, payload_codec!(UseRemainder, UseRemainder::stream_codec())));
+    register_data_component_type(with_nbt(
+        mk("use_remainder", false, false, payload_codec!(UseRemainder, UseRemainder::stream_codec())),
+        |value: &UseRemainder| encode_stack(&value.convert_into),
+        |tag| decode_stack(tag).map(UseRemainder::new),
+    ));
     register_data_component_type(mk("use_cooldown", false, false, payload_codec!(UseCooldown, UseCooldown::stream_codec()))); // UseCooldown
     register_data_component_type(mk("damage_resistant", false, false, payload_codec!(DamageResistant, DamageResistant::stream_codec()))); // DamageResistant
     register_data_component_type(mk("tool", false, false, payload_codec!(Tool, Tool::stream_codec())));
@@ -395,8 +472,16 @@ fn register_builtin_types() {
     // 46-49.
     register_data_component_type(persistent_compound("map_decorations"));
     register_data_component_type(mk("map_post_processing", true, false, payload_codec!(MapPostProcessing, MapPostProcessing::stream_codec())));
-    register_data_component_type(mk("charged_projectiles", false, false, payload_codec!(ChargedProjectiles, ChargedProjectiles::stream_codec())));
-    register_data_component_type(mk("bundle_contents", false, false, payload_codec!(BundleContents, BundleContents::stream_codec())));
+    register_data_component_type(with_nbt(
+        mk("charged_projectiles", false, false, payload_codec!(ChargedProjectiles, ChargedProjectiles::stream_codec())),
+        |value: &ChargedProjectiles| encode_item_list(&value.items, 64),
+        |tag| decode_item_list(tag, 64).map(ChargedProjectiles::of_list),
+    ));
+    register_data_component_type(with_nbt(
+        mk("bundle_contents", false, false, payload_codec!(BundleContents, BundleContents::stream_codec())),
+        |value: &BundleContents| encode_item_list(&value.items, 256),
+        |tag| BundleContents::from_persistent_items(decode_item_list(tag, 256)?),
+    ));
     // 50-55.
     register_data_component_type(mk("potion_contents", false, false, payload_codec!(PotionContents, PotionContents::stream_codec())));
     register_data_component_type(float_component("potion_duration_scale", 0.0, f32::MAX));
@@ -428,7 +513,7 @@ fn register_builtin_types() {
     register_data_component_type(mk("banner_patterns", false, false, payload_codec!(BannerPatternLayers, BannerPatternLayers::stream_codec())));
     register_data_component_type(dye_component("base_color"));
     register_data_component_type(mk("pot_decorations", false, false, payload_codec!(PotDecorations, PotDecorations::stream_codec())));
-    register_data_component_type(mk("container", false, false, payload_codec!(ItemContainerContents, ItemContainerContents::stream_codec())));
+    register_data_component_type(container_component());
     register_data_component_type(mk("block_state", false, false, payload_codec!(BlockItemStateProperties, BlockItemStateProperties::stream_codec())));
     register_data_component_type(mk("bees", false, false, payload_codec!(Bees, Bees::stream_codec())));
     register_data_component_type(persistent_compound("lock"));

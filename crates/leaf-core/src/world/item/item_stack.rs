@@ -18,7 +18,33 @@ use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::{Identifier, ResourceKey};
 use crate::world::item::item;
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
+
+thread_local! {
+    static ITEM_NBT_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn with_item_nbt_depth<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    ITEM_NBT_DEPTH.with(|depth| {
+        let previous = depth.get();
+        // Each nested stack adds its own compound and a components compound.
+        if previous >= Tag::MAX_DEPTH / 2 {
+            return Err("item stack NBT is too deeply nested".into());
+        }
+
+        struct RestoreDepth<'a>(&'a Cell<usize>, usize);
+        impl Drop for RestoreDepth<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
+
+        depth.set(previous + 1);
+        let _restore = RestoreDepth(depth, previous);
+        operation()
+    })
+}
 
 /// `ItemStack` — стопка предметов.
 #[derive(Clone, Debug)]
@@ -95,7 +121,11 @@ impl ItemStack {
     }
 
     /// Persistent-формат Java. Пустая стопка использует пустой compound.
-    pub fn save(&self, mut tag: CompoundTag) -> Result<Tag, String> {
+    pub fn save(&self, tag: CompoundTag) -> Result<Tag, String> {
+        with_item_nbt_depth(|| self.save_within_depth(tag))
+    }
+
+    fn save_within_depth(&self, mut tag: CompoundTag) -> Result<Tag, String> {
         if self.is_empty() {
             for key in ["id", "count", "components"] {
                 tag.remove(key);
@@ -120,6 +150,10 @@ impl ItemStack {
     }
 
     pub fn from_nbt(tag: &CompoundTag) -> Result<Self, String> {
+        with_item_nbt_depth(|| Self::decode_within_depth(tag))
+    }
+
+    fn decode_within_depth(tag: &CompoundTag) -> Result<Self, String> {
         if tag.is_empty() || (!tag.contains("id") && tag.get_int("count") == Some(0)) {
             return Ok(Self::empty());
         }
@@ -630,6 +664,78 @@ mod persistence_tests {
         let reread = crate::nbt::io::read_bytes_unlimited(&bytes).unwrap();
         let reread = ItemStack::from_nbt(&reread).unwrap();
         assert_eq!(reread.components.as_patch().to_nbt().unwrap(), *components);
+    }
+
+    #[test]
+    fn restores_nested_items_with_sparse_slots_and_bundle_weight() {
+        use crate::world::item::component::{
+            bundle_contents::BundleContents, charged_projectiles::ChargedProjectiles,
+            item_container_contents::ItemContainerContents, use_remainder::UseRemainder,
+        };
+        use crate::util::fraction::Fraction;
+        let nbt = crate::nbt::snbt_parse::parse_compound(
+            r#"{id:"minecraft:shulker_box",components:{"minecraft:container":[
+                {slot:4,item:{id:"minecraft:bundle",components:{"minecraft:bundle_contents":[
+                    {id:"minecraft:stone",count:2,"components":{"minecraft:max_stack_size":32}}
+                ]}}},
+                {slot:255,item:{id:"minecraft:crossbow",components:{"minecraft:charged_projectiles":[
+                    {id:"minecraft:arrow",components:{"minecraft:use_remainder":{id:"minecraft:stick"}}}
+                ]}}}
+            ]}}"#,
+        ).unwrap();
+        let stack = ItemStack::from_nbt(&nbt).unwrap();
+        let container = stack.get_component::<ItemContainerContents>(&Identifier::minecraft("container")).unwrap();
+        assert_eq!(container.items.len(), 256);
+        assert!(container.items[0].is_empty());
+        let bundle = container.items[4].get_component::<BundleContents>(&Identifier::minecraft("bundle_contents")).unwrap();
+        assert_eq!(bundle.weight, Fraction::new(1, 16));
+        assert_eq!(bundle.selected_item, -1);
+        let projectiles = container.items[255].get_component::<ChargedProjectiles>(&Identifier::minecraft("charged_projectiles")).unwrap();
+        let remainder = projectiles.items[0].get_component::<UseRemainder>(&Identifier::minecraft("use_remainder")).unwrap();
+        assert_eq!(remainder.convert_into.item_identifier(), Some(Identifier::minecraft("stick")));
+
+        let saved = stack.save(CompoundTag::new()).unwrap();
+        let slots = saved.as_compound().unwrap().get_compound("components").unwrap()
+            .get("minecraft:container").unwrap().as_list().unwrap();
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[1].as_compound().unwrap().get_int("slot"), Some(255));
+        assert_eq!(ItemStack::from_nbt(saved.as_compound().unwrap()).unwrap(), stack);
+    }
+
+    #[test]
+    fn rejects_invalid_nested_item_shapes_and_unrepresentable_bundle_weight() {
+        use crate::nbt::snbt_parse::parse_compound;
+
+        for (contents, error) in [
+            (r#"container:[{slot:256,item:{id:stone}}]"#, "slot in 0..=255"),
+            (r#"charged_projectiles:[{}]"#, "nonempty item stack"),
+            (r#"use_remainder:{id:stone,count:0}"#, "item count"),
+            (
+                r#"bundle_contents:[{id:stone,components:{max_stack_size:89}},
+                    {id:stone,components:{max_stack_size:83}},
+                    {id:stone,components:{max_stack_size:79}},
+                    {id:stone,components:{max_stack_size:73}},
+                    {id:stone,components:{max_stack_size:71}},
+                    {id:stone,components:{max_stack_size:67}}]"#,
+                "excessive total bundle weight",
+            ),
+        ] {
+            let item = parse_compound(&format!("{{id:stone,components:{{{contents}}}}}")).unwrap();
+            let message = ItemStack::from_nbt(&item).unwrap_err();
+            assert!(message.contains(error), "{message}");
+        }
+
+        let mut item = parse_compound("{id:stone}").unwrap();
+        for _ in 0..Tag::MAX_DEPTH / 2 {
+            let mut parent = parse_compound("{id:stone}").unwrap();
+            let mut components = CompoundTag::new();
+            components.put("use_remainder", Tag::Compound(item));
+            parent.put("components", Tag::Compound(components));
+            item = parent;
+        }
+        let message = ItemStack::from_nbt(&item).unwrap_err();
+        assert!(message.contains("too deeply nested"), "{message}");
+        assert!(ItemStack::from_nbt(&parse_compound("{id:stone}").unwrap()).is_ok());
     }
 
     #[test]

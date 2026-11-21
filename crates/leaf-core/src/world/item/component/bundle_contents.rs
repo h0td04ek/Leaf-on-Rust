@@ -36,6 +36,27 @@ impl BundleContents {
         Self { items, weight, selected_item: Self::NO_SELECTED_ITEM_INDEX }
     }
 
+    pub(crate) fn from_persistent_items(items: Vec<ItemStack>) -> Result<Self, String> {
+        fn checked(weight: Fraction) -> Result<Fraction, String> {
+            if weight.numerator > i32::MAX as i64 || weight.denominator > i32::MAX as i64 {
+                return Err("excessive total bundle weight".into());
+            }
+            Ok(weight)
+        }
+
+        let mut weight = Fraction::ZERO;
+        for stack in &items {
+            let item_weight = checked(Self::get_weight(stack))?;
+            let stack_weight = checked(item_weight.multiply(i64::from(stack.get_count())))?;
+            weight = checked(weight + stack_weight)?;
+        }
+        Ok(Self {
+            items,
+            weight,
+            selected_item: Self::NO_SELECTED_ITEM_INDEX,
+        })
+    }
+
     /// `computeContentWeight` — сумма `stack.getWeight()`
     /// (`BundleContents.getWeight` × count).
     pub fn compute_content_weight(items: &[ItemStack]) -> Fraction {
