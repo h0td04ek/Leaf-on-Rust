@@ -25,10 +25,6 @@ impl ItemInput {
     }
 
     fn has_valid_components(&self) -> bool {
-        if self.components.is_empty() {
-            return true;
-        }
-
         let stack = self.create_stack(1);
         let max_stack = Identifier::minecraft("max_stack_size");
         if stack.has_component(&Identifier::minecraft("max_damage"))
@@ -248,9 +244,14 @@ mod tests {
 
     #[test]
     fn parses_bracket_patches_and_a_following_argument() {
-        let wire_id = item::register_item(item::Item::new(
-            Identifier::parse("fixture:command_blade").unwrap(),
-        ));
+        let mut components = crate::core::component::DataComponentMap::new();
+        let size =
+            data_component_type_by_identifier(&Identifier::minecraft("max_stack_size")).unwrap();
+        components.set(&size, 32_i32);
+        let wire_id = item::register_item_with_components(
+            item::Item::new(Identifier::parse("fixture:command_blade").unwrap()),
+            components,
+        );
         let mut dispatcher = CommandDispatcher::<()>::new();
         let root = dispatcher
             .add_node(dispatcher.root(), CommandNode::literal("test_item"))
@@ -297,6 +298,7 @@ mod tests {
             "test_item fixture:command_blade[damage=1,!minecraft:damage] 3",
             "test_item fixture:command_blade[damage=-1] 3",
             "test_item fixture:command_blade[max_stack_size=3,max_damage=20] 3",
+            "test_item fixture:command_blade[max_damage=20] 3",
             "test_item fixture:command_blade[custom_data={items:[1,2}] 3",
         ] {
             assert!(dispatcher.execute(invalid, &mut ()).is_err(), "{invalid}");

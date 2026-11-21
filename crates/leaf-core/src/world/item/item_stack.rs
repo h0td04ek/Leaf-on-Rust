@@ -69,20 +69,21 @@ impl ItemStack {
         Self { item: None, count: 0, components: PatchedDataComponentMap::empty() }
     }
 
-    /// `new(itemHolder, count)` — с пустым prototype компонентов.
+    /// `new(itemHolder, count)`.
     pub fn new(item: Holder<item::Item>, count: i32) -> Self {
-        Self {
-            item: Some(item),
-            count,
-            components: PatchedDataComponentMap::empty(),
-        }
+        Self::with_patch(item, count, DataComponentPatch::empty())
     }
 
     /// `new(item, count, patch)` — Java-конструктор из optional-кодека.
     pub fn with_patch(item: Holder<item::Item>, count: i32, patch: DataComponentPatch) -> Self {
-        let mut components = PatchedDataComponentMap::empty();
-        // Удаления из сохранения сохраняются до загрузки прототипов предметов.
-        components.restore_patch(&patch);
+        let components = if let Some(prototype) = item::component_prototype(&item) {
+            PatchedDataComponentMap::from_patch((*prototype).clone(), &patch)
+        } else {
+            // До загрузки прототипа сохраняем даже удаления отсутствующих компонентов.
+            let mut components = PatchedDataComponentMap::empty();
+            components.restore_patch(&patch);
+            components
+        };
         Self {
             item: Some(item),
             count,
@@ -234,17 +235,17 @@ impl ItemStack {
         self.get_hover_name()
     }
 
-    /// `getMaxStackSize()` — `item.getMaxStackSize()`:
-    /// `MAX_STACK_SIZE` компонент предмета, default 64.
+    /// `getMaxStackSize()`. Для незагруженного прототипа используется 64.
     pub fn get_max_stack_size(&self) -> i32 {
-        let id = crate::resources::identifier::Identifier::parse("max_stack_size")
-            .expect("max_stack_size id");
+        let id = Identifier::minecraft("max_stack_size");
         if let Some(max) = self.components.get_by_id::<i32>(&id) {
             return *max;
         }
-        64
-    }
 
+        let removed = self.components.patch_entries().iter().any(|(key, value)| *key == id && value.is_none());
+        let has_prototype = self.item.as_ref().and_then(item::component_prototype).is_some();
+        if removed || has_prototype { 1 } else { 64 }
+    }
 
     /// `isSameItem(a, b)` — одинаковый item (без count/компонентов).
     pub fn is_same_item(a: &ItemStack, b: &ItemStack) -> bool {
@@ -736,6 +737,52 @@ mod persistence_tests {
         let message = ItemStack::from_nbt(&item).unwrap_err();
         assert!(message.contains("too deeply nested"), "{message}");
         assert!(ItemStack::from_nbt(&parse_compound("{id:stone}").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn inherits_registered_prototypes_without_persisting_default_components() {
+        use crate::core::component::DataComponentMap;
+        use crate::world::item::rarity::Rarity;
+
+        let mut defaults = DataComponentMap::new();
+        let size = Identifier::minecraft("max_stack_size");
+        let rarity = Identifier::minecraft("rarity");
+        defaults.set(&data_component_type_by_identifier(&size).unwrap(), 16_i32);
+        defaults.set(&data_component_type_by_identifier(&rarity).unwrap(), Rarity::RARE);
+        let id = Identifier::parse("fixture:prototype_item").unwrap();
+        let wire_id = item::register_item_with_components(item::Item::new(id), defaults);
+        let stack = ItemStack::new(Holder::Reference(wire_id), 1);
+        assert_eq!(stack.get_max_stack_size(), 16);
+        assert_eq!(stack.get_component::<Rarity>(&rarity), Some(Rarity::RARE));
+
+        let nbt = stack.save(CompoundTag::new()).unwrap();
+        let mut nbt = nbt.as_compound().unwrap().clone();
+        assert!(!nbt.contains("components"));
+        assert_eq!(ItemStack::from_nbt(&nbt).unwrap().get_max_stack_size(), 16);
+
+        let mut patch = CompoundTag::new();
+        patch.put_int("max_stack_size", 16);
+        patch.put("!rarity", Tag::Compound(CompoundTag::new()));
+        nbt.put("components", Tag::Compound(patch.clone()));
+        let mut decoded = ItemStack::from_nbt(&nbt).unwrap();
+        assert_eq!(decoded.get_max_stack_size(), 16);
+        assert_eq!(decoded.get_component::<Rarity>(&rarity), None);
+        let delta = decoded.components.as_patch().to_nbt().unwrap();
+        assert!(!delta.contains("minecraft:max_stack_size"));
+        assert!(delta.contains("!minecraft:rarity"));
+
+        patch.remove("max_stack_size");
+        patch.put("!max_stack_size", Tag::Compound(CompoundTag::new()));
+        nbt.put("components", Tag::Compound(patch));
+        decoded = ItemStack::from_nbt(&nbt).unwrap();
+        assert_eq!(decoded.get_max_stack_size(), 1);
+        assert!(decoded.components.as_patch().to_nbt().unwrap().contains("!minecraft:max_stack_size"));
+
+        let mut packet = FriendlyByteBuf::new();
+        ItemStack::stream_codec().encode(&mut packet, &stack);
+        let reread = ItemStack::stream_codec().decode(&mut packet);
+        assert_eq!(reread.get_max_stack_size(), 16);
+        assert_eq!(reread.get_component::<Rarity>(&rarity), Some(Rarity::RARE));
     }
 
     #[test]

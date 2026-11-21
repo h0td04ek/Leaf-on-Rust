@@ -8,6 +8,7 @@
 //! расширяться по мере порта `Item`-иерархии; wire-критична только
 //! registry-идентичность.
 
+use crate::core::component::DataComponentMap;
 use crate::core::holder::Holder;
 use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
@@ -73,46 +74,72 @@ impl Item {
     }
 }
 
-/// Глобальный реестр `Registries.ITEM` — порядок = vanilla bootstrap
-/// (wire-id = индекс). Наполняется `items::bootstrap` по мере порта.
-static ITEM_REGISTRY: std::sync::OnceLock<RwLock<Vec<Arc<Item>>>> =
+struct RegistryEntry {
+    item: Arc<Item>,
+    components: Option<Arc<DataComponentMap>>,
+}
+
+/// Глобальный реестр `Registries.ITEM` — порядок индексов совпадает с wire-id.
+static ITEM_REGISTRY: std::sync::OnceLock<RwLock<Vec<RegistryEntry>>> =
     std::sync::OnceLock::new();
 
-fn registry() -> &'static RwLock<Vec<Arc<Item>>> {
+fn registry() -> &'static RwLock<Vec<RegistryEntry>> {
     ITEM_REGISTRY.get_or_init(|| RwLock::new(Vec::new()))
 }
 
-/// Регистрация предмета — вызывается из bootstrap предметов.
-/// Возвращает registry-id.
+/// Регистрация записи без загруженного прототипа компонентов.
 pub fn register_item(item: Item) -> i32 {
+    register(item, None)
+}
+
+/// Регистрация записи с компонентами, которые наследуют её стопки.
+pub fn register_item_with_components(item: Item, components: DataComponentMap) -> i32 {
+    register(item, Some(Arc::new(components)))
+}
+
+fn register(item: Item, components: Option<Arc<DataComponentMap>>) -> i32 {
     let mut reg = registry().write().unwrap();
     let id = reg.len() as i32;
-    reg.push(Arc::new(item));
+    reg.push(RegistryEntry { item: Arc::new(item), components });
     id
 }
 
 /// `itemById`.
 pub fn item_by_id(id: i32) -> Option<Arc<Item>> {
-    registry().read().unwrap().get(id as usize).cloned()
+    registry().read().unwrap().get(id as usize).map(|entry| Arc::clone(&entry.item))
 }
 
 pub(crate) fn item_identifiers() -> Vec<Identifier> {
-    registry().read().unwrap().iter().map(|item| item.id.clone()).collect()
+    registry().read().unwrap().iter().map(|entry| entry.item.id.clone()).collect()
+}
+
+fn find_entry<'a>(entries: &'a [RegistryEntry], id: &Identifier) -> Option<&'a RegistryEntry> {
+    entries.iter().find(|entry| entry.item.id == *id)
 }
 
 /// Поиск по Identifier.
 pub fn item_by_identifier(id: &Identifier) -> Option<Arc<Item>> {
-    registry().read().unwrap().iter().find(|i| i.id == *id).cloned()
+    find_entry(&registry().read().unwrap(), id).map(|entry| Arc::clone(&entry.item))
 }
 
 pub fn item_holder_by_identifier(id: &Identifier) -> Option<Holder<Item>> {
-    registry().read().unwrap().iter().position(|item| item.id == *id)
+    registry().read().unwrap().iter().position(|entry| entry.item.id == *id)
         .map(|wire_id| Holder::Reference(wire_id as i32))
+}
+
+pub(crate) fn component_prototype(holder: &Holder<Item>) -> Option<Arc<DataComponentMap>> {
+    let registry = registry().read().unwrap();
+    let entry = match holder {
+        Holder::Reference(id) => registry.get(*id as usize),
+        Holder::Direct(item) => find_entry(&registry, &item.id),
+        Holder::Key(key) => find_entry(&registry, &key.identifier),
+    }?;
+    entry.components.clone()
 }
 
 /// Id предмета в реестре (None — не зарегистрирован).
 pub fn item_registry_id(item: &Item) -> Option<i32> {
-    registry().read().unwrap().iter().position(|i| i.id == item.id).map(|i| i as i32)
+    registry().read().unwrap().iter().position(|entry| entry.item.id == item.id).map(|i| i as i32)
 }
 
 /// `Item.STREAM_CODEC` — `holderRegistry(ITEM)`:
