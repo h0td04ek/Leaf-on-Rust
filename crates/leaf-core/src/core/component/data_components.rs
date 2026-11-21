@@ -70,6 +70,8 @@ use crate::world::item::item_stack::ItemStack;
 use crate::world::level::saveddata::maps::MapId;
 use std::sync::Once;
 
+mod item_properties_nbt;
+
 fn mk(
     id: &str,
     transient: bool,
@@ -410,7 +412,7 @@ fn register_builtin_types() {
     register_data_component_type(int_component("damage", 0, i32::MAX, true));
     register_data_component_type(unit_component("unbreakable"));
     // 6. use_effects — UseEffects.STREAM_CODEC (payload портируется).
-    register_data_component_type(mk("use_effects", false, false, payload_codec!(UseEffects, UseEffects::stream_codec())));
+    register_data_component_type(item_properties_nbt::use_effects(mk("use_effects", false, false, payload_codec!(UseEffects, UseEffects::stream_codec()))));
     // 7-8.
     register_data_component_type(with_nbt(mk("custom_name", false, false, component()), encode_chat, decode_chat));
     register_data_component_type(float_component("minimum_attack_charge", 0.0, 1.0));
@@ -442,18 +444,18 @@ fn register_builtin_types() {
         },
     ));
     // 24-35.
-    register_data_component_type(mk("food", false, false, payload_codec!(FoodProperties, FoodProperties::stream_codec()))); // FoodProperties
+    register_data_component_type(item_properties_nbt::food(mk("food", false, false, payload_codec!(FoodProperties, FoodProperties::stream_codec())))); // FoodProperties
     register_data_component_type(mk("consumable", false, false, payload_codec!(Consumable, Consumable::stream_codec()))); // Consumable
     register_data_component_type(with_nbt(
         mk("use_remainder", false, false, payload_codec!(UseRemainder, UseRemainder::stream_codec())),
         |value: &UseRemainder| encode_stack(&value.convert_into),
         |tag| decode_stack(tag).map(UseRemainder::new),
     ));
-    register_data_component_type(mk("use_cooldown", false, false, payload_codec!(UseCooldown, UseCooldown::stream_codec()))); // UseCooldown
+    register_data_component_type(item_properties_nbt::use_cooldown(mk("use_cooldown", false, false, payload_codec!(UseCooldown, UseCooldown::stream_codec())))); // UseCooldown
     register_data_component_type(mk("damage_resistant", false, false, payload_codec!(DamageResistant, DamageResistant::stream_codec()))); // DamageResistant
     register_data_component_type(mk("tool", false, false, payload_codec!(Tool, Tool::stream_codec())));
-    register_data_component_type(mk("weapon", false, false, payload_codec!(Weapon, Weapon::stream_codec())));
-    register_data_component_type(mk("attack_range", false, false, payload_codec!(AttackRange, AttackRange::stream_codec())));
+    register_data_component_type(item_properties_nbt::weapon(mk("weapon", false, false, payload_codec!(Weapon, Weapon::stream_codec()))));
+    register_data_component_type(item_properties_nbt::attack_range(mk("attack_range", false, false, payload_codec!(AttackRange, AttackRange::stream_codec()))));
     register_data_component_type(int_nbt(mk("enchantable", false, false, payload_codec!(Enchantable, Enchantable::stream_codec())), 1, i32::MAX, |value: &Enchantable| value.value, Enchantable::new));
     register_data_component_type(mk("equippable", false, false, payload_codec!(Equippable, Equippable::stream_codec())));
     register_data_component_type(mk("repairable", false, false, payload_codec!(Repairable, Repairable::stream_codec())));
@@ -464,9 +466,27 @@ fn register_builtin_types() {
     register_data_component_type(mk("blocks_attacks", false, false, payload_codec!(BlocksAttacks, BlocksAttacks::stream_codec())));
     register_data_component_type(mk("piercing_weapon", false, false, payload_codec!(PiercingWeapon, PiercingWeapon::stream_codec())));
     register_data_component_type(mk("kinetic_weapon", false, false, payload_codec!(KineticWeapon, KineticWeapon::stream_codec())));
-    register_data_component_type(mk("swing_animation", false, false, payload_codec!(SwingAnimation, SwingAnimation::stream_codec())));
+    register_data_component_type(item_properties_nbt::swing_animation(mk("swing_animation", false, false, payload_codec!(SwingAnimation, SwingAnimation::stream_codec()))));
     register_data_component_type(mk("stored_enchantments", false, false, payload_codec!(ItemEnchantments, ItemEnchantments::stream_codec())));
-    register_data_component_type(mk("dyed_color", false, false, payload_codec!(DyedItemColor, DyedItemColor::stream_codec()))); // DyedItemColor
+    register_data_component_type(with_nbt(
+        mk("dyed_color", false, false, payload_codec!(DyedItemColor, DyedItemColor::stream_codec())),
+        |color: &DyedItemColor| Ok(Tag::Int(color.rgb)),
+        |tag| {
+            if let Some(rgb) = tag.as_int() {
+                return Ok(DyedItemColor { rgb });
+            }
+            let Some([red, green, blue]) = tag.as_list() else {
+                return Err("expected an RGB integer or three color channels".into());
+            };
+            let rgb = crate::util::argb::color_from_float(
+                1.0,
+                red.as_float().ok_or("expected a red color channel")?,
+                green.as_float().ok_or("expected a green color channel")?,
+                blue.as_float().ok_or("expected a blue color channel")?,
+            );
+            Ok(DyedItemColor { rgb })
+        },
+    )); // DyedItemColor
     register_data_component_type(int_nbt(mk("map_color", false, false, payload_codec!(MapItemColor, MapItemColor::stream_codec())), i32::MIN, i32::MAX, |value: &MapItemColor| value.rgb, MapItemColor::new));
     register_data_component_type(int_nbt(mk("map_id", false, false, payload_codec!(MapId, MapId::stream_codec())), i32::MIN, i32::MAX, |value: &MapId| value.0, MapId)); // MapId
     // 46-49.
