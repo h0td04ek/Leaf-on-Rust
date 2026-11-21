@@ -1,6 +1,10 @@
 //! Основные типы аргументов Brigadier и их сетевые шаблоны.
 
+use crate::command::arguments::vanilla::{self, CommandAngle, CommandRotation, Coordinates};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::resources::Identifier;
+use crate::util::uuid::Uuid;
+use crate::world::level::game_type::GameType;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StringMode {
@@ -17,6 +21,17 @@ pub enum ArgumentType {
     Integer { min: i32, max: i32 },
     Long { min: i64, max: i64 },
     String(StringMode),
+    BlockPos,
+    ColumnPos,
+    Vec3,
+    Vec2,
+    Angle,
+    Rotation,
+    Identifier,
+    Dimension,
+    GameMode,
+    Time { min: i32 },
+    Uuid,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,6 +42,12 @@ pub enum ArgumentValue {
     Integer(i32),
     Long(i64),
     String(String),
+    Coordinates(Coordinates),
+    Angle(CommandAngle),
+    Rotation(CommandRotation),
+    Identifier(Identifier),
+    GameMode(GameType),
+    Uuid(Uuid),
 }
 
 impl ArgumentType {
@@ -38,11 +59,25 @@ impl ArgumentType {
             Self::Integer { .. } => 3,
             Self::Long { .. } => 4,
             Self::String(_) => 5,
+            Self::BlockPos => 8,
+            Self::ColumnPos => 9,
+            Self::Vec3 => 10,
+            Self::Vec2 => 11,
+            Self::Angle => 28,
+            Self::Rotation => 29,
+            Self::Identifier => 36,
+            Self::Dimension => 41,
+            Self::GameMode => 42,
+            Self::Time { .. } => 43,
+            Self::Uuid => 56,
         }
     }
 
     pub(crate) fn parse(self, input: &str, cursor: usize) -> Option<(ArgumentValue, usize)> {
         let reader = &input[cursor..];
+        if self.registry_id() > 5 {
+            return vanilla::parse(self, reader).map(|(value, end)| (value, cursor + end));
+        }
         if reader.is_empty() {
             return None;
         }
@@ -76,6 +111,7 @@ impl ArgumentType {
             Self::Double { min, max } => ArgumentValue::Double(parse_bounded(token, min, max)?),
             Self::String(_) if !token.is_empty() => ArgumentValue::String(token.to_owned()),
             Self::String(_) => return None,
+            _ => unreachable!("Minecraft arguments are parsed separately"),
         };
         Some((value, cursor + end))
     }
@@ -105,13 +141,39 @@ impl ArgumentType {
                 2 => Some(Self::String(StringMode::Greedy)),
                 _ => None,
             },
+            8 => Some(Self::BlockPos),
+            9 => Some(Self::ColumnPos),
+            10 => Some(Self::Vec3),
+            11 => Some(Self::Vec2),
+            28 => Some(Self::Angle),
+            29 => Some(Self::Rotation),
+            36 => Some(Self::Identifier),
+            41 => Some(Self::Dimension),
+            42 => Some(Self::GameMode),
+            43 => Some(Self::Time {
+                min: buf.read_int(),
+            }),
+            56 => Some(Self::Uuid),
             _ => None,
         }
     }
 
     pub(crate) fn write_template(self, buf: &mut FriendlyByteBuf) {
         match self {
-            Self::Bool => {}
+            Self::Bool
+            | Self::BlockPos
+            | Self::ColumnPos
+            | Self::Vec3
+            | Self::Vec2
+            | Self::Angle
+            | Self::Rotation
+            | Self::Identifier
+            | Self::Dimension
+            | Self::GameMode
+            | Self::Uuid => {}
+            Self::Time { min } => {
+                buf.write_int(min);
+            }
             Self::Float { min, max } => {
                 write_bounds(buf, min, max, f32::MIN, f32::MAX, |buf, value| {
                     buf.write_float(value);

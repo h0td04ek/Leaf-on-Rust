@@ -318,7 +318,7 @@ impl<S> CommandDispatcher<S> {
 
         let remaining = &prefix[furthest..];
         let lower = remaining.to_lowercase();
-        let mut entries = Vec::new();
+        let mut candidates = Vec::new();
         for branch in frontier {
             for id in self
                 .children(branch.node)
@@ -327,8 +327,12 @@ impl<S> CommandDispatcher<S> {
                 .filter(|&id| self.can_use(id, source))
             {
                 let child = self.node(id);
-                match child.kind {
-                    NodeKind::Literal => add_matching(&mut entries, &child.name, &lower),
+                let mut entries = Vec::new();
+                let offset = match child.kind {
+                    NodeKind::Literal => {
+                        add_matching(&mut entries, &child.name, &lower);
+                        0
+                    }
                     NodeKind::Argument(argument) => {
                         if let Some(provider) = child
                             .suggestion_provider
@@ -336,20 +340,40 @@ impl<S> CommandDispatcher<S> {
                             .and_then(|id| self.suggestions.get(id))
                         {
                             provider(source, &branch.context, remaining, &mut entries);
-                        } else if argument == ArgumentType::Bool {
-                            add_matching(&mut entries, "true", &lower);
-                            add_matching(&mut entries, "false", &lower);
+                            0
+                        } else {
+                            builtin_suggestions(argument, remaining, &lower, &mut entries)
                         }
                     }
                     NodeKind::Root => unreachable!(),
-                }
+                };
+                candidates.extend(
+                    entries
+                        .into_iter()
+                        .filter(|entry| entry.text != remaining[offset..])
+                        .map(|entry| (furthest + offset, entry)),
+                );
             }
         }
-        entries.retain(|entry| entry.text != remaining);
+
+        let start = candidates
+            .iter()
+            .map(|(start, _)| *start)
+            .min()
+            .unwrap_or(furthest);
+        let mut entries: Vec<_> = candidates
+            .into_iter()
+            .map(|(offset, mut entry)| {
+                if offset != start {
+                    entry.text.insert_str(0, &prefix[start..offset]);
+                }
+                entry
+            })
+            .collect();
         entries.sort_by_cached_key(|entry| (entry.text.to_lowercase(), entry.text.clone()));
         entries.dedup_by(|a, b| a.text == b.text);
         CommandSuggestions {
-            range: furthest..cursor,
+            range: start..cursor,
             entries,
         }
     }
@@ -419,6 +443,36 @@ impl<S> CommandDispatcher<S> {
         }
         Err(best)
     }
+}
+
+fn builtin_suggestions(
+    argument: ArgumentType,
+    prefix: &str,
+    lower: &str,
+    entries: &mut Vec<CommandSuggestion>,
+) -> usize {
+    match argument {
+        ArgumentType::Bool => {
+            add_matching(entries, "true", lower);
+            add_matching(entries, "false", lower);
+        }
+        ArgumentType::GameMode => {
+            for mode in crate::world::level::game_type::GameType::values() {
+                add_matching(entries, mode.get_name(), lower);
+            }
+        }
+        ArgumentType::Time { .. } => {
+            let number_end = crate::command::arguments::vanilla::number_end(prefix);
+            if prefix[..number_end].parse::<f32>().is_ok() {
+                for unit in ["d", "s", "t"] {
+                    add_matching(entries, unit, &lower[number_end..]);
+                }
+                return number_end;
+            }
+        }
+        _ => {}
+    }
+    0
 }
 
 fn add_matching(entries: &mut Vec<CommandSuggestion>, text: &str, lower_prefix: &str) {
