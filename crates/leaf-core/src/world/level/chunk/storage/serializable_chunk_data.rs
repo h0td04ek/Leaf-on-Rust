@@ -39,6 +39,13 @@ pub trait ChunkPaletteLookup {
     fn block_state(&self, nbt: &CompoundTag) -> Option<BlockState>;
     fn biome(&self, id: &Identifier) -> Option<Holder<Biome>>;
     fn default_biome(&self) -> Holder<Biome>;
+
+    fn create_section(&self) -> LevelChunkSection {
+        LevelChunkSection::new(
+            create_block_states_container(BlockState::air()),
+            create_biomes_container(self.default_biome()),
+        )
+    }
 }
 
 pub struct ChunkLoadingContext<'a> {
@@ -237,7 +244,7 @@ impl SerializableChunkData {
         }
         let section_count = height.get_sections_count() as usize;
         let mut sections: Vec<_> = (0..section_count)
-            .map(|_| create_section(context.palettes))
+            .map(|_| context.palettes.create_section())
             .collect();
         let min_section = height.get_min_section_y();
         let min_light_section = min_section - 1;
@@ -569,13 +576,6 @@ fn read_post_processing(
         }));
     }
     positions
-}
-
-fn create_section(palettes: &dyn ChunkPaletteLookup) -> LevelChunkSection {
-    LevelChunkSection::new(
-        create_block_states_container(BlockState::air()),
-        create_biomes_container(palettes.default_biome()),
-    )
 }
 
 fn read_section(
