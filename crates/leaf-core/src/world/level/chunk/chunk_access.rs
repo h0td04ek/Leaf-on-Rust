@@ -230,22 +230,20 @@ impl ChunkAccess {
 
     /// `getBlockState` — состояние блока.
     pub fn get_block_state(&self, pos: &BlockPos) -> BlockState {
-        let section_y = SectionPos::block_to_section_coord(pos.get_y());
-        let section_idx = section_y - self.get_min_section();
-        if section_idx < 0 || section_idx >= self.sections.len() as i32 {
-            return BlockState::air();
-        }
-        let section = &self.sections[section_idx as usize];
-        let x = SectionPos::section_relative(pos.get_x());
-        let y = SectionPos::section_relative(pos.get_y());
-        let z = SectionPos::section_relative(pos.get_z());
-        section.get_block_state(x, y, z)
+        block_state_at(
+            &self.sections,
+            self.get_min_section(),
+            SectionPos::section_relative(pos.get_x()),
+            pos.get_y(),
+            SectionPos::section_relative(pos.get_z()),
+        )
     }
 
     /// `setBlockState` — установить состояние блока.
     pub fn set_block_state(&mut self, pos: &BlockPos, state: BlockState) -> bool {
         let section_y = SectionPos::block_to_section_coord(pos.get_y());
-        let section_idx = section_y - self.get_min_section();
+        let min_section = self.get_min_section();
+        let section_idx = section_y - min_section;
         if section_idx < 0 || section_idx >= self.sections.len() as i32 {
             return false;
         }
@@ -254,7 +252,17 @@ impl ChunkAccess {
         let y = SectionPos::section_relative(pos.get_y());
         let z = SectionPos::section_relative(pos.get_z());
         let (old, _) = section.set_block_state(x, y, z, state.clone());
-        old != state
+        if old == state {
+            return false;
+        }
+        let sections = &self.sections;
+        for (&ty, heightmap) in &mut self.heightmaps {
+            heightmap.update(x, pos.get_y(), z, &state, ty, |scan_y| {
+                block_state_at(sections, min_section, x, scan_y, z)
+            });
+        }
+        self.mark_unsaved();
+        true
     }
 
     /// `getFluidState` — состояние жидкости.
@@ -270,6 +278,55 @@ impl ChunkAccess {
         } else {
             self.level_height_accessor.get_min_y()
         }
+    }
+
+    /// Строит требуемые карты в один проход по каждой колонке.
+    pub fn prime_heightmaps(&mut self, types: &[HeightmapType]) {
+        if types.is_empty() {
+            return;
+        }
+        let min_y = self.level_height_accessor.get_min_y();
+        let min_section = self.get_min_section();
+        let mut maps: Vec<_> = HeightmapType::VALUES
+            .into_iter()
+            .filter(|ty| types.contains(ty))
+            .map(|ty| {
+                let heightmap = Heightmap::new(
+                    self.chunk_pos,
+                    ty,
+                    self.level_height_accessor.as_ref(),
+                    min_y,
+                );
+                (ty, heightmap)
+            })
+            .collect();
+        let all_found = (1 << maps.len()) - 1;
+
+        for z in 0..16 {
+            for x in 0..16 {
+                let mut found = 0u32;
+                'column: for (index, section) in self.sections.iter().enumerate().rev() {
+                    if section.has_only_air() {
+                        continue;
+                    }
+                    let section_min_y = (min_section + index as i32) << 4;
+                    for y in (0..16).rev() {
+                        let state = section.get_block_state(x, y, z);
+                        for (map_index, (ty, heightmap)) in maps.iter_mut().enumerate() {
+                            let bit = 1 << map_index;
+                            if found & bit == 0 && ty.is_block_counted(&state) {
+                                heightmap.set_height(x, z, section_min_y + y + 1);
+                                found |= bit;
+                            }
+                        }
+                        if found == all_found {
+                            break 'column;
+                        }
+                    }
+                }
+            }
+        }
+        self.heightmaps.extend(maps);
     }
 
     /// `setHeight` — установить высоту.
@@ -491,4 +548,17 @@ impl crate::ca::moonrise::patches::starlight::chunk::StarlightChunk for ChunkAcc
     ) {
         *self.starlight_block_emptiness_map.lock().unwrap() = map;
     }
+}
+
+fn block_state_at(
+    sections: &[LevelChunkSection],
+    min_section: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> BlockState {
+    let section_index = SectionPos::block_to_section_coord(y) - min_section;
+    sections.get(section_index as usize).map_or_else(BlockState::air, |section| {
+        section.get_block_state(x, SectionPos::section_relative(y), z)
+    })
 }

@@ -107,6 +107,15 @@ impl ChunkStatus {
         }
     }
 
+    pub fn heightmaps_after(self) -> &'static [HeightmapType] {
+        use HeightmapType::*;
+        if self.is_or_after(Self::Carvers) {
+            &[OceanFloor, WorldSurface, MotionBlocking, MotionBlockingNoLeaves]
+        } else {
+            &[OceanFloorWg, WorldSurfaceWg]
+        }
+    }
+
     /// `isOrAfter`.
     pub fn is_or_after(&self, other: ChunkStatus) -> bool {
         self.ordinal() >= other.ordinal()

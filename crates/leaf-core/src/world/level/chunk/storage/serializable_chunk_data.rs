@@ -288,23 +288,7 @@ impl SerializableChunkData {
             }
         }
 
-        if let Some(heightmaps) = tag.get_compound("Heightmaps") {
-            for ty in HeightmapType::VALUES {
-                if let Some(words) = heightmaps.get_long_array(heightmap_key(ty)) {
-                    let bits = ceillog2(height.get_height() as usize + 1) as i32;
-                    let data = SimpleBitStorage::from_raw(bits, 256, words.to_vec())
-                        .map_err(invalid_data)?;
-                    let mut heightmap = Heightmap::new(pos, ty, height, height.get_min_y());
-                    for z in 0..16 {
-                        for x in 0..16 {
-                            let relative_y = data.get((z * 16 + x) as usize);
-                            heightmap.set_height(x, z, height.get_min_y() + relative_y);
-                        }
-                    }
-                    chunk.heightmaps.insert(ty, heightmap);
-                }
-            }
-        }
+        read_heightmaps(&mut chunk, tag.get_compound("Heightmaps"));
         for block_entity in tag
             .get_list_or_empty("block_entities")
             .iter()
@@ -478,6 +462,42 @@ fn write_block_state(state: BlockState) -> CompoundTag {
         tag.put("Properties", Tag::Compound(properties));
     }
     tag
+}
+
+fn read_heightmaps(chunk: &mut ChunkAccess, tag: Option<&CompoundTag>) {
+    let height = chunk.level_height_accessor.as_ref();
+    let bits = ceillog2(height.get_height() as usize + 1) as i32;
+    if let Some(tag) = tag {
+        for ty in HeightmapType::VALUES {
+            let Some(words) = tag.get_long_array(heightmap_key(ty)) else {
+                continue;
+            };
+            let Ok(data) = SimpleBitStorage::from_raw(bits, 256, words.to_vec()) else {
+                continue;
+            };
+            if (0..256).any(|index| data.get(index) > height.get_height()) {
+                continue;
+            }
+
+            let min_y = height.get_min_y();
+            let mut heightmap = Heightmap::new(chunk.get_pos(), ty, height, min_y);
+            for z in 0..16 {
+                for x in 0..16 {
+                    heightmap.set_height(x, z, min_y + data.get((z * 16 + x) as usize));
+                }
+            }
+            chunk.heightmaps.insert(ty, heightmap);
+        }
+    }
+
+    let missing: Vec<_> = chunk
+        .persisted_status
+        .heightmaps_after()
+        .iter()
+        .copied()
+        .filter(|ty| !chunk.heightmaps.contains_key(ty))
+        .collect();
+    chunk.prime_heightmaps(&missing);
 }
 
 fn write_heightmaps(access: &ChunkAccess, tag: &mut CompoundTag) -> io::Result<()> {
@@ -812,6 +832,95 @@ mod tests {
             Some([i64::MIN, 2].as_slice())
         );
         assert_eq!(saved.get_string("Status"), Some("minecraft:features"));
+    }
+
+    #[test]
+    fn rebuilds_missing_and_invalid_heightmaps_and_tracks_column_changes() {
+        let pos = ChunkPos::new(-1, 2);
+        let height = SimpleLevelHeightAccessor::create(-64, 32);
+        let context = ChunkLoadingContext {
+            height: &height,
+            palettes: &TestPalettes,
+            data_fixer: None,
+            has_sky_light: false,
+        };
+        let mut section = CompoundTag::new();
+        section.put_byte("Y", -4);
+        let mut indices = SimpleBitStorage::new(4, 4096);
+        for y in [0, 5] {
+            indices.set(y * 256, 1);
+        }
+        let mut states = CompoundTag::new();
+        states.put(
+            "palette",
+            Tag::List(
+                ["minecraft:air", "minecraft:stone"]
+                    .into_iter()
+                    .map(|id| {
+                        let mut state = CompoundTag::new();
+                        state.put_string("Name", id);
+                        Tag::Compound(state)
+                    })
+                    .collect(),
+            ),
+        );
+        states.put_long_array(
+            "data",
+            crate::util::bit_storage::BitStorage::Simple(indices).get_raw(),
+        );
+        section.put("block_states", Tag::Compound(states));
+        let mut maps = CompoundTag::new();
+        maps.put_long_array("WORLD_SURFACE", &[0]);
+        let mut bad_indices = SimpleBitStorage::new(6, 256);
+        bad_indices.set(0, 63);
+        maps.put_long_array(
+            "MOTION_BLOCKING",
+            crate::util::bit_storage::BitStorage::Simple(bad_indices).get_raw(),
+        );
+
+        let mut tag = CompoundTag::new();
+        crate::nbt::utils::add_current_data_version(&mut tag);
+        tag.put_int("xPos", pos.x);
+        tag.put_int("zPos", pos.z);
+        tag.put_string("Status", "minecraft:full");
+        tag.put("sections", Tag::List(vec![Tag::Compound(section)]));
+        tag.put("Heightmaps", Tag::Compound(maps));
+
+        let mut chunk = SerializableChunkData::parse(tag, pos, &context)
+            .unwrap()
+            .chunk;
+        let x = pos.get_min_block_x();
+        let z = pos.get_min_block_z();
+        assert_eq!(chunk.heightmaps.len(), 4);
+        for &ty in ChunkStatus::Full.heightmaps_after() {
+            assert_eq!(chunk.get_height(ty, x, z), -58);
+            assert_eq!(chunk.get_height(ty, x + 1, z), -64);
+        }
+
+        let mut leaves = Block::new(Identifier::minecraft("oak_leaves"))
+            .with_kind(crate::world::level::block::BlockKind::Leaves);
+        leaves.properties.has_collision = true;
+        let leaves = BlockState::without_properties(Arc::new(leaves));
+        assert!(chunk.set_block_state(&BlockPos::new(x, -35, z), leaves));
+        assert!(chunk.is_unsaved());
+        assert_eq!(chunk.get_height(HeightmapType::WorldSurface, x, z), -34);
+        assert_eq!(
+            chunk.get_height(HeightmapType::MotionBlockingNoLeaves, x, z),
+            -58
+        );
+        let torch =
+            BlockState::without_properties(Arc::new(Block::new(Identifier::minecraft("torch"))));
+        let top = BlockPos::new(x, -35, z);
+        assert!(chunk.set_block_state(&top, torch));
+        assert_eq!(chunk.get_height(HeightmapType::WorldSurface, x, z), -34);
+        assert_eq!(chunk.get_height(HeightmapType::OceanFloor, x, z), -58);
+
+        for y in [-35, -59, -64] {
+            assert!(chunk.set_block_state(&BlockPos::new(x, y, z), BlockState::air()));
+        }
+        for &ty in ChunkStatus::Full.heightmaps_after() {
+            assert_eq!(chunk.get_height(ty, x, z), -64);
+        }
     }
 
     #[test]
