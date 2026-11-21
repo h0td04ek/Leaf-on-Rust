@@ -9,11 +9,14 @@ use crate::nbt::compound::CompoundTag;
 use crate::world::level::block::entity::block_entity::BlockEntityAccess;
 use crate::world::level::block::state::block_state::BlockState;
 use crate::world::level::block::state::fluid_state::FluidState;
-use crate::world::level::chunk::chunk_access::{ChunkAccess, UpgradeData, BlendingData};
+use crate::world::level::chunk::chunk_access::{BlendingData, ChunkAccess, UpgradeData};
 use crate::world::level::chunk::level_chunk_section::LevelChunkSection;
+use crate::world::level::chunk::packed_ticks::PackedTicks;
 use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::world::level::levelgen::heightmap::{Heightmap, HeightmapType};
+use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
+use crate::world::ticks::{LevelChunkTicks, LevelTicks, SerializableTickContainer};
 
 /// `LevelChunk` — полный чанк с загруженными секциями.
 pub struct LevelChunk {
@@ -30,9 +33,9 @@ pub struct LevelChunk {
     /// `postProcessing` — постобработка.
     pub post_processing: Vec<BlockPos>,
     /// `blockTicks` — тики блоков.
-    pub block_ticks: HashMap<BlockPos, i64>,
+    pub block_ticks: Arc<LevelChunkTicks<BlockTickType>>,
     /// `fluidTicks` — тики жидкостей.
-    pub fluid_ticks: HashMap<BlockPos, i64>,
+    pub fluid_ticks: Arc<LevelChunkTicks<FluidTickType>>,
 }
 
 /// `ChunkStatus` — статус генерации чанка.
@@ -111,7 +114,6 @@ impl ChunkStatus {
     pub fn ordinal(&self) -> usize {
         *self as usize
     }
-
 }
 
 /// Радиусы записи планировщика Moonrise. Порядок соответствует ChunkStatus::VALUES.
@@ -138,16 +140,25 @@ impl LevelChunk {
         sections: Vec<LevelChunkSection>,
         level: Option<Arc<dyn crate::world::level::level_reader::LevelReader>>,
     ) -> Self {
-        let chunk_access = ChunkAccess::new(chunk_pos, level_height_accessor, sections);
+        let access = ChunkAccess::new(chunk_pos, level_height_accessor, sections);
+        Self::from_access(access, PackedTicks::default(), Vec::new(), level)
+    }
+
+    pub(crate) fn from_access(
+        chunk_access: ChunkAccess,
+        ticks: PackedTicks,
+        post_processing: Vec<BlockPos>,
+        level: Option<Arc<dyn crate::world::level::level_reader::LevelReader>>,
+    ) -> Self {
         Self {
+            chunk_status: chunk_access.persisted_status,
+            is_unsaved: chunk_access.unsaved,
             chunk_access,
             level,
             light_engine: None,
-            chunk_status: ChunkStatus::Full,
-            is_unsaved: false,
-            post_processing: Vec::new(),
-            block_ticks: HashMap::new(),
-            fluid_ticks: HashMap::new(),
+            post_processing,
+            block_ticks: Arc::new(LevelChunkTicks::with_pending_ticks(ticks.blocks)),
+            fluid_ticks: Arc::new(LevelChunkTicks::with_pending_ticks(ticks.fluids)),
         }
     }
 
@@ -253,33 +264,56 @@ impl LevelChunk {
         self.post_processing.clear();
     }
 
-    /// `getBlockTicks` — тики блоков.
-    pub fn get_block_ticks(&self) -> &HashMap<BlockPos, i64> {
+    pub fn get_block_ticks(&self) -> &LevelChunkTicks<BlockTickType> {
         &self.block_ticks
     }
 
-    /// `setBlockTick` — установить тик блока.
-    pub fn set_block_tick(&mut self, pos: BlockPos, time: i64) {
-        self.block_ticks.insert(pos, time);
-    }
-
-    /// `getFluidTicks` — тики жидкостей.
-    pub fn get_fluid_ticks(&self) -> &HashMap<BlockPos, i64> {
+    pub fn get_fluid_ticks(&self) -> &LevelChunkTicks<FluidTickType> {
         &self.fluid_ticks
     }
 
-    /// `setFluidTick` — установить тик жидкости.
-    pub fn set_fluid_tick(&mut self, pos: BlockPos, time: i64) {
-        self.fluid_ticks.insert(pos, time);
+    pub fn register_tick_containers(
+        &self,
+        blocks: &LevelTicks<BlockTickType>,
+        fluids: &LevelTicks<FluidTickType>,
+        game_time: i64,
+    ) {
+        self.block_ticks.unpack(game_time);
+        self.fluid_ticks.unpack(game_time);
+        let pos = self.get_pos();
+        blocks.add_container(pos, Some(self.block_ticks.clone()));
+        fluids.add_container(pos, Some(self.fluid_ticks.clone()));
+    }
+
+    pub fn unregister_tick_containers(
+        &self,
+        blocks: &LevelTicks<BlockTickType>,
+        fluids: &LevelTicks<FluidTickType>,
+    ) {
+        let pos = self.get_pos();
+        blocks.remove_container_if_same(pos, &self.block_ticks);
+        fluids.remove_container_if_same(pos, &self.fluid_ticks);
+    }
+
+    pub fn pack_ticks(&self, game_time: i64) -> PackedTicks {
+        PackedTicks {
+            blocks: self.block_ticks.pack(game_time),
+            fluids: self.fluid_ticks.pack(game_time),
+        }
     }
 
     /// `getLightEngine` — light engine.
-    pub fn get_light_engine(&self) -> Option<&Arc<dyn crate::world::level::lighting::light_engine::LightEngine>> {
+    pub fn get_light_engine(
+        &self,
+    ) -> Option<&Arc<dyn crate::world::level::lighting::light_engine::LightEngine>> {
         self.light_engine.as_ref()
     }
 
     /// `setLightEngine` — установить light engine.
-    pub fn set_light_engine(&mut self, engine: Arc<dyn crate::world::level::lighting::light_engine::LightEngine>) {
+    pub fn set_light_engine(
+        &mut self,
+        engine: Arc<dyn crate::world::level::lighting::light_engine::LightEngine>,
+    ) {
         self.light_engine = Some(engine);
     }
 }

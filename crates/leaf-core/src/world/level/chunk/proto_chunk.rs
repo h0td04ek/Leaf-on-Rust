@@ -1,15 +1,17 @@
 //! Перенос `net.minecraft.world.level.chunk.ProtoChunk` — чанк в процессе генерации.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::block_pos::BlockPos;
 use crate::nbt::compound::CompoundTag;
-use crate::world::level::chunk::chunk_access::{ChunkAccess, UpgradeData, BlendingData};
-use crate::world::level::chunk::level_chunk_section::LevelChunkSection;
+use crate::world::level::chunk::chunk_access::{BlendingData, ChunkAccess, UpgradeData};
 use crate::world::level::chunk::level_chunk::ChunkStatus;
+use crate::world::level::chunk::level_chunk_section::LevelChunkSection;
+use crate::world::level::chunk::packed_ticks::PackedTicks;
 use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::level_height_accessor::LevelHeightAccessor;
+use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
+use crate::world::ticks::ProtoChunkTicks;
 
 /// `ProtoChunk` — чанк в процессе генерации.
 pub struct ProtoChunk {
@@ -19,14 +21,15 @@ pub struct ProtoChunk {
     pub chunk_status: ChunkStatus,
     /// `entities` — сущности для сохранения.
     pub entities: Vec<CompoundTag>,
+    pub post_processing: Vec<BlockPos>,
     /// `carvingMask` — маска карвинга.
     pub carving_mask: Option<Vec<bool>>,
     /// `belowZeroRetrogen` — retrogen для below-zero.
     pub below_zero_retrogen: Option<BelowZeroRetrogen>,
     /// `blockTicks` — тики блоков.
-    pub block_ticks: HashMap<String, i64>,
+    pub block_ticks: ProtoChunkTicks<BlockTickType>,
     /// `fluidTicks` — тики жидкостей.
-    pub fluid_ticks: HashMap<String, i64>,
+    pub fluid_ticks: ProtoChunkTicks<FluidTickType>,
     /// `lightEngine` — light engine.
     pub light_engine: Option<Arc<dyn crate::world::level::lighting::light_engine::LightEngine>>,
 }
@@ -51,14 +54,24 @@ impl ProtoChunk {
         chunk_access.persisted_status = ChunkStatus::Empty;
         chunk_access.upgrade_data = Some(upgrade_data);
         chunk_access.blending_data = blending_data;
+        Self::from_access(chunk_access, PackedTicks::default(), Vec::new(), Vec::new())
+    }
+
+    pub(crate) fn from_access(
+        chunk_access: ChunkAccess,
+        ticks: PackedTicks,
+        post_processing: Vec<BlockPos>,
+        entities: Vec<CompoundTag>,
+    ) -> Self {
         Self {
+            chunk_status: chunk_access.persisted_status,
             chunk_access,
-            chunk_status: ChunkStatus::Empty,
-            entities: Vec::new(),
+            entities,
+            post_processing,
             carving_mask: None,
             below_zero_retrogen: None,
-            block_ticks: HashMap::new(),
-            fluid_ticks: HashMap::new(),
+            block_ticks: ProtoChunkTicks::load(ticks.blocks),
+            fluid_ticks: ProtoChunkTicks::load(ticks.fluids),
             light_engine: None,
         }
     }
@@ -90,12 +103,19 @@ impl ProtoChunk {
     }
 
     /// `getBlockState` — состояние блока.
-    pub fn get_block_state(&self, pos: &BlockPos) -> crate::world::level::block::state::block_state::BlockState {
+    pub fn get_block_state(
+        &self,
+        pos: &BlockPos,
+    ) -> crate::world::level::block::state::block_state::BlockState {
         self.chunk_access.get_block_state(pos)
     }
 
     /// `setBlockState` — установить состояние блока.
-    pub fn set_block_state(&mut self, pos: &BlockPos, state: crate::world::level::block::state::block_state::BlockState) -> bool {
+    pub fn set_block_state(
+        &mut self,
+        pos: &BlockPos,
+        state: crate::world::level::block::state::block_state::BlockState,
+    ) -> bool {
         self.chunk_access.set_block_state(pos, state)
     }
 
@@ -129,33 +149,33 @@ impl ProtoChunk {
         self.below_zero_retrogen = Some(retrogen);
     }
 
-    /// `getBlockTicks` — тики блоков.
-    pub fn get_block_ticks(&self) -> &HashMap<String, i64> {
+    pub fn get_block_ticks(&self) -> &ProtoChunkTicks<BlockTickType> {
         &self.block_ticks
     }
 
-    /// `setBlockTick` — установить тик блока.
-    pub fn set_block_tick(&mut self, key: String, time: i64) {
-        self.block_ticks.insert(key, time);
-    }
-
-    /// `getFluidTicks` — тики жидкостей.
-    pub fn get_fluid_ticks(&self) -> &HashMap<String, i64> {
+    pub fn get_fluid_ticks(&self) -> &ProtoChunkTicks<FluidTickType> {
         &self.fluid_ticks
     }
 
-    /// `setFluidTick` — установить тик жидкости.
-    pub fn set_fluid_tick(&mut self, key: String, time: i64) {
-        self.fluid_ticks.insert(key, time);
+    pub fn pack_ticks(&self) -> PackedTicks {
+        PackedTicks {
+            blocks: self.block_ticks.scheduled_ticks(),
+            fluids: self.fluid_ticks.scheduled_ticks(),
+        }
     }
 
     /// `getLightEngine` — light engine.
-    pub fn get_light_engine(&self) -> Option<&Arc<dyn crate::world::level::lighting::light_engine::LightEngine>> {
+    pub fn get_light_engine(
+        &self,
+    ) -> Option<&Arc<dyn crate::world::level::lighting::light_engine::LightEngine>> {
         self.light_engine.as_ref()
     }
 
     /// `setLightEngine` — установить light engine.
-    pub fn set_light_engine(&mut self, engine: Arc<dyn crate::world::level::lighting::light_engine::LightEngine>) {
+    pub fn set_light_engine(
+        &mut self,
+        engine: Arc<dyn crate::world::level::lighting::light_engine::LightEngine>,
+    ) {
         self.light_engine = Some(engine);
     }
 
@@ -165,12 +185,23 @@ impl ProtoChunk {
     }
 
     /// `getHeight` — высота.
-    pub fn get_height(&self, heightmap: crate::world::level::levelgen::heightmap::HeightmapType, x: i32, z: i32) -> i32 {
+    pub fn get_height(
+        &self,
+        heightmap: crate::world::level::levelgen::heightmap::HeightmapType,
+        x: i32,
+        z: i32,
+    ) -> i32 {
         self.chunk_access.get_height(heightmap, x, z)
     }
 
     /// `setHeight` — установить высоту.
-    pub fn set_height(&mut self, heightmap: crate::world::level::levelgen::heightmap::HeightmapType, x: i32, z: i32, height: i32) {
+    pub fn set_height(
+        &mut self,
+        heightmap: crate::world::level::levelgen::heightmap::HeightmapType,
+        x: i32,
+        z: i32,
+        height: i32,
+    ) {
         self.chunk_access.set_height(heightmap, x, z, height);
     }
 }

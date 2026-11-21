@@ -104,7 +104,7 @@ impl<T: TickType> ScheduledTick<T> {
         SavedTick::new(
             self.type_.clone(),
             self.pos,
-            (self.trigger_tick - game_time) as i32,
+            self.trigger_tick.wrapping_sub(game_time) as i32,
             self.priority,
         )
     }
@@ -177,7 +177,7 @@ impl<T: TickType> SavedTick<T> {
         ScheduledTick::new(
             self.type_.clone(),
             self.pos,
-            game_time + self.delay as i64,
+            game_time.wrapping_add(i64::from(self.delay)),
             self.priority,
             sub_tick_order,
         )

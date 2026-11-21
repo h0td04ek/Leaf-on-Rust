@@ -135,11 +135,28 @@ impl<T: TickType + Clone> LevelTicks<T> {
 
     /// `removeContainer(chunkPos)`.
     pub fn remove_container(&self, chunk_pos: ChunkPos) {
+        self.remove_matching_container(chunk_pos, |_| true);
+    }
+
+    pub(crate) fn remove_container_if_same(
+        &self,
+        chunk_pos: ChunkPos,
+        expected: &Arc<LevelChunkTicks<T>>,
+    ) {
+        self.remove_matching_container(chunk_pos, |current| Arc::ptr_eq(current, expected));
+    }
+
+    fn remove_matching_container(
+        &self,
+        chunk_pos: ChunkPos,
+        matches: impl FnOnce(&Arc<LevelChunkTicks<T>>) -> bool,
+    ) {
         let packed = chunk_pos.as_long();
         let mut s = self.state.lock().unwrap();
-        if let Some(container) = s.all_containers.remove(&packed) {
+        if s.all_containers.get(&packed).is_some_and(matches) {
+            let removed = s.all_containers.remove(&packed).unwrap();
             s.next_tick_for_container.remove(&packed);
-            container.set_on_tick_added(None);
+            removed.set_on_tick_added(None);
         }
     }
 

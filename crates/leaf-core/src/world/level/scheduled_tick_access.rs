@@ -4,8 +4,11 @@
 use std::sync::Arc;
 
 use crate::core::block_pos::BlockPos;
+use crate::nbt::Tag;
+use crate::resources::Identifier;
 use crate::world::level::block::state::block_state::BlockState;
 use crate::world::level::block::state::fluid_state::FluidState;
+use crate::world::ticks::scheduled_tick::TickNbt;
 use crate::world::ticks::{LevelTickAccess, ScheduledTick, TickPriority};
 
 /// Тип тика блока (`Block` как ключ реестрового синглтона).
@@ -61,6 +64,28 @@ impl crate::world::ticks::TickType for FluidTickType {
     }
     fn tick_eq(&self, other: &Self) -> bool {
         self.id == other.id
+    }
+}
+
+impl TickNbt for BlockTickType {
+    fn write_nbt(&self) -> Tag {
+        Tag::String(self.id.clone())
+    }
+
+    fn read_nbt(tag: &Tag) -> Option<Self> {
+        let id = Identifier::parse(tag.as_string()?).ok()?.to_string();
+        Some(Self { id })
+    }
+}
+
+impl TickNbt for FluidTickType {
+    fn write_nbt(&self) -> Tag {
+        Tag::String(self.id.clone())
+    }
+
+    fn read_nbt(tag: &Tag) -> Option<Self> {
+        let id = Identifier::parse(tag.as_string()?).ok()?.to_string();
+        Some(Self { id })
     }
 }
 

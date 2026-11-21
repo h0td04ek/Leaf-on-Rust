@@ -16,14 +16,18 @@ use crate::util::datafix::{DataFixTypes, DataFixer};
 use crate::world::level::biome::biome::Biome;
 use crate::world::level::block::state::BlockState;
 use crate::world::level::chunk::chunk_access::ChunkAccess;
-use crate::world::level::chunk::level_chunk::ChunkStatus;
+use crate::world::level::chunk::level_chunk::{ChunkStatus, LevelChunk};
 use crate::world::level::chunk::level_chunk_section::{
     create_biomes_container, create_block_states_container, LevelChunkSection,
 };
+use crate::world::level::chunk::packed_ticks::PackedTicks;
 use crate::world::level::chunk::palette::ceillog2;
 use crate::world::level::chunk::paletted_container::PalettedContainer;
+use crate::world::level::chunk::proto_chunk::ProtoChunk;
+use crate::world::level::chunk::RuntimeChunk;
 use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::level_height_accessor::{LevelHeightAccessor, SimpleLevelHeightAccessor};
+use crate::world::level::level_reader::LevelReader;
 use crate::world::level::levelgen::heightmap::{Heightmap, HeightmapType};
 
 use super::region_file_storage::RegionFileStorage;
@@ -44,11 +48,49 @@ pub struct ChunkLoadingContext<'a> {
 pub struct SerializableChunkData {
     pub chunk: ChunkAccess,
     pub last_update_time: i64,
-    /// Tick queues, entities and structure payloads are passed through to their loaders.
+    pub packed_ticks: PackedTicks,
+    pub post_processing: Vec<BlockPos>,
+    /// Содержит сохранённые сущности и данные структур для следующих стадий загрузки.
+    pub original_tag: CompoundTag,
+}
+
+pub struct LoadedChunk {
+    pub chunk: RuntimeChunk,
+    pub last_update_time: i64,
     pub original_tag: CompoundTag,
 }
 
 impl SerializableChunkData {
+    pub fn into_runtime(self, level: Option<Arc<dyn LevelReader>>) -> LoadedChunk {
+        let chunk = if self.chunk.persisted_status == ChunkStatus::Full {
+            RuntimeChunk::Full(LevelChunk::from_access(
+                self.chunk,
+                self.packed_ticks,
+                self.post_processing,
+                level,
+            ))
+        } else {
+            let entities = self
+                .original_tag
+                .get_list_or_empty("entities")
+                .iter()
+                .filter_map(Tag::as_compound)
+                .cloned()
+                .collect();
+            RuntimeChunk::Proto(ProtoChunk::from_access(
+                self.chunk,
+                self.packed_ticks,
+                self.post_processing,
+                entities,
+            ))
+        };
+        LoadedChunk {
+            chunk,
+            last_update_time: self.last_update_time,
+            original_tag: self.original_tag,
+        }
+    }
+
     pub fn read(
         storage: &RegionFileStorage,
         pos: ChunkPos,
@@ -188,9 +230,39 @@ impl SerializableChunkData {
         Ok(Self {
             chunk,
             last_update_time: tag.get_long_or("LastUpdate", 0),
+            packed_ticks: PackedTicks::from_nbt(&tag, pos),
+            post_processing: read_post_processing(&tag, pos, height),
             original_tag: tag,
         })
     }
+}
+
+fn read_post_processing(
+    tag: &CompoundTag,
+    chunk: ChunkPos,
+    height: &dyn LevelHeightAccessor,
+) -> Vec<BlockPos> {
+    let sections = tag.get_list_or_empty("PostProcessing");
+    let mut positions = Vec::new();
+    for (index, section) in sections
+        .iter()
+        .take(height.get_sections_count() as usize)
+        .enumerate()
+    {
+        let Tag::List(offsets) = section else {
+            continue;
+        };
+        let min_y = (height.get_min_section_y() + index as i32) << 4;
+        positions.extend(offsets.iter().filter_map(Tag::as_short).map(|offset| {
+            let offset = i32::from(offset);
+            BlockPos::new(
+                chunk.get_min_block_x() + (offset & 15),
+                min_y + ((offset >> 4) & 15),
+                chunk.get_min_block_z() + ((offset >> 8) & 15),
+            )
+        }));
+    }
+    positions
 }
 
 fn create_section(palettes: &dyn ChunkPaletteLookup) -> LevelChunkSection {
@@ -316,6 +388,113 @@ mod tests {
         fn default_biome(&self) -> Holder<Biome> {
             self.biome(&Identifier::minecraft("plains")).unwrap()
         }
+    }
+
+    #[test]
+    fn loaded_chunk_registers_and_repacks_block_and_fluid_ticks() {
+        use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
+        use crate::world::ticks::{LevelTicks, SavedTick, TickAccess, TickPriority};
+
+        let pos = ChunkPos::new(-1, 2);
+        let height = SimpleLevelHeightAccessor::create(-64, 32);
+        let context = ChunkLoadingContext {
+            height: &height,
+            palettes: &TestPalettes,
+            data_fixer: None,
+            has_sky_light: true,
+        };
+        let block_pos = BlockPos::new(-15, -47, 34);
+        let fluid_pos = BlockPos::new(-14, -48, 34);
+        let tick = |id: &str, pos, delay, priority| {
+            SavedTick::new(BlockTickType { id: id.into() }, pos, delay, priority)
+        };
+        let packed = PackedTicks {
+            blocks: vec![
+                tick("observer", block_pos, 5, TickPriority::Normal),
+                tick("minecraft:repeater", block_pos, 5, TickPriority::High),
+                tick("minecraft:stone", BlockPos::ZERO, 0, TickPriority::High),
+            ],
+            fluids: vec![SavedTick::new(
+                FluidTickType {
+                    id: "minecraft:water".into(),
+                },
+                fluid_pos,
+                -2,
+                TickPriority::Low,
+            )],
+        };
+        let mut tag = CompoundTag::new();
+        crate::nbt::utils::add_current_data_version(&mut tag);
+        tag.put_int("xPos", pos.x);
+        tag.put_int("zPos", pos.z);
+        tag.put_long("LastUpdate", 15);
+        tag.put_string("extra", "kept for the remaining chunk loaders");
+        tag.put_string("Status", "minecraft:full");
+        tag.put(
+            "PostProcessing",
+            Tag::List(vec![
+                Tag::List(Vec::new()),
+                Tag::List(vec![Tag::Short(0x211)]),
+            ]),
+        );
+        packed.write_nbt(&mut tag);
+
+        let loaded = SerializableChunkData::parse(tag.clone(), pos, &context)
+            .unwrap()
+            .into_runtime(None);
+        assert_eq!(loaded.last_update_time, 15);
+        assert_eq!(
+            loaded.original_tag.get_string("extra"),
+            Some("kept for the remaining chunk loaders")
+        );
+        let RuntimeChunk::Full(chunk) = loaded.chunk else {
+            panic!("expected LevelChunk")
+        };
+        assert_eq!(chunk.get_post_processing(), &[block_pos]);
+        assert_eq!(chunk.get_block_ticks().count(), 2);
+
+        let blocks = LevelTicks::new(Arc::new(|_| true));
+        let fluids = LevelTicks::new(Arc::new(|_| true));
+        chunk.register_tick_containers(&blocks, &fluids, 100);
+        let mut block_ids = Vec::new();
+        let mut fluid_ids = Vec::new();
+        fluids.tick(100, 8, &mut |_, kind| fluid_ids.push(kind.id));
+        blocks.tick(104, 8, &mut |_, kind| block_ids.push(kind.id));
+        assert_eq!(fluid_ids, ["minecraft:water"]);
+        assert!(block_ids.is_empty());
+        let mut saved_again = CompoundTag::new();
+        chunk.pack_ticks(104).write_nbt(&mut saved_again);
+        let saved_again = PackedTicks::from_nbt(&saved_again, pos);
+        assert!(saved_again.fluids.is_empty());
+        assert_eq!(
+            saved_again
+                .blocks
+                .iter()
+                .map(|tick| tick.delay)
+                .collect::<Vec<_>>(),
+            [1, 1]
+        );
+
+        blocks.tick(105, 8, &mut |_, kind| block_ids.push(kind.id));
+        assert_eq!(block_ids, ["minecraft:repeater", "minecraft:observer"]);
+        let replacement = blocks.add_container(pos, None);
+        chunk.unregister_tick_containers(&blocks, &fluids);
+        assert!(Arc::ptr_eq(
+            &blocks.get_container(pos).unwrap(),
+            &replacement
+        ));
+        assert!(fluids.get_container(pos).is_none());
+
+        tag.put_string("Status", "minecraft:features");
+        let loaded = SerializableChunkData::parse(tag, pos, &context)
+            .unwrap()
+            .into_runtime(None);
+        let RuntimeChunk::Proto(chunk) = loaded.chunk else {
+            panic!("expected ProtoChunk")
+        };
+        assert_eq!(chunk.chunk_status, ChunkStatus::Features);
+        assert_eq!(chunk.post_processing, [block_pos]);
+        assert_eq!(chunk.pack_ticks().fluids[0].delay, -2);
     }
 
     #[test]
