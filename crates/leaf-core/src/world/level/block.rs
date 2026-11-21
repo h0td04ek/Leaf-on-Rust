@@ -88,6 +88,15 @@ pub enum BlockKind {
     Leaves,
 }
 
+pub type ProjectileHitHandler = std::sync::Arc<
+    dyn Fn(&dyn crate::world::level::level_reader::LevelReader,
+        &state::BlockState,
+        &crate::world::phys::BlockHitResult,
+        &crate::world::entity::projectile::Projectile)
+        + Send
+        + Sync,
+>;
+
 /// Подмножество `BlockBehaviour.Properties` — флаги,
 /// влияющие на wire/предикаты.
 #[derive(Clone, Default)]
@@ -134,6 +143,9 @@ pub struct BlockProperties {
     /// `updateShape` — `BlockBehaviour.updateShape`
     /// (default: identity — возвращает входное состояние).
     pub update_shape: Option<std::sync::Arc<dyn Fn(&state::BlockState, &dyn crate::world::level::level_reader::LevelReader, &dyn crate::world::level::scheduled_tick_access::ScheduledTickAccess, crate::core::block_pos::BlockPos, crate::core::direction::Direction, crate::core::block_pos::BlockPos, &state::BlockState, std::sync::Arc<dyn crate::random::RandomSource>) -> state::BlockState + Send + Sync>>,
+
+    /// `BlockBehaviour.onProjectileHit`.
+    pub on_projectile_hit: Option<ProjectileHitHandler>,
 
     /// `replaceable` — `BlockBehaviour.Properties.replaceable`.
     pub replaceable: bool,

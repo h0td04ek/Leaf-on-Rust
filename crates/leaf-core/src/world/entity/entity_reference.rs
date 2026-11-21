@@ -2,7 +2,6 @@
 //! ссылка на сущность по UUID с кэшем (Either<UUID, entity>).
 
 use crate::nbt::compound::CompoundTag;
-use crate::nbt::tag::Tag;
 use crate::util::uuid::Uuid;
 use crate::world::entity::entity::Entity;
 use crate::world::level::level_reader::LevelReader;
@@ -63,17 +62,21 @@ impl EntityReference {
         self.uuid == entity.uuid
     }
 
-    /// `store(output, key)` — сохраняет UUID строкой (как
-    /// `UUIDUtil.CODEC` в NBT).
+    /// `store(output, key)` — четыре signed int в старшем порядке.
     pub fn store(&self, tag: &mut CompoundTag, key: &str) {
-        tag.put(key, Tag::String(self.uuid.to_string()));
+        let high = self.uuid.most_significant_bits;
+        let low = self.uuid.least_significant_bits;
+        tag.put_int_array(key, &[(high >> 32) as i32, high as i32, (low >> 32) as i32, low as i32]);
     }
 
-    /// `read(input, key)` — читает UUID-строку.
+    /// `read(input, key)` — UUID из vanilla NBT или старой строковой формы Rust.
     pub fn read(tag: &CompoundTag, key: &str) -> Option<Self> {
-        tag.get_string(key)
-            .and_then(Uuid::from_string)
-            .map(Self::of_uuid)
+        if let Some([a, b, c, d]) = tag.get_int_array(key) {
+            let high = (i64::from(*a) << 32) | i64::from(*b as u32);
+            let low = (i64::from(*c) << 32) | i64::from(*d as u32);
+            return Some(Self::of_uuid(Uuid::new(high, low)));
+        }
+        tag.get_string(key).and_then(Uuid::from_string).map(Self::of_uuid)
     }
 
     /// `EntityReference.getLivingEntity(reference, level)` —

@@ -532,6 +532,16 @@ pub trait LevelReader: Send + Sync {
     ) {
     }
 
+    /// Игровое событие с источником и состоянием блока.
+    fn game_event_with_context(
+        &self,
+        event: &crate::world::level::gameevent::game_event::GameEvent,
+        position: crate::world::phys::Vec3,
+        _context: crate::world::level::gameevent::game_event::Context,
+    ) {
+        self.game_event(event, BlockPos::containing_vec3(&position));
+    }
+
     /// `getGameRules().get(GameRules.MOB_DROPS)` — default true.
     fn mob_drops(&self) -> bool {
         true
@@ -639,6 +649,47 @@ pub trait LevelReader: Send + Sync {
         _target: &crate::world::entity::entity::Entity,
         _charge: f32,
     ) {
+    }
+
+    /// Принимает снаряд вместе с предметом, эффекты которого применяются после добавления.
+    fn add_fresh_projectile(
+        &self,
+        _projectile: crate::world::entity::projectile::Projectile,
+        _spawned_from: &crate::world::item::item_stack::ItemStack,
+    ) -> bool {
+        false
+    }
+
+    fn projectile_deflection(
+        &self,
+        target: &crate::world::entity::entity::Entity,
+        _projectile: &crate::world::entity::projectile::Projectile,
+    ) -> crate::world::entity::projectile::ProjectileDeflection {
+        crate::world::entity::projectile::ProjectileDeflection::for_target(target)
+    }
+
+    fn projectile_deflected(
+        &self,
+        _projectile: &mut crate::world::entity::projectile::Projectile,
+        _deflected_by_player: bool,
+    ) {
+    }
+
+    fn entity_by_id(&self, _id: i32) -> Option<crate::world::entity::entity::Entity> {
+        None
+    }
+
+    /// Переносит отклонение на живой снаряд, найденный по идентификатору.
+    fn redirect_projectile(
+        &self,
+        _target_id: i32,
+        _deflector: Option<&crate::world::entity::entity::Entity>,
+        _owner: Option<crate::world::entity::entity_reference::EntityReference>,
+    ) {
+    }
+
+    fn projectile_can_break_blocks(&self) -> bool {
+        true
     }
 
     /// `summonEntity(entityType holder, pos, joinTeam)` —

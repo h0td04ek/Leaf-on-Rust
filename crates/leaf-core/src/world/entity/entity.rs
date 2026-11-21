@@ -1372,17 +1372,20 @@ pub fn is_alive_and_well(&self) -> bool {
     /// пассажиров (self, если не пассажир).
     pub fn get_root_vehicle(&self) -> Entity {
         let mut current = self.clone();
-        while current.is_passenger() {
-            match current.get_vehicle() {
-                Some(v) => current = v,
-                None => break,
+        let mut visited = std::collections::HashSet::from([self.uuid]);
+        while let Some(vehicle) = current.get_vehicle() {
+            if !visited.insert(vehicle.uuid) {
+                break;
             }
+            current = vehicle;
         }
         current
     }
 
     /// `isPassengerOfSameVehicle(other)`.
-    pub fn is_passenger_of_same_vehicle(&self, _other: &Entity) -> bool { false }
+    pub fn is_passenger_of_same_vehicle(&self, other: &Entity) -> bool {
+        self.get_root_vehicle().uuid == other.get_root_vehicle().uuid
+    }
 
     /// `isMultipartEntity()`.
     pub fn is_multipart_entity(&self) -> bool { false }

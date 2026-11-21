@@ -76,8 +76,8 @@ impl Uuid {
         if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
-        let msb = i64::from_str_radix(&hex[..16], 16).ok()?;
-        let lsb = i64::from_str_radix(&hex[16..], 16).ok()?;
+        let msb = u64::from_str_radix(&hex[..16], 16).ok()? as i64;
+        let lsb = u64::from_str_radix(&hex[16..], 16).ok()? as i64;
         Some(Self::new(msb, lsb))
     }
 }

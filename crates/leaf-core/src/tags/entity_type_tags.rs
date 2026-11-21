@@ -15,7 +15,19 @@ use std::sync::{Mutex, OnceLock};
 /// раскрыты в плоские списки при регистрации).
 fn entity_type_tag_registry() -> &'static Mutex<HashMap<Identifier, Vec<Identifier>>> {
     static REG: OnceLock<Mutex<HashMap<Identifier, Vec<Identifier>>>> = OnceLock::new();
-    REG.get_or_init(|| Mutex::new(HashMap::new()))
+    REG.get_or_init(|| {
+        let tags = [
+            (keys::deflects_projectiles(), &["breeze"][..]),
+            (keys::redirectable_projectile(), &["fireball", "wind_charge", "breeze_wind_charge"][..]),
+            (keys::impact_projectiles(), &[
+                "arrow", "spectral_arrow", "firework_rocket", "snowball", "fireball", "small_fireball",
+                "egg", "trident", "dragon_fireball", "wither_skull", "wind_charge", "breeze_wind_charge",
+            ][..]),
+        ];
+        Mutex::new(tags.into_iter().map(|(tag, members)| {
+            (tag.location, members.iter().map(|name| Identifier::minecraft(name)).collect())
+        }).collect())
+    })
 }
 
 /// Зарегистрировать тег типов сущностей (аналог результата
@@ -27,9 +39,13 @@ pub fn register_entity_type_tag(location: Identifier, members: Vec<Identifier>) 
 /// `EntityType.is(TagKey)` — членство типа сущности в теге
 /// по registry-идентификатору.
 pub fn is_entity_type_in_tag(entity_type: &EntityType, tag: &TagKey<EntityType>) -> bool {
+    is_entity_type_id_in_tag(&entity_type.id, tag)
+}
+
+pub fn is_entity_type_id_in_tag(id: &Identifier, tag: &TagKey<EntityType>) -> bool {
     let reg = entity_type_tag_registry().lock().unwrap();
     reg.get(&tag.location)
-        .map(|members| members.iter().any(|m| m == &entity_type.id))
+        .map(|members| members.iter().any(|m| m == id))
         .unwrap_or(false)
 }
 
@@ -42,6 +58,10 @@ pub mod keys {
             Identifier::with_default_namespace(name).unwrap(),
         )
     }
+    pub fn deflects_projectiles() -> TagKey<EntityType> { tag("deflects_projectiles") }
+    pub fn impact_projectiles() -> TagKey<EntityType> { tag("impact_projectiles") }
+    pub fn redirectable_projectile() -> TagKey<EntityType> { tag("redirectable_projectile") }
+
     /// `SKELETONS`.
     pub fn skeletons() -> TagKey<EntityType> { tag("skeletons") }
     /// `ZOMBIES`.
@@ -116,26 +136,16 @@ pub fn bootstrap() {
     ]);
     undead.sort();
     undead.dedup();
-    register_entity_type_tag(Id::with_default_namespace("undead").unwrap(), undead);
+    register_entity_type_tag(Id::with_default_namespace("undead").unwrap(), undead.clone());
     // inverted_healing_and_harm = #undead
     register_entity_type_tag(
         Id::with_default_namespace("inverted_healing_and_harm").unwrap(),
-        entity_type_tag_registry()
-            .lock()
-            .unwrap()
-            .get(&Id::with_default_namespace("undead").unwrap())
-            .cloned()
-            .unwrap_or_default(),
+        undead.clone(),
     );
     // ignores_poison_and_regen = #undead
     register_entity_type_tag(
         Id::with_default_namespace("ignores_poison_and_regen").unwrap(),
-        entity_type_tag_registry()
-            .lock()
-            .unwrap()
-            .get(&Id::with_default_namespace("undead").unwrap())
-            .cloned()
-            .unwrap_or_default(),
+        undead.clone(),
     );
     // immune_to_infested = [silverfish]
     register_entity_type_tag(
