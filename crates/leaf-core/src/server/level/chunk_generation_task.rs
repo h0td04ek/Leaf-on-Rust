@@ -58,17 +58,37 @@ impl ChunkGenerationTask {
         } else {
             ChunkStepMode::Generate
         };
+        self.run_layers(map, mode)
+    }
+
+    /// Выполняет только стадии загрузки. Возвращает false, если сохранённых
+    /// данных недостаточно для запрошенного статуса.
+    pub fn try_load<M: GeneratingChunkMap>(&self, map: &mut M) -> Result<bool, M::Error> {
+        self.run_step(map, self.center, ChunkStatus::Empty, ChunkStepMode::Load)?;
+        if !self.can_load_without_generation(map) {
+            return Ok(false);
+        }
+        self.run_layers(map, ChunkStepMode::Load)?;
+        Ok(true)
+    }
+
+    fn run_layers<M: GeneratingChunkMap>(
+        &self,
+        map: &mut M,
+        mode: ChunkStepMode,
+    ) -> Result<(), M::Error> {
         let target = mode.pyramid().get_step_to(self.target_status);
         let last = self.target_status.ordinal();
         for &status in &ChunkStatus::VALUES[..=last] {
             let radius = target.accumulated_radius_of(status).unwrap();
             for pos in chunks_within(self.center, radius) {
-                let step_mode = if status == ChunkStatus::Empty
+                let step_mode = if mode == ChunkStepMode::Load
+                    || status == ChunkStatus::Empty
                     || map
                         .persisted_status(pos)
                         .is_some_and(|persisted| persisted.is_or_after(status))
                 {
-                    load
+                    ChunkStepMode::Load
                 } else {
                     ChunkStepMode::Generate
                 };
@@ -109,7 +129,7 @@ impl ChunkGenerationTask {
                 .x
                 .abs_diff(pos.x)
                 .max(self.center.z.abs_diff(pos.z));
-            let required = target.accumulated_dependencies.at_radius(distance as usize);
+            let required = target.required_status_at_radius(distance as usize);
             required.is_some_and(|required| {
                 map.persisted_status(pos)
                     .is_some_and(|status| status.is_or_after(required))

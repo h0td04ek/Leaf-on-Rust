@@ -13,6 +13,7 @@ use crate::core::registry_access::RegistryAccess;
 use crate::core::section_pos::SectionPos;
 use crate::world::level::block::state::BlockState;
 use crate::world::level::chunk::chunk_access::ChunkAccess;
+use crate::world::level::chunk::chunk_pyramid::ChunkStep;
 use crate::world::level::chunk::level_chunk::ChunkStatus;
 use crate::world::level::chunk::storage::region_file_storage::RegionFileStorage;
 use crate::world::level::chunk::storage::serializable_chunk_data::{
@@ -26,6 +27,13 @@ use crate::world::level::lighting::light_engine::has_different_light_properties;
 use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
 use crate::world::ticks::LevelTicks;
 
+use super::chunk_generation_task::{ChunkGenerationTask, ChunkStepMode, GeneratingChunkMap};
+
+pub enum ChunkLoadOutcome<'a> {
+    Ready(&'a LoadedChunk),
+    NeedsGeneration { persisted: Option<ChunkStatus> },
+}
+
 pub struct ServerChunkCache {
     storage: RegionFileStorage,
     chunks: HashMap<ChunkPos, CachedChunk>,
@@ -35,6 +43,7 @@ pub struct ServerChunkCache {
 
 struct CachedChunk {
     data: LoadedChunk,
+    completed_load: ChunkStatus,
     has_sky_light: bool,
     light_prepared: bool,
     ticking: bool,
@@ -66,6 +75,7 @@ impl ServerChunkCache {
                 };
                 entry.insert(CachedChunk {
                     data: data.into_runtime(None),
+                    completed_load: ChunkStatus::Empty,
                     has_sky_light: context.has_sky_light,
                     light_prepared: false,
                     ticking: false,
@@ -74,6 +84,25 @@ impl ServerChunkCache {
             }
         };
         Ok(Some(&chunk.data))
+    }
+
+    /// Готовит сохранённый чанк до нужной стадии. При отсутствии записи или
+    /// стадий генерации возвращает сохранённый статус, если он имеется.
+    pub fn load_through(
+        &mut self,
+        task: ChunkGenerationTask,
+        context: &ChunkLoadingContext<'_>,
+    ) -> io::Result<ChunkLoadOutcome<'_>> {
+        let mut map = SavedChunkMap {
+            cache: self,
+            context,
+        };
+        if !task.try_load(&mut map)? {
+            return Ok(ChunkLoadOutcome::NeedsGeneration {
+                persisted: map.persisted_status(task.center),
+            });
+        }
+        Ok(ChunkLoadOutcome::Ready(&self.chunks[&task.center].data))
     }
 
     pub fn get_loaded(&self, pos: ChunkPos) -> Option<&LoadedChunk> {
@@ -285,6 +314,42 @@ impl ServerChunkCache {
         self.stop_ticking(pos);
         self.chunks.remove(&pos);
         Ok(true)
+    }
+}
+
+struct SavedChunkMap<'a, 'b> {
+    cache: &'a mut ServerChunkCache,
+    context: &'a ChunkLoadingContext<'b>,
+}
+
+impl GeneratingChunkMap for SavedChunkMap<'_, '_> {
+    type Error = io::Error;
+
+    fn persisted_status(&self, pos: ChunkPos) -> Option<ChunkStatus> {
+        Some(self.cache.get_loaded(pos)?.chunk.access().persisted_status)
+    }
+
+    fn completed_status(&self, pos: ChunkPos) -> Option<ChunkStatus> {
+        Some(self.cache.chunks.get(&pos)?.completed_load)
+    }
+
+    fn apply_step(
+        &mut self,
+        pos: ChunkPos,
+        step: &ChunkStep,
+        mode: ChunkStepMode,
+    ) -> io::Result<()> {
+        let status = step.target_status;
+        debug_assert_eq!(mode, ChunkStepMode::Load);
+        if status == ChunkStatus::Empty {
+            self.cache.load_existing(pos, self.context)?;
+            return Ok(());
+        }
+        if status == ChunkStatus::Light && !self.cache.prepare_light(pos) {
+            return Err(io::Error::other(format!("light stage failed for {pos:?}")));
+        }
+        self.cache.chunks.get_mut(&pos).unwrap().completed_load = status;
+        Ok(())
     }
 }
 
@@ -536,5 +601,87 @@ mod tests {
         verify_light(access);
         cache.load_existing(neighbour, &context).unwrap().unwrap();
         assert_eq!(block_light(&cache, across_border), 13);
+    }
+
+    #[test]
+    fn runs_saved_load_stages_and_distinguishes_generation_from_corruption() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = TestDirectory(
+            std::env::temp_dir().join(format!("leaf-load-stages-{}-{nonce}", std::process::id(),)),
+        );
+        let storage = RegionFileStorage::new(&directory.0);
+        let full = ChunkPos::new(-1, 0);
+        let proto = ChunkPos::new(-2, 0);
+        let missing = ChunkPos::new(-3, 0);
+        let bad = ChunkPos::new(-4, 0);
+        for (pos, status) in [
+            (full, "minecraft:full"),
+            (proto, "minecraft:features"),
+            (bad, "fixture:bad_status"),
+        ] {
+            let mut nbt = CompoundTag::new();
+            utils::add_current_data_version(&mut nbt);
+            nbt.put_int("xPos", pos.x);
+            nbt.put_int("zPos", pos.z);
+            nbt.put_string("Status", status);
+            storage.write(pos, &nbt).unwrap();
+        }
+
+        let mut cache = ServerChunkCache::new(storage);
+        let height = SimpleLevelHeightAccessor::create(-64, 16);
+        let context = ChunkLoadingContext {
+            height: &height,
+            palettes: &Palettes,
+            data_fixer: None,
+            has_sky_light: false,
+        };
+        let request = |center, target_status| ChunkGenerationTask {
+            center,
+            target_status,
+        };
+
+        assert!(matches!(
+            cache
+                .load_through(request(missing, ChunkStatus::Empty), &context)
+                .unwrap(),
+            ChunkLoadOutcome::NeedsGeneration { persisted: None }
+        ));
+        assert!(matches!(
+            cache
+                .load_through(request(proto, ChunkStatus::Light), &context)
+                .unwrap(),
+            ChunkLoadOutcome::NeedsGeneration {
+                persisted: Some(ChunkStatus::Features)
+            }
+        ));
+        let error = cache
+            .load_through(request(bad, ChunkStatus::Full), &context)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(cache.get_loaded(bad).is_none());
+
+        let ChunkLoadOutcome::Ready(chunk) = cache
+            .load_through(request(full, ChunkStatus::Features), &context)
+            .unwrap()
+        else {
+            panic!("expected a saved full chunk");
+        };
+        assert!(!chunk.chunk.access().is_light_correct);
+        assert_eq!(cache.chunks[&full].completed_load, ChunkStatus::Features);
+
+        let ChunkLoadOutcome::Ready(chunk) = cache
+            .load_through(request(full, ChunkStatus::Full), &context)
+            .unwrap()
+        else {
+            panic!("expected a loaded full chunk");
+        };
+        assert!(chunk.chunk.access().is_light_correct);
+        assert_eq!(cache.chunks[&full].completed_load, ChunkStatus::Full);
+        assert!(cache.block_ticks().get_container(full).is_none());
+        assert_eq!(cache.chunks.len(), 2);
     }
 }
