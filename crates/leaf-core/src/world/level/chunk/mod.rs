@@ -1,6 +1,7 @@
 //! `net.minecraft.world.level.chunk` — хранилище блоков/биомов чанка.
 
 pub mod chunk_access;
+pub mod chunk_pyramid;
 pub mod storage;
 pub mod data_layer;
 pub mod level_chunk;

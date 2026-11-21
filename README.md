@@ -182,7 +182,7 @@ cargo test -p leaf-core
 
 ### 🟡 В работе
 
-- **World/level runtime** — добавлены интерфейс `Level`, состояние погоды, `DimensionType`, шкалы времени и `TickRateManager`. Следующий шаг — связать их с `ServerLevel` и загрузкой чанков.
+- **World/level runtime** — добавлены интерфейс `Level`, состояние погоды, `DimensionType`, шкалы времени и `TickRateManager`. Перенесены зависимости стадий загрузки и генерации чанков и радиусы записи Moonrise. Следующий шаг — запуск стадий и тиков через `ServerLevel`.
 
 | Подсистема | Состояние |
 |---|---|

@@ -88,33 +88,24 @@ impl ChunkStatus {
 
     /// `ordinal`.
     pub fn ordinal(&self) -> usize {
-        Self::VALUES.iter().position(|s| s == self).unwrap_or(0)
+        *self as usize
     }
 
 }
 
-/// Глобальные write-radius'ы статусов (в Java — поле на enum-константе;
-/// у нас enum без состояния, поэтому таблица + Mutex).
-static WRITE_RADII: std::sync::Mutex<Option<[i32; 12]>> = std::sync::Mutex::new(None);
+/// Радиусы записи планировщика Moonrise. Порядок соответствует ChunkStatus::VALUES.
+static WRITE_RADII: std::sync::Mutex<[i32; ChunkStatus::VALUES.len()]> =
+    std::sync::Mutex::new([0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0]);
 
 impl ChunkStatus {
     /// `moonrise$getWriteRadius()` статическая таблица.
-    /// Индекс = ordinal. По умолчанию `-1` (как в Java static init).
     pub fn write_radius(self) -> i32 {
-        let mut guard = WRITE_RADII.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some([-1; 12]);
-        }
-        guard.unwrap()[self.ordinal()]
+        WRITE_RADII.lock().unwrap()[self.ordinal()]
     }
 
     /// `moonrise$setWriteRadius(value)` статическая таблица.
     pub fn set_write_radius(self, value: i32) {
-        let mut guard = WRITE_RADII.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some([-1; 12]);
-        }
-        guard.as_mut().unwrap()[self.ordinal()] = value;
+        WRITE_RADII.lock().unwrap()[self.ordinal()] = value;
     }
 }
 

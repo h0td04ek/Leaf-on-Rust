@@ -48,6 +48,7 @@ impl ProtoChunk {
         blending_data: Option<BlendingData>,
     ) -> Self {
         let mut chunk_access = ChunkAccess::new(chunk_pos, level_height_accessor, sections);
+        chunk_access.persisted_status = ChunkStatus::Empty;
         chunk_access.upgrade_data = Some(upgrade_data);
         chunk_access.blending_data = blending_data;
         Self {
@@ -75,6 +76,7 @@ impl ProtoChunk {
     /// `setChunkStatus` — установить статус чанка.
     pub fn set_chunk_status(&mut self, status: ChunkStatus) {
         self.chunk_status = status;
+        self.chunk_access.persisted_status = status;
     }
 
     /// `getSection` — секция.
