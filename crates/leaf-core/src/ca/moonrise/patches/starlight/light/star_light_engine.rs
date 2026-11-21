@@ -283,43 +283,37 @@ impl StarLightEngine {
                 self.nibble_cache.clear();
                 self.notify_update_cache.clear();
             }
-            Some(level) => {
-                self.is_client_side = level.is_client_side();
-                self.min_section = WorldUtil::get_min_section(level);
-                self.max_section = WorldUtil::get_max_section(level);
-                self.min_light_section = WorldUtil::get_min_light_section(level);
-                self.max_light_section = WorldUtil::get_max_light_section(level);
-                self.total_sections = WorldUtil::get_total_sections(level);
-                self.total_light_sections = WorldUtil::get_total_light_sections(level);
-                let min_array_size =
-                    5 * 5 * ((self.max_light_section - self.min_light_section + 1) + 2) as usize;
-                if self.section_cache.len() < min_array_size {
-                    self.section_cache = vec![None; min_array_size];
-                } else {
-                    for v in self.section_cache.iter_mut() {
-                        *v = None;
-                    }
-                }
-                if self.nibble_cache.len() < min_array_size {
-                    self.nibble_cache = vec![None; min_array_size];
-                } else {
-                    for v in self.nibble_cache.iter_mut() {
-                        *v = None;
-                    }
-                }
-                if self.notify_update_cache.len() < min_array_size {
-                    self.notify_update_cache = vec![false; min_array_size];
-                } else {
-                    for v in self.notify_update_cache.iter_mut() {
-                        *v = false;
-                    }
-                }
-                let sky_min = WorldUtil::get_total_light_sections(level) as usize;
-                if self.null_propagation_check_cache.len() < sky_min {
-                    self.null_propagation_check_cache = vec![false; sky_min];
-                }
-            }
+            Some(level) => self.set_section_range(
+                WorldUtil::get_min_section(level),
+                WorldUtil::get_max_section(level),
+                level.is_client_side(),
+            ),
         }
+    }
+
+    pub(crate) fn set_section_range(
+        &mut self,
+        min_section: i32,
+        max_section: i32,
+        is_client_side: bool,
+    ) {
+        self.is_client_side = is_client_side;
+        self.min_section = min_section;
+        self.max_section = max_section;
+        self.min_light_section = min_section - 1;
+        self.max_light_section = max_section + 1;
+        self.total_sections = max_section - min_section + 1;
+        self.total_light_sections = self.total_sections + 2;
+        let size = 5 * 5 * (self.total_light_sections + 2) as usize;
+        self.section_cache.resize(size, None);
+        self.section_cache.fill(None);
+        self.nibble_cache.resize(size, None);
+        self.nibble_cache.fill(None);
+        self.notify_update_cache.resize(size, false);
+        self.notify_update_cache.fill(false);
+        self.null_propagation_check_cache
+            .resize(self.total_light_sections as usize, false);
+        self.null_propagation_check_cache.fill(false);
     }
 
     /// `setupEncodeOffset(centerX, centerY, centerZ)` — center в

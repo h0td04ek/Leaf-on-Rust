@@ -3,7 +3,7 @@
 use crate::core::section_pos::SectionPos;
 
 /// `LevelHeightAccessor`.
-pub trait LevelHeightAccessor {
+pub trait LevelHeightAccessor: Send + Sync {
     /// `getMinY`.
     fn get_min_y(&self) -> i32;
     /// `getHeight`.
