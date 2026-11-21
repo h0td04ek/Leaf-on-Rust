@@ -31,6 +31,28 @@ impl LevelLightEngine {
         &self.chunk_source
     }
 
+    /// `LevelLightEngine.EMPTY` — движок без чанков и engine'ов.
+    pub fn empty() -> Self {
+        /// Пустой `ChunkSource` для EMPTY-движка.
+        struct EmptyChunkSource;
+        impl crate::world::level::chunk_source::ChunkSource for EmptyChunkSource {
+            fn get_chunk(&self, _x: i32, _z: i32) -> Option<Arc<crate::world::level::chunk::chunk_access::ChunkAccess>> {
+                None
+            }
+            fn get_min_section_y(&self) -> i32 {
+                0
+            }
+            fn get_sections_count(&self) -> i32 {
+                0
+            }
+        }
+        Self {
+            chunk_source: Arc::new(EmptyChunkSource),
+            sky_engine: None,
+            block_engine: None,
+        }
+    }
+
     /// `getLightValue(pos, layer)`.
     pub fn get_light_value(&self, pos: &BlockPos, layer: LightLayer) -> u8 {
         match layer {

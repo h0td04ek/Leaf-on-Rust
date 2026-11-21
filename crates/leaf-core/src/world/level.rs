@@ -181,4 +181,9 @@ pub mod world_data_configuration;
 pub mod level_settings;
 pub mod server_level_accessor;
 pub mod world_gen_level;
+pub mod color_resolver;
+pub mod block_and_tint_getter;
+pub mod empty_block_getter;
+pub mod empty_block_and_tint_getter;
+
 

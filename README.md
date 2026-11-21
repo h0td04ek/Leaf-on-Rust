@@ -178,6 +178,8 @@ cargo test -p leaf-core
 
 | **world/level — gamerules + level-интерфейсы** | **Полный порт** ✅: `gamerules/` — `GameRules` (~60 ванильных правил: 47 bool + 13 int с min/max и feature-флагами, `GameRule<T>` типизированные handles, `GameRuleMap` Paper array-backed `idAccess` + NBT-кодек level.dat, `GameRuleCategory` 7 категорий, `GameRuleType` INT/BOOL, `GameRuleTypeVisitor`, `bootstrap`-регистрация, Paper `DISABLE_LIMITS`, `get/set/setAll/copy/visitGameRuleTypes/getAsString/with_overrides`, сериализация bounded-int), `SignalGetter` (getDirectSignal/getDirectSignalTo с early-exit 15, getControlInputSignal diodesOnly/redstone_block/wire-power, getSignal+conductor, hasNeighborSignal, getBestNeighborSignal), `ItemLike`, `BlockEventData`, `DataPackConfig` (NBT Enabled/Disabled), `WorldDataConfiguration` (DataPacks+FeatureFlagSet, expandFeatures, NBT), `DifficultyInstance` (effective difficulty: время/inhabitedTime/moonPhase, specialMultiplier), `LevelSettings` (parse level.dat: GameType/LevelName/hardcore/Difficulty/allowCommands/game_rules, with_*/copy), `ServerLevelAccessor` (getLevel/getCurrentDifficultyAt/addFreshEntityWithPassengers/getMinecraftWorld), `WorldGenLevel` (getSeed/ensureCanWrite/setCurrentlyGenerating); `FeatureFlagSet::join/is_subset_of/minecart_improvements`, `VANILLA_FLAGS` дополнен redstone_experiments+minecart_improvements |
 
+| **world/level — tint/empty-getter'ы** | **Полный порт** ✅: `ColorResolver` (biome color fn), `BlockAndTintGetter` (getShade/getLightEngine/getBlockTint + getBrightness/getRawBrightness/canSeeSky), `EmptyBlockGetter`/`EmptyBlockAndTintGetter` singleton'ы (air/empty, Paper if-loaded null-варианты), `LevelLightEngine::empty()` (Java `LevelLightEngine.EMPTY`) |
+
 ### 🟡 В работе
 
 | Подсистема | Состояние |
