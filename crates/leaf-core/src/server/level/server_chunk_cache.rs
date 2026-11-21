@@ -11,10 +11,11 @@ use crate::ca::moonrise::patches::starlight::light::star_light_engine::{
 use crate::core::block_pos::BlockPos;
 use crate::core::registry_access::RegistryAccess;
 use crate::core::section_pos::SectionPos;
+use crate::nbt::{utils, CompoundTag, Tag};
 use crate::world::level::block::state::BlockState;
 use crate::world::level::chunk::chunk_access::ChunkAccess;
 use crate::world::level::chunk::chunk_pyramid::ChunkStep;
-use crate::world::level::chunk::level_chunk::ChunkStatus;
+use crate::world::level::chunk::level_chunk::{ChunkStatus, LevelChunk};
 use crate::world::level::chunk::storage::region_file_storage::RegionFileStorage;
 use crate::world::level::chunk::storage::serializable_chunk_data::{
     ChunkLoadingContext, LoadedChunk, SerializableChunkData,
@@ -27,6 +28,7 @@ use crate::world::level::lighting::light_engine::has_different_light_properties;
 use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
 use crate::world::ticks::LevelTicks;
 
+use super::chunk_generation_region::{ChunkGenerationRegion, ChunkStageExecutor, GenerationEdits};
 use super::chunk_generation_task::{ChunkGenerationTask, ChunkStepMode, GeneratingChunkMap};
 
 pub enum ChunkLoadOutcome<'a> {
@@ -43,7 +45,7 @@ pub struct ServerChunkCache {
 
 struct CachedChunk {
     data: LoadedChunk,
-    completed_load: ChunkStatus,
+    completed_stage: ChunkStatus,
     has_sky_light: bool,
     light_prepared: bool,
     ticking: bool,
@@ -75,7 +77,7 @@ impl ServerChunkCache {
                 };
                 entry.insert(CachedChunk {
                     data: data.into_runtime(None),
-                    completed_load: ChunkStatus::Empty,
+                    completed_stage: ChunkStatus::Empty,
                     has_sky_light: context.has_sky_light,
                     light_prepared: false,
                     ticking: false,
@@ -93,9 +95,10 @@ impl ServerChunkCache {
         task: ChunkGenerationTask,
         context: &ChunkLoadingContext<'_>,
     ) -> io::Result<ChunkLoadOutcome<'_>> {
-        let mut map = SavedChunkMap {
+        let mut map = CachedChunkMap {
             cache: self,
             context,
+            executor: None,
         };
         if !task.try_load(&mut map)? {
             return Ok(ChunkLoadOutcome::NeedsGeneration {
@@ -103,6 +106,84 @@ impl ServerChunkCache {
             });
         }
         Ok(ChunkLoadOutcome::Ready(&self.chunks[&task.center].data))
+    }
+
+    /// Выполняет путь загрузки или генерации до запрошенного статуса.
+    /// Стадии рельефа и контента выполняет переданный генератор.
+    pub fn generate_through(
+        &mut self,
+        task: ChunkGenerationTask,
+        context: &ChunkLoadingContext<'_>,
+        executor: &mut dyn ChunkStageExecutor,
+    ) -> io::Result<&LoadedChunk> {
+        task.run(&mut CachedChunkMap {
+            cache: self,
+            context,
+            executor: Some(executor),
+        })?;
+        Ok(&self.chunks[&task.center].data)
+    }
+
+    pub fn completed_status(&self, pos: ChunkPos) -> Option<ChunkStatus> {
+        Some(self.chunks.get(&pos)?.completed_stage)
+    }
+
+    fn apply_generation_edits(&mut self, pos: ChunkPos, edits: GenerationEdits) {
+        for (block, state) in edits.blocks {
+            self.set_block_state(block, state);
+        }
+        let cached = self.chunks.get_mut(&pos).unwrap();
+        let access = cached.data.chunk.access_mut();
+        for (block, biome) in edits.biomes {
+            access
+                .get_section_mut(block.get_y() >> 4)
+                .unwrap()
+                .set_biome(
+                    (block.get_x() & 15) >> 2,
+                    (block.get_y() & 15) >> 2,
+                    (block.get_z() & 15) >> 2,
+                    biome,
+                );
+        }
+        if let RuntimeChunk::Proto(chunk) = &mut cached.data.chunk {
+            chunk.entities.extend(edits.entities);
+        }
+    }
+
+    fn promote_full(&mut self, pos: ChunkPos) -> io::Result<()> {
+        let data = &self.chunks[&pos].data;
+        if !matches!(&data.chunk, RuntimeChunk::Proto(chunk)
+            if chunk.get_chunk_status() == ChunkStatus::Spawn && chunk.chunk_access.is_light_correct)
+        {
+            return Err(io::Error::other(format!(
+                "chunk {pos:?} must finish spawn and lighting before promotion"
+            )));
+        }
+
+        let mut cached = self.chunks.remove(&pos).unwrap();
+        let RuntimeChunk::Proto(mut proto) = cached.data.chunk else {
+            unreachable!("verified proto chunk before removal");
+        };
+        let ticks = proto.pack_ticks();
+        proto.set_chunk_status(ChunkStatus::Full);
+        let mut chunk =
+            LevelChunk::from_access(proto.chunk_access, ticks, proto.post_processing, None);
+        chunk.light_engine = proto.light_engine;
+        // Full может прочитать inline-сущности до подключения отдельного EntityStorage.
+        if proto.entities.is_empty() {
+            cached.data.original_tag.remove("entities");
+        } else {
+            let entities = proto.entities.into_iter().map(Tag::Compound).collect();
+            cached
+                .data
+                .original_tag
+                .put("entities", Tag::List(entities));
+        }
+        cached.data.original_tag.remove("carving_mask");
+        cached.data.chunk = RuntimeChunk::Full(chunk);
+        cached.needs_save = true;
+        self.chunks.insert(pos, cached);
+        Ok(())
     }
 
     pub fn get_loaded(&self, pos: ChunkPos) -> Option<&LoadedChunk> {
@@ -317,12 +398,13 @@ impl ServerChunkCache {
     }
 }
 
-struct SavedChunkMap<'a, 'b> {
+struct CachedChunkMap<'a, 'b, 'c> {
     cache: &'a mut ServerChunkCache,
-    context: &'a ChunkLoadingContext<'b>,
+    context: &'b ChunkLoadingContext<'c>,
+    executor: Option<&'a mut dyn ChunkStageExecutor>,
 }
 
-impl GeneratingChunkMap for SavedChunkMap<'_, '_> {
+impl GeneratingChunkMap for CachedChunkMap<'_, '_, '_> {
     type Error = io::Error;
 
     fn persisted_status(&self, pos: ChunkPos) -> Option<ChunkStatus> {
@@ -330,7 +412,7 @@ impl GeneratingChunkMap for SavedChunkMap<'_, '_> {
     }
 
     fn completed_status(&self, pos: ChunkPos) -> Option<ChunkStatus> {
-        Some(self.cache.chunks.get(&pos)?.completed_load)
+        self.cache.completed_status(pos)
     }
 
     fn apply_step(
@@ -340,15 +422,63 @@ impl GeneratingChunkMap for SavedChunkMap<'_, '_> {
         mode: ChunkStepMode,
     ) -> io::Result<()> {
         let status = step.target_status;
-        debug_assert_eq!(mode, ChunkStepMode::Load);
         if status == ChunkStatus::Empty {
-            self.cache.load_existing(pos, self.context)?;
+            if self.cache.load_existing(pos, self.context)?.is_none() && self.executor.is_some() {
+                let mut nbt = CompoundTag::new();
+                utils::add_current_data_version(&mut nbt);
+                nbt.put_int("xPos", pos.x);
+                nbt.put_int("zPos", pos.z);
+                nbt.put_string("Status", "minecraft:empty");
+                let data = SerializableChunkData::parse(nbt, pos, self.context)?.into_runtime(None);
+                self.cache.chunks.insert(
+                    pos,
+                    CachedChunk {
+                        data,
+                        completed_stage: ChunkStatus::Empty,
+                        has_sky_light: self.context.has_sky_light,
+                        light_prepared: false,
+                        ticking: false,
+                        needs_save: false,
+                    },
+                );
+            }
             return Ok(());
         }
-        if status == ChunkStatus::Light && !self.cache.prepare_light(pos) {
-            return Err(io::Error::other(format!("light stage failed for {pos:?}")));
+
+        match (status, mode) {
+            (ChunkStatus::Light, _) => {
+                if !self.cache.prepare_light(pos) {
+                    return Err(io::Error::other(format!("light stage failed for {pos:?}")));
+                }
+            }
+            (ChunkStatus::Full, ChunkStepMode::Generate) => self.cache.promote_full(pos)?,
+            (ChunkStatus::InitializeLight, _) | (_, ChunkStepMode::Load) => {}
+            (_, ChunkStepMode::Generate) => {
+                let mut region = ChunkGenerationRegion::new(self.cache, step, pos);
+                self.executor.as_deref_mut().unwrap().execute(&mut region)?;
+                let edits = region.into_edits();
+                self.cache.apply_generation_edits(pos, edits);
+            }
         }
-        self.cache.chunks.get_mut(&pos).unwrap().completed_load = status;
+
+        let cached = self.cache.chunks.get_mut(&pos).unwrap();
+        if mode == ChunkStepMode::Generate {
+            if let RuntimeChunk::Proto(chunk) = &mut cached.data.chunk {
+                if !chunk.get_chunk_status().is_or_after(status) {
+                    chunk.set_chunk_status(status);
+                    let access = &mut chunk.chunk_access;
+                    let missing: Vec<_> = status
+                        .heightmaps_after()
+                        .iter()
+                        .copied()
+                        .filter(|ty| !access.heightmaps.contains_key(ty))
+                        .collect();
+                    access.prime_heightmaps(&missing);
+                    cached.needs_save = true;
+                }
+            }
+        }
+        cached.completed_stage = status;
         Ok(())
     }
 }
@@ -388,7 +518,6 @@ mod tests {
     use super::*;
     use crate::core::holder::Holder;
     use crate::core::registry::registries;
-    use crate::nbt::{utils, CompoundTag};
     use crate::resources::{Identifier, ResourceKey};
     use crate::world::level::biome::biome::Biome;
     use crate::world::level::block::Block;
@@ -671,7 +800,7 @@ mod tests {
             panic!("expected a saved full chunk");
         };
         assert!(!chunk.chunk.access().is_light_correct);
-        assert_eq!(cache.chunks[&full].completed_load, ChunkStatus::Features);
+        assert_eq!(cache.chunks[&full].completed_stage, ChunkStatus::Features);
 
         let ChunkLoadOutcome::Ready(chunk) = cache
             .load_through(request(full, ChunkStatus::Full), &context)
@@ -680,8 +809,159 @@ mod tests {
             panic!("expected a loaded full chunk");
         };
         assert!(chunk.chunk.access().is_light_correct);
-        assert_eq!(cache.chunks[&full].completed_load, ChunkStatus::Full);
+        assert_eq!(cache.chunks[&full].completed_stage, ChunkStatus::Full);
         assert!(cache.block_ticks().get_container(full).is_none());
         assert_eq!(cache.chunks.len(), 2);
+    }
+
+    #[test]
+    fn commits_successful_generation_stages_and_promotes_proto_without_losing_data() {
+        use crate::world::level::levelgen::heightmap::HeightmapType;
+
+        struct Generator {
+            center: ChunkPos,
+            source: BlockPos,
+            fail_noise: bool,
+            failures: usize,
+        }
+
+        impl ChunkStageExecutor for Generator {
+            fn execute(&mut self, region: &mut ChunkGenerationRegion<'_>) -> io::Result<()> {
+                if region.center != self.center {
+                    return Ok(());
+                }
+                match region.step.target_status {
+                    ChunkStatus::Biomes => {
+                        region.set_biome(
+                            self.source,
+                            Palettes.biome(&Identifier::minecraft("forest")).unwrap(),
+                        )?;
+                    }
+                    ChunkStatus::Noise => {
+                        let mut nbt = CompoundTag::new();
+                        nbt.put_string("Name", "minecraft:torch");
+                        region.set_block_state(self.source, Palettes.block_state(&nbt).unwrap())?;
+                        assert!(region
+                            .block_state(self.source)
+                            .unwrap()
+                            .is_block_id("minecraft:torch"));
+                        if self.fail_noise {
+                            self.failures += 1;
+                            self.fail_noise = false;
+                            return Err(io::Error::other("fixture noise failure"));
+                        }
+                    }
+                    ChunkStatus::Features => {
+                        let outside_radius = self.source.offset(32, 0, 0);
+                        let error = region
+                            .set_block_state(outside_radius, BlockState::air())
+                            .unwrap_err();
+                        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+                    }
+                    ChunkStatus::Spawn => {
+                        let mut entity = CompoundTag::new();
+                        entity.put_string("id", "minecraft:pig");
+                        region.add_entity(entity)?;
+                    }
+                    _ => {}
+                }
+                Ok(())
+            }
+        }
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = TestDirectory(std::env::temp_dir().join(format!(
+            "leaf-generate-stages-{}-{nonce}",
+            std::process::id(),
+        )));
+        let storage = RegionFileStorage::new(&directory.0);
+        let center = ChunkPos::new(-1, 0);
+        let source = BlockPos::new(-16, -60, 0);
+        let mut tag = CompoundTag::new();
+        utils::add_current_data_version(&mut tag);
+        tag.put_int("xPos", center.x);
+        tag.put_int("zPos", center.z);
+        tag.put_string("Status", "minecraft:empty");
+        let ticks = PackedTicks {
+            blocks: vec![SavedTick::new(
+                BlockTickType {
+                    id: "minecraft:observer".into(),
+                },
+                source,
+                4,
+                TickPriority::Normal,
+            )],
+            fluids: Vec::new(),
+        };
+        ticks.write_nbt(&mut tag);
+        storage.write(center, &tag).unwrap();
+
+        let mut cache = ServerChunkCache::new(storage);
+        let height = SimpleLevelHeightAccessor::create(-64, 16);
+        let context = ChunkLoadingContext {
+            height: &height,
+            palettes: &Palettes,
+            data_fixer: None,
+            has_sky_light: false,
+        };
+        let request = ChunkGenerationTask {
+            center,
+            target_status: ChunkStatus::Full,
+        };
+        let mut generator = Generator {
+            center,
+            source,
+            fail_noise: true,
+            failures: 0,
+        };
+        let error = cache
+            .generate_through(request, &context, &mut generator)
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), "fixture noise failure");
+        assert_eq!(cache.completed_status(center), Some(ChunkStatus::Biomes));
+        assert!(cache
+            .get_loaded(center)
+            .unwrap()
+            .chunk
+            .access()
+            .get_block_state(&source)
+            .is_air());
+
+        let loaded = cache
+            .generate_through(request, &context, &mut generator)
+            .unwrap();
+        assert_eq!(generator.failures, 1);
+        let RuntimeChunk::Full(chunk) = &loaded.chunk else {
+            panic!("expected proto chunk to be promoted");
+        };
+        assert!(chunk.chunk_access.is_light_correct);
+        assert!(chunk
+            .get_block_state(&source)
+            .is_block_id("minecraft:torch"));
+        assert_eq!(
+            chunk.get_height(HeightmapType::WorldSurface, source.get_x(), source.get_z()),
+            -59
+        );
+        assert_eq!(loaded.original_tag.get_list_or_empty("entities").len(), 1);
+        assert_eq!(cache.completed_status(center), Some(ChunkStatus::Full));
+
+        assert!(cache.start_ticking(center, 20));
+        let mut executed = Vec::new();
+        cache
+            .block_ticks()
+            .tick(24, 4, &mut |pos, _| executed.push(pos));
+        assert_eq!(executed, [source]);
+
+        let registries = RegistryAccess::new();
+        assert!(cache.unload(center, 25, &registries).unwrap());
+        let loaded = cache.load_existing(center, &context).unwrap().unwrap();
+        assert!(matches!(loaded.chunk, RuntimeChunk::Full(_)));
+        assert_eq!(loaded.original_tag.get_list_or_empty("entities").len(), 1);
+        let biome = loaded.chunk.access().sections[0].biomes.get(0, 1, 0);
+        assert_eq!(biome.key().unwrap().id(), &Identifier::minecraft("forest"));
     }
 }
