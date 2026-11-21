@@ -6,7 +6,7 @@ use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 use crate::resources::resource_key::ResourceKey;
-use crate::world::level::Level;
+use crate::world::level::LevelKey;
 
 /// `LodestoneTracker` — (target?, tracked).
 #[derive(Clone, Debug, PartialEq, Eq)]

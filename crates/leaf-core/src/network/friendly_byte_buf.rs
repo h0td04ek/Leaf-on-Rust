@@ -21,7 +21,7 @@ use crate::network::var_long;
 use crate::resources::{Identifier, ResourceKey};
 use crate::util::mth;
 use crate::world::level::chunk_pos::ChunkPos;
-use crate::world::level::Level;
+use crate::world::level::LevelKey;
 use crate::world::phys::vec3;
 use crate::world::phys::{BlockHitResult, HitResultType, Vec3};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -953,7 +953,7 @@ impl FriendlyByteBuf {
     }
 
     pub fn read_global_pos(&mut self) -> GlobalPos {
-        let resource_key = self.read_resource_key_for::<Level>(
+        let resource_key = self.read_resource_key_for::<LevelKey>(
             crate::core::registry::registries::dimension(),
         );
         let pos = self.read_block_pos();
@@ -1148,7 +1148,7 @@ impl FriendlyByteBuf {
     }
 
     /// `readResourceKey` с явным именем реестра.
-    pub fn read_resource_key(&mut self, registry: Identifier) -> ResourceKey<Level> {
+    pub fn read_resource_key(&mut self, registry: Identifier) -> ResourceKey<LevelKey> {
         let location = self.read_identifier().expect("invalid identifier");
         ResourceKey::create_with_registry_name(registry, location)
     }

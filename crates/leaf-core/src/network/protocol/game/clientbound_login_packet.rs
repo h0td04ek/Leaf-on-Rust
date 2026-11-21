@@ -1,6 +1,6 @@
 //! `ClientboundLoginPacket` — вход в игру (game state).
 
-use crate::world::level::Level;
+use crate::world::level::LevelKey;
 use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::network::protocol::game::common_player_spawn_info::CommonPlayerSpawnInfo;
@@ -16,8 +16,8 @@ pub struct ClientboundLoginPacket {
     pub player_id: i32,
     /// `hardcore`.
     pub hardcore: bool,
-    /// `levels` — `Set<ResourceKey<Level>>`.
-    pub levels: HashSet<ResourceKey<Level>>,
+    /// `levels` — `Set<ResourceKey<LevelKey>>`.
+    pub levels: HashSet<ResourceKey<LevelKey>>,
     /// `maxPlayers`.
     pub max_players: i32,
     /// `chunkRadius`.
@@ -42,7 +42,7 @@ impl ClientboundLoginPacket {
     pub fn new(
         player_id: i32,
         hardcore: bool,
-        levels: HashSet<ResourceKey<Level>>,
+        levels: HashSet<ResourceKey<LevelKey>>,
         max_players: i32,
         chunk_radius: i32,
         simulation_distance: i32,

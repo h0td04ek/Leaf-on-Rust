@@ -862,6 +862,20 @@ pub fn is_alive_and_well(&self) -> bool {
     /// `getPassengers()`.
     pub fn get_passengers(&self) -> Vec<&Entity> { Vec::new() }
 
+    /// `countPlayerPassengers()` — количество пассажиров-игроков
+    /// среди *всех* косвенных пассажиров (DFS по иерархии).
+    pub fn count_player_passengers(&self) -> i32 {
+        let mut count = 0;
+        let mut stack: Vec<&Entity> = self.get_passengers();
+        while let Some(e) = stack.pop() {
+            if e.is_player() {
+                count += 1;
+            }
+            stack.extend(e.get_passengers());
+        }
+        count
+    }
+
     /// `getVehicle()`.
     /// `getVehicle()` — резолв транспорта через level.entity_by_uuid.
     pub fn get_vehicle(&self) -> Option<Entity> {

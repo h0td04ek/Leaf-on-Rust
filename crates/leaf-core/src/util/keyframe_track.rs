@@ -103,6 +103,13 @@ impl<T: Clone> KeyframeTrackBuilder<T> {
         KeyframeTrack::validate_keyframes(&self.keyframes)?;
         Ok(KeyframeTrack { keyframes: self.keyframes, easing_type: self.easing })
     }
+
+    /// `build()` по `&mut` — для callback-стиля `Timeline.Builder`
+    /// (клонирует keyframes; `T: Clone`).
+    pub fn build_ref(&self) -> Result<KeyframeTrack<T>, String> {
+        KeyframeTrack::validate_keyframes(&self.keyframes)?;
+        Ok(KeyframeTrack { keyframes: self.keyframes.clone(), easing_type: self.easing.clone() })
+    }
 }
 
 impl<T: Clone> Default for KeyframeTrackBuilder<T> {

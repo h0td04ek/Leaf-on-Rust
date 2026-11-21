@@ -30,9 +30,28 @@ pub struct BlockState {
 impl BlockState {
     /// `air()` — дефолтное состояние воздуха.
     pub fn air() -> Self {
-        // Placeholder — requires Blocks registry
-        // For now, return a minimal air state
-        Self::new(Arc::new(crate::world::level::block::Block::new(crate::resources::identifier::Identifier::from_namespace_and_path("minecraft", "air").unwrap())), StateHolder::default())
+        static AIR: std::sync::LazyLock<BlockState> = std::sync::LazyLock::new(|| {
+            let id = crate::resources::Identifier::with_default_namespace("air").unwrap();
+            let mut air = Block::new(id);
+            air.properties.is_air = true;
+            BlockState::without_properties(Arc::new(air))
+        });
+        AIR.clone()
+    }
+
+    pub(crate) fn without_properties(block: Arc<Block>) -> Self {
+        let values = StateHolder::new();
+        let definition = Arc::new(StateDefinition::new(
+            block.id.clone(),
+            Vec::new(),
+            vec![values.clone()],
+        ));
+        Self {
+            block,
+            definition,
+            values,
+            fluid_state: super::fluid_state::FluidState::empty(),
+        }
     }
 
     /// `BlockStateBase` конструктор.

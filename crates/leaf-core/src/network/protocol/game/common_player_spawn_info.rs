@@ -4,7 +4,7 @@ use crate::core::holder::Holder;
 use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::world::level::game_type::GameType;
-use crate::world::level::Level;
+use crate::world::level::LevelKey;
 use crate::resources::ResourceKey;
 use crate::core::global_pos::GlobalPos;
 
@@ -20,7 +20,7 @@ pub struct CommonPlayerSpawnInfo {
     /// `dimensionType` — `Holder<DimensionType>`.
     pub dimension_type: Holder<DimensionType>,
     /// `dimension`.
-    pub dimension: ResourceKey<Level>,
+    pub dimension: ResourceKey<LevelKey>,
     /// `seed`.
     pub seed: i64,
     /// `gameType`.
@@ -44,7 +44,7 @@ impl CommonPlayerSpawnInfo {
     pub fn read(buf: &mut FriendlyByteBuf) -> Self {
         // DimensionType.STREAM_CODEC = holderRegistry → VarInt id
         let dimension_type = Holder::Reference(buf.read_var_int());
-        let dimension = buf.read_resource_key_for::<Level>(
+        let dimension = buf.read_resource_key_for::<LevelKey>(
             crate::core::registry::registries::dimension(),
         );
         let seed = buf.read_long();

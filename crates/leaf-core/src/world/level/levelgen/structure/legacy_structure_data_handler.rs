@@ -33,7 +33,7 @@ use crate::world::level::dimension::{level_to_level_stem, END, NETHER, OVERWORLD
 use crate::world::level::levelgen::structure::structure_feature_index_saved_data::StructureFeatureIndexSavedData;
 use crate::world::level::saveddata::saved_data::{SavedData, SharedSavedData};
 use crate::world::level::storage::dimension_data_storage::DimensionDataStorage;
-use crate::world::level::Level;
+use crate::world::level::LevelKey;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -482,7 +482,7 @@ impl LegacyTagFixer for LegacyStructureDataHandler {
 /// `chunk_converter` — опциональный `MCDataConverter`-хук.
 /// `ignore_null_legacy_structure_data` — Gale-флаг.
 pub fn get_legacy_tag_fixer(
-    level: &ResourceKey<Level>,
+    level: &ResourceKey<LevelKey>,
     storage: Option<Arc<DimensionDataStorage>>,
     data_fixer: Arc<dyn DataFixer>,
     chunk_converter: Option<Arc<dyn LegacyChunkConverter>>,

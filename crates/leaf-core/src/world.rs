@@ -21,3 +21,5 @@ pub mod difficulty_instance;
 pub mod interaction_hand;
 pub mod simple_container;
 pub mod ticks;
+pub mod tick_rate_manager;
+pub mod timeline;

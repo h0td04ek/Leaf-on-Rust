@@ -879,7 +879,7 @@ impl Sensor for SecondaryPoiSensor {
             mob.living.brain_erase(&keys::secondary_job_site());
             return;
         };
-        let dim = crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+        let dim = crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
             crate::core::registry::registries::dimension(),
             dim_id,
         );

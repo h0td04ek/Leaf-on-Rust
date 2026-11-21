@@ -17,6 +17,11 @@ pub trait BlockEntityAccess: Send + Sync {
     /// (с id и координатами).
     fn save_full_metadata(&self, registry_access: &RegistryAccess) -> CompoundTag;
 
+    /// Обрабатывает событие блока. Возвращает true, если событие обработано.
+    fn trigger_event(&self, _event_id: i32, _event_param: i32) -> bool {
+        false
+    }
+
     /// Тип BE (`BlockEntityType`).
     fn block_entity_type_id(&self) -> &crate::resources::identifier::Identifier;
 }

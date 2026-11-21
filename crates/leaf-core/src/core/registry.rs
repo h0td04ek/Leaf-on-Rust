@@ -266,6 +266,9 @@ pub mod registries {
     pub fn dimension() -> Identifier {
         Identifier::minecraft("dimension")
     }
+    pub fn timeline() -> Identifier {
+        Identifier::minecraft("timeline")
+    }
     pub fn biome() -> Identifier {
         Identifier::minecraft("worldgen/biome")
     }

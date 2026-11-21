@@ -486,7 +486,7 @@ pub fn yield_job_site(speed_modifier: f32) -> PointBehavior {
                         nb.set_memory_value(
                             &keys::potential_job_site(),
                             GlobalPos::of(
-                                crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+                                crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
                                     crate::core::registry::registries::dimension(),
                                     level
                                         .dimension_id()
@@ -1548,7 +1548,7 @@ fn set_door_open(level: &Arc<dyn LevelReader>, pos: BlockPos, open: bool) {
 
 fn remember_door_to_close(mob: &mut Mob, level: &Arc<dyn LevelReader>, pos: BlockPos) {
     let gp = GlobalPos::of(
-        crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+        crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
             crate::core::registry::registries::dimension(),
             level
                 .dimension_id()

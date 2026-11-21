@@ -43,7 +43,7 @@ pub static LEVEL_STEM_REGISTRY: LazyLock<ResourceKey<crate::core::registry::Regi
 /// `Registries.levelToLevelStem(level)` — ключ измерения → ключ ствола.
 /// В Java: `ResourceKey.create(LEVEL_STEM, level.identifier())`.
 pub fn level_to_level_stem(
-    level: &ResourceKey<crate::world::level::Level>,
+    level: &ResourceKey<crate::world::level::LevelKey>,
 ) -> ResourceKey<LevelStem> {
     ResourceKey::create(&LEVEL_STEM_REGISTRY, level.id().clone())
 }

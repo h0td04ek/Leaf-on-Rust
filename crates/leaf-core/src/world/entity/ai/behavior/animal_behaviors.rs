@@ -918,7 +918,7 @@ pub fn locate_hiding_place(
                     .cloned()
                     .unwrap_or_else(|| crate::resources::identifier::Identifier::with_default_namespace("overworld").unwrap());
                 let gpos = GlobalPos::of(
-                    crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+                    crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
                         crate::core::registry::registries::dimension(),
                         dim,
                     ),

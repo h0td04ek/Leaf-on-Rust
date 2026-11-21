@@ -69,7 +69,7 @@ fn entity_type_path(e: &Entity) -> String {
 /// `GlobalPos` текущего измерения уровня.
 fn global_pos_of(level: &Arc<dyn LevelReader>, pos: BlockPos) -> GlobalPos {
     GlobalPos::of(
-        crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+        crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
             crate::core::registry::registries::dimension(),
             level
                 .dimension_id()

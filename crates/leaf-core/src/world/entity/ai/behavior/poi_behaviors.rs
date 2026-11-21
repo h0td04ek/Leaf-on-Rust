@@ -210,7 +210,7 @@ pub fn acquire_poi_with_state(
                 mob.living.brain_set_value(
                     &acquiring_memory_inner,
                     GlobalPos::of(
-                        crate::resources::ResourceKey::<crate::world::level::Level>::create_with_registry_name(
+                        crate::resources::ResourceKey::<crate::world::level::LevelKey>::create_with_registry_name(
                             crate::core::registry::registries::dimension(),
                             level
                                 .dimension_id()
