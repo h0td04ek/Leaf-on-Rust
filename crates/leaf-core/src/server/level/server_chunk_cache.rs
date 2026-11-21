@@ -8,8 +8,10 @@ use std::sync::{Arc, Mutex};
 use crate::ca::moonrise::patches::starlight::light::star_light_engine::{
     EngineKind, StarLightEngine,
 };
+use crate::core::block_pos::BlockPos;
 use crate::core::registry_access::RegistryAccess;
 use crate::core::section_pos::SectionPos;
+use crate::world::level::block::state::BlockState;
 use crate::world::level::chunk::chunk_access::ChunkAccess;
 use crate::world::level::chunk::level_chunk::ChunkStatus;
 use crate::world::level::chunk::storage::region_file_storage::RegionFileStorage;
@@ -20,6 +22,7 @@ use crate::world::level::chunk::LightChunkGetter;
 use crate::world::level::chunk::RuntimeChunk;
 use crate::world::level::chunk_pos::ChunkPos;
 use crate::world::level::light_layer::LightLayer;
+use crate::world::level::lighting::light_engine::has_different_light_properties;
 use crate::world::level::scheduled_tick_access::{BlockTickType, FluidTickType};
 use crate::world::ticks::LevelTicks;
 
@@ -77,10 +80,67 @@ impl ServerChunkCache {
         self.chunks.get(&pos).map(|chunk| &chunk.data)
     }
 
+    /// Доступ к данным для стадий генерации и обновления метаданных.
+    /// Игровые изменения блоков проходят через set_block_state.
     pub fn get_chunk_access_mut(&mut self, pos: ChunkPos) -> Option<&mut ChunkAccess> {
         let chunk = self.chunks.get_mut(&pos)?;
         chunk.needs_save = true;
         Some(chunk.data.chunk.access_mut())
+    }
+
+    pub fn set_block_state(&mut self, pos: BlockPos, state: BlockState) -> bool {
+        let chunk_pos = ChunkPos::new(pos.get_x() >> 4, pos.get_z() >> 4);
+        let Some(cached) = self.chunks.get(&chunk_pos) else {
+            return false;
+        };
+        let chunk = cached.data.chunk.access();
+        let section_y = pos.get_y() >> 4;
+        let Some(section) = chunk.get_section(section_y) else {
+            return false;
+        };
+        let old = chunk.get_block_state(&pos);
+        if old == state {
+            return false;
+        }
+        let was_empty = section.has_only_air();
+        let section_index = chunk.get_section_index_from_section_y(section_y) as usize;
+        let light_changed = has_different_light_properties(&old, &state);
+        let check_light = (light_changed || old.is_air() != state.is_air())
+            && chunk.persisted_status.is_or_after(ChunkStatus::Light);
+        if check_light {
+            // Для чанка с дисковым светом сначала восстанавливаем карту пустых секций.
+            self.prepare_light(chunk_pos);
+        }
+
+        let cached = self.chunks.get_mut(&chunk_pos).unwrap();
+        let chunk = cached.data.chunk.access_mut();
+        if !chunk.set_block_state(&pos, state) {
+            return false;
+        }
+        cached.needs_save = true;
+        let is_empty = chunk.sections[section_index].has_only_air();
+        if check_light && (light_changed || is_empty != was_empty) {
+            let positions = if light_changed {
+                HashSet::from([pos])
+            } else {
+                HashSet::new()
+            };
+            let mut changed_sections = (is_empty != was_empty).then(|| {
+                let mut changes = vec![None; chunk.sections.len()];
+                changes[section_index] = Some(is_empty);
+                changes
+            });
+            self.run_light(chunk_pos, |engine, access, _| {
+                engine.blocks_changed_in_chunk(
+                    access,
+                    chunk_pos.x,
+                    chunk_pos.z,
+                    &positions,
+                    changed_sections.as_deref_mut(),
+                );
+            });
+        }
+        true
     }
 
     pub fn block_ticks(&self) -> &LevelTicks<BlockTickType> {
@@ -106,34 +166,15 @@ impl ServerChunkCache {
             return true;
         }
 
-        let min_section = chunk.get_min_section();
-        let max_section = chunk.get_max_section();
-        let has_sky_light = cached.has_sky_light;
-        let access = CacheLightingAccess {
-            cache: self,
-            min_section,
-            max_section,
-            has_sky_light,
-            modified: Mutex::new(HashSet::new()),
-        };
         let mut empty_sections = StarLightEngine::get_empty_sections_for_chunk(chunk);
-        let engines = [EngineKind::Sky, EngineKind::Block];
-        for kind in engines.into_iter().skip(usize::from(!has_sky_light)) {
-            let mut engine = StarLightEngine::new(kind);
-            engine.set_section_range(min_section, max_section, false);
+        self.run_light(pos, |engine, access, chunk| {
             if already_lit {
-                engine.force_handle_empty_section_changes(&access, chunk, &mut empty_sections);
-                engine.check_chunk_edges(&access, pos.x, pos.z);
+                engine.force_handle_empty_section_changes(access, chunk, &mut empty_sections);
+                engine.check_chunk_edges(access, pos.x, pos.z);
             } else {
-                engine.light(&access, chunk, &mut empty_sections);
+                engine.light(access, chunk, &mut empty_sections);
             }
-        }
-
-        for modified in access.modified.into_inner().unwrap() {
-            if let Some(cached) = self.chunks.get_mut(&modified) {
-                cached.needs_save = true;
-            }
-        }
+        });
         let cached = self.chunks.get_mut(&pos).unwrap();
         cached.data.chunk.access_mut().is_light_correct = true;
         cached.light_prepared = true;
@@ -144,6 +185,34 @@ impl ServerChunkCache {
             }
         }
         true
+    }
+
+    fn run_light(
+        &mut self,
+        pos: ChunkPos,
+        mut pass: impl FnMut(&mut StarLightEngine, &dyn LightChunkGetter, &ChunkAccess),
+    ) {
+        let cached = &self.chunks[&pos];
+        let chunk = cached.data.chunk.access();
+        let access = CacheLightingAccess {
+            cache: self,
+            min_section: chunk.get_min_section(),
+            max_section: chunk.get_max_section(),
+            has_sky_light: cached.has_sky_light,
+            modified: Mutex::new(HashSet::new()),
+        };
+        let kinds = [EngineKind::Sky, EngineKind::Block];
+        for kind in kinds.into_iter().skip(usize::from(!access.has_sky_light)) {
+            let mut engine = StarLightEngine::new(kind);
+            engine.set_section_range(access.min_section, access.max_section, false);
+            pass(&mut engine, &access, chunk);
+        }
+
+        for modified in access.modified.into_inner().unwrap() {
+            if let Some(cached) = self.chunks.get_mut(&modified) {
+                cached.needs_save = true;
+            }
+        }
     }
 
     /// Подключает очереди после перехода полного освещённого чанка в ticking.
@@ -252,13 +321,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::core::block_pos::BlockPos;
     use crate::core::holder::Holder;
     use crate::core::registry::registries;
     use crate::nbt::{utils, CompoundTag};
     use crate::resources::{Identifier, ResourceKey};
     use crate::world::level::biome::biome::Biome;
-    use crate::world::level::block::state::BlockState;
     use crate::world::level::block::Block;
     use crate::world::level::chunk::packed_ticks::PackedTicks;
     use crate::world::level::chunk::storage::serializable_chunk_data::ChunkPaletteLookup;
@@ -396,8 +463,10 @@ mod tests {
         );
         let storage = RegionFileStorage::new(&directory.0);
         let pos = ChunkPos::new(-1, 0);
-        let torch = BlockPos::new(-8, -56, 8);
-        let adjacent = BlockPos::new(-7, -56, 8);
+        let neighbour = ChunkPos::new(-2, 0);
+        let torch = BlockPos::new(-16, -56, 8);
+        let across_border = BlockPos::new(-17, -56, 8);
+        let adjacent = BlockPos::new(-15, -56, 8);
         let height = SimpleLevelHeightAccessor::create(-64, 32);
         let context = ChunkLoadingContext {
             height: &height,
@@ -412,6 +481,8 @@ mod tests {
         tag.put_int("zPos", pos.z);
         tag.put_string("Status", "minecraft:full");
         storage.write(pos, &tag).unwrap();
+        tag.put_int("xPos", neighbour.x);
+        storage.write(neighbour, &tag).unwrap();
 
         let mut cache = ServerChunkCache::new(storage);
         let loaded = cache.load_existing(pos, &context).unwrap().unwrap();
@@ -437,6 +508,24 @@ mod tests {
             );
         };
         verify_light(cache.get_loaded(pos).unwrap().chunk.access());
+        cache.load_existing(neighbour, &context).unwrap().unwrap();
+        assert!(cache.prepare_light(neighbour));
+        let block_light = |cache: &ServerChunkCache, pos: BlockPos| {
+            let at = ChunkPos::new(pos.get_x() >> 4, pos.get_z() >> 4);
+            let chunk = cache.get_loaded(at).unwrap().chunk.access();
+            let block_light = chunk.starlight_block_nibbles.lock().unwrap();
+            let nibble = block_light[1].as_ref().unwrap().lock().unwrap();
+            nibble.get_visible_xyz(pos.get_x(), pos.get_y(), pos.get_z())
+        };
+        assert_eq!(block_light(&cache, across_border), 13);
+
+        assert!(cache.set_block_state(torch, BlockState::air()));
+        assert_eq!(block_light(&cache, torch), 0);
+        assert_eq!(block_light(&cache, across_border), 0);
+        assert!(cache.set_block_state(torch, Palettes.block_state(&state).unwrap()));
+        assert_eq!(block_light(&cache, torch), 14);
+        assert_eq!(block_light(&cache, across_border), 13);
+        assert!(cache.unload(neighbour, 25, &registries).unwrap());
         assert!(cache.unload(pos, 25, &registries).unwrap());
 
         let loaded = cache.load_existing(pos, &context).unwrap().unwrap();
@@ -445,5 +534,7 @@ mod tests {
         let access = cache.get_loaded(pos).unwrap().chunk.access();
         assert!(access.starlight_sky_emptiness_map.lock().unwrap().is_some());
         verify_light(access);
+        cache.load_existing(neighbour, &context).unwrap().unwrap();
+        assert_eq!(block_light(&cache, across_border), 13);
     }
 }
