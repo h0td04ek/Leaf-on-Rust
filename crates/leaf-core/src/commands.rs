@@ -4,6 +4,7 @@ pub mod arguments {
     pub use crate::command::arguments::*;
 }
 
+pub mod gamerule;
 pub mod world;
 
 use crate::network::chat::component::Component;
