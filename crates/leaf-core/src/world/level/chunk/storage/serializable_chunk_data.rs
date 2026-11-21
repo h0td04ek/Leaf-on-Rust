@@ -1,5 +1,6 @@
 //! Восстановление палитр секций, высот и света чанка из NBT Anvil.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -8,12 +9,14 @@ use crate::ca::moonrise::patches::starlight::light::swmr_nibble_array::{
 };
 use crate::core::block_pos::BlockPos;
 use crate::core::holder::Holder;
+use crate::core::registry_access::RegistryAccess;
 use crate::core::shared_constants::CURRENT_DATA_VERSION;
 use crate::nbt::{CompoundTag, Tag};
 use crate::resources::Identifier;
 use crate::util::bit_storage::SimpleBitStorage;
 use crate::util::datafix::{DataFixTypes, DataFixer};
 use crate::world::level::biome::biome::Biome;
+use crate::world::level::block::state::property::StateValue;
 use crate::world::level::block::state::BlockState;
 use crate::world::level::chunk::chunk_access::ChunkAccess;
 use crate::world::level::chunk::level_chunk::{ChunkStatus, LevelChunk};
@@ -60,6 +63,89 @@ pub struct LoadedChunk {
     pub original_tag: CompoundTag,
 }
 
+const STARLIGHT_VERSION: i32 = 10;
+const STARLIGHT_VERSION_KEY: &str = "starlight.light_version";
+const BLOCK_LIGHT_STATE: &str = "starlight.blocklight_state";
+const SKY_LIGHT_STATE: &str = "starlight.skylight_state";
+
+impl LoadedChunk {
+    pub fn to_nbt(
+        &self,
+        game_time: i64,
+        registries: &RegistryAccess,
+        has_sky_light: bool,
+    ) -> io::Result<CompoundTag> {
+        if crate::nbt::utils::get_data_version(&self.original_tag) != CURRENT_DATA_VERSION {
+            return Err(invalid_data("chunk requires a data upgrade before saving"));
+        }
+
+        let access = self.chunk.access();
+        let pos = access.get_pos();
+        let mut tag = self.original_tag.clone();
+        tag.put_int("xPos", pos.x);
+        tag.put_int("yPos", access.get_min_section());
+        tag.put_int("zPos", pos.z);
+        tag.put_long("LastUpdate", game_time);
+        tag.put_long("InhabitedTime", access.inhabited_time);
+        tag.put_string(
+            "Status",
+            &format!("minecraft:{}", access.persisted_status.path()),
+        );
+        let light_correct =
+            access.is_light_correct && access.persisted_status.is_or_after(ChunkStatus::Light);
+        if light_correct {
+            // Paper помечает свет как StarLight и заставляет vanilla пересчитать его.
+            tag.put_bool("isLightOn", false);
+            tag.put_int(STARLIGHT_VERSION_KEY, STARLIGHT_VERSION);
+        } else {
+            tag.remove("isLightOn");
+            tag.remove(STARLIGHT_VERSION_KEY);
+        }
+        let sections = write_sections(access, &tag, registries, light_correct, has_sky_light)?;
+        tag.put("sections", sections);
+        write_heightmaps(access, &mut tag)?;
+
+        let mut block_entities = access.pending_block_entities.clone();
+        for (pos, entity) in &access.block_entities {
+            block_entities.insert(*pos, entity.save_full_metadata(registries));
+        }
+        let mut block_entities: Vec<_> = block_entities.into_iter().collect();
+        block_entities.sort_unstable_by_key(|(pos, _)| pos.as_long());
+        tag.put(
+            "block_entities",
+            Tag::List(
+                block_entities
+                    .into_iter()
+                    .map(|(_, tag)| Tag::Compound(tag))
+                    .collect(),
+            ),
+        );
+
+        let (ticks, post_processing) = match &self.chunk {
+            RuntimeChunk::Full(chunk) => (
+                chunk.pack_ticks(game_time),
+                chunk.post_processing.as_slice(),
+            ),
+            RuntimeChunk::Proto(chunk) => {
+                let entities = chunk.entities.iter().cloned().map(Tag::Compound).collect();
+                tag.put("entities", Tag::List(entities));
+                if let Some(mask) = &chunk.carving_mask {
+                    tag.put_long_array("carving_mask", &pack_carving_mask(mask));
+                } else {
+                    tag.remove("carving_mask");
+                }
+                (chunk.pack_ticks(), chunk.post_processing.as_slice())
+            }
+        };
+        ticks.write_nbt(&mut tag);
+        tag.put(
+            "PostProcessing",
+            write_post_processing(access, post_processing),
+        );
+        Ok(tag)
+    }
+}
+
 impl SerializableChunkData {
     pub fn into_runtime(self, level: Option<Arc<dyn LevelReader>>) -> LoadedChunk {
         let chunk = if self.chunk.persisted_status == ChunkStatus::Full {
@@ -77,12 +163,18 @@ impl SerializableChunkData {
                 .filter_map(Tag::as_compound)
                 .cloned()
                 .collect();
-            RuntimeChunk::Proto(ProtoChunk::from_access(
+            let carving_mask = self
+                .original_tag
+                .get_long_array("carving_mask")
+                .map(unpack_carving_mask);
+            let mut chunk = ProtoChunk::from_access(
                 self.chunk,
                 self.packed_ticks,
                 self.post_processing,
                 entities,
-            ))
+            );
+            chunk.carving_mask = carving_mask;
+            RuntimeChunk::Proto(chunk)
         };
         LoadedChunk {
             chunk,
@@ -116,6 +208,7 @@ impl SerializableChunkData {
         if version < CURRENT_DATA_VERSION {
             if let Some(fixer) = context.data_fixer {
                 tag = DataFixTypes::Chunk.update_to_current_version(fixer, tag, version);
+                tag.put_int("DataVersion", CURRENT_DATA_VERSION);
             }
         }
 
@@ -171,7 +264,7 @@ impl SerializableChunkData {
         chunk.persisted_status = status;
         chunk.is_light_correct = status.is_or_after(ChunkStatus::Light)
             && tag.get("isLightOn").is_some()
-            && tag.get_int("starlight.light_version") == Some(10);
+            && tag.get_int(STARLIGHT_VERSION_KEY) == Some(STARLIGHT_VERSION);
 
         if chunk.is_light_correct {
             let block_light = chunk.starlight_block_nibbles.get_mut().unwrap();
@@ -180,14 +273,9 @@ impl SerializableChunkData {
                 let y = i32::from(section.get_byte("Y").unwrap());
                 let index = (y - min_light_section) as usize;
                 if let Some(block) = block_light.get_mut(index) {
-                    *block = Some(read_light(
-                        section,
-                        "BlockLight",
-                        "starlight.blocklight_state",
-                    )?);
+                    *block = Some(read_light(section, "BlockLight", BLOCK_LIGHT_STATE)?);
                     if context.has_sky_light {
-                        sky_light[index] =
-                            Some(read_light(section, "SkyLight", "starlight.skylight_state")?);
+                        sky_light[index] = Some(read_light(section, "SkyLight", SKY_LIGHT_STATE)?);
                     }
                 }
             }
@@ -235,6 +323,224 @@ impl SerializableChunkData {
             original_tag: tag,
         })
     }
+}
+
+fn write_sections(
+    access: &ChunkAccess,
+    original: &CompoundTag,
+    registries: &RegistryAccess,
+    light_correct: bool,
+    has_sky_light: bool,
+) -> io::Result<Tag> {
+    let mut sections: BTreeMap<_, _> = original
+        .get_list_or_empty("sections")
+        .iter()
+        .filter_map(Tag::as_compound)
+        .filter_map(|section| Some((i32::from(section.get_byte("Y")?), section.clone())))
+        .collect();
+    for section in sections.values_mut() {
+        for key in [
+            "Y",
+            "BlockLight",
+            "SkyLight",
+            BLOCK_LIGHT_STATE,
+            SKY_LIGHT_STATE,
+        ] {
+            section.remove(key);
+        }
+    }
+
+    let biome_registry = registries.lookup::<Biome>(&crate::core::registry::registries::biome());
+    let min_section = access.get_min_section();
+    for (index, section) in access.sections.iter().enumerate() {
+        let tag = sections.entry(min_section + index as i32).or_default();
+        tag.put(
+            "block_states",
+            write_palette(&section.states, |state| {
+                Ok(Tag::Compound(write_block_state(state)))
+            })?,
+        );
+        tag.put(
+            "biomes",
+            write_palette(&section.biomes, |biome| {
+                let key = match &biome {
+                    Holder::Key(key) => Some(key),
+                    Holder::Reference(id) => biome_registry
+                        .as_ref()
+                        .and_then(|registry| registry.get_key_by_id(*id)),
+                    Holder::Direct(value) => biome_registry
+                        .as_ref()
+                        .and_then(|registry| registry.get_key(value)),
+                }
+                .ok_or_else(|| invalid_data("chunk biome lacks a registry key"))?;
+                Ok(Tag::String(key.id().to_string()))
+            })?,
+        );
+    }
+
+    if light_correct {
+        let block = access.starlight_block_nibbles.lock().unwrap();
+        write_light_sections(
+            &mut sections,
+            min_section - 1,
+            &block,
+            "BlockLight",
+            BLOCK_LIGHT_STATE,
+        );
+        drop(block);
+        if has_sky_light {
+            let sky = access.starlight_sky_nibbles.lock().unwrap();
+            write_light_sections(
+                &mut sections,
+                min_section - 1,
+                &sky,
+                "SkyLight",
+                SKY_LIGHT_STATE,
+            );
+        }
+    }
+
+    let sections = sections
+        .into_iter()
+        .filter(|(_, tag)| !tag.is_empty())
+        .map(|(y, mut tag)| {
+            let y = i8::try_from(y)
+                .map_err(|_| invalid_data("chunk section Y exceeds Anvil byte range"))?;
+            tag.put_byte("Y", y);
+            Ok(Tag::Compound(tag))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    Ok(Tag::List(sections))
+}
+
+fn write_light_sections(
+    sections: &mut BTreeMap<i32, CompoundTag>,
+    min_light_section: i32,
+    nibbles: &[Option<NibbleArrayRef>],
+    data_key: &str,
+    state_key: &str,
+) {
+    for (index, entry) in nibbles.iter().enumerate() {
+        let Some(nibble) = entry else { continue };
+        let Some(state) = nibble.lock().unwrap().get_save_state() else {
+            continue;
+        };
+        let tag = sections
+            .entry(min_light_section + index as i32)
+            .or_default();
+        tag.put_int(state_key, i32::from(state.state));
+        if let Some(data) = state.data {
+            tag.put(
+                data_key,
+                Tag::ByteArray(data.iter().map(|byte| *byte as i8).collect()),
+            );
+        }
+    }
+}
+
+fn write_palette<T: Clone + Eq + std::hash::Hash + 'static>(
+    container: &PalettedContainer<T>,
+    encode: impl Fn(T) -> io::Result<Tag>,
+) -> io::Result<Tag> {
+    let (values, words) = container.pack();
+    let mut tag = CompoundTag::new();
+    let palette = values
+        .into_iter()
+        .map(encode)
+        .collect::<io::Result<Vec<_>>>()?;
+    tag.put("palette", Tag::List(palette));
+    if !words.is_empty() {
+        tag.put("data", Tag::LongArray(words));
+    }
+    Ok(Tag::Compound(tag))
+}
+
+fn write_block_state(state: BlockState) -> CompoundTag {
+    let mut tag = CompoundTag::new();
+    tag.put_string("Name", &state.block.id.to_string());
+    if !state.values.is_empty() {
+        let mut properties = CompoundTag::new();
+        for (name, value) in state.values.entries() {
+            let value = match value {
+                StateValue::Int(value) => value.to_string(),
+                StateValue::Bool(value) => value.to_string(),
+                StateValue::Str(value) => value.clone(),
+            };
+            properties.put_string(name, &value);
+        }
+        tag.put("Properties", Tag::Compound(properties));
+    }
+    tag
+}
+
+fn write_heightmaps(access: &ChunkAccess, tag: &mut CompoundTag) -> io::Result<()> {
+    let mut heightmaps = tag.get_compound("Heightmaps").cloned().unwrap_or_default();
+    let height = access.level_height_accessor.get_height();
+    let min_y = access.level_height_accessor.get_min_y();
+    let bits = ceillog2(height as usize + 1) as i32;
+    for ty in HeightmapType::VALUES {
+        let key = heightmap_key(ty);
+        let Some(heightmap) = access.heightmaps.get(&ty) else {
+            heightmaps.remove(key);
+            continue;
+        };
+        let mut storage = SimpleBitStorage::new(bits, 256);
+        for z in 0..16 {
+            for x in 0..16 {
+                let relative_y = heightmap.get_first_available(x, z).checked_sub(min_y);
+                let Some(relative_y) = relative_y.filter(|y| (0..=height).contains(y)) else {
+                    return Err(invalid_data(format!(
+                        "heightmap {key} exceeds build height"
+                    )));
+                };
+                storage.set((z * 16 + x) as usize, relative_y);
+            }
+        }
+        heightmaps.put_long_array(
+            key,
+            crate::util::bit_storage::BitStorage::Simple(storage).get_raw(),
+        );
+    }
+    tag.put("Heightmaps", Tag::Compound(heightmaps));
+    Ok(())
+}
+
+fn write_post_processing(access: &ChunkAccess, positions: &[BlockPos]) -> Tag {
+    let mut sections = vec![Vec::new(); access.sections.len()];
+    let pos = access.get_pos();
+    for block in positions {
+        let (x, y, z) = (block.get_x(), block.get_y(), block.get_z());
+        if (x >> 4, z >> 4) == (pos.x, pos.z) {
+            let index = (y >> 4) - access.get_min_section();
+            if let Some(section) = sections.get_mut(index as usize) {
+                section.push(Tag::Short(
+                    ((x & 15) | ((y & 15) << 4) | ((z & 15) << 8)) as i16,
+                ));
+            }
+        }
+    }
+    Tag::List(sections.into_iter().map(Tag::List).collect())
+}
+
+fn unpack_carving_mask(words: &[i64]) -> Vec<bool> {
+    words
+        .iter()
+        .flat_map(|word| (0..64).map(move |bit| word & (1i64 << bit) != 0))
+        .collect()
+}
+
+fn pack_carving_mask(mask: &[bool]) -> Vec<i64> {
+    let Some(last) = mask.iter().rposition(|set| *set) else {
+        return Vec::new();
+    };
+    mask[..=last]
+        .chunks(64)
+        .map(|bits| {
+            bits.iter()
+                .enumerate()
+                .fold(0, |word, (bit, set)| word | (i64::from(*set) << bit))
+        })
+        .collect()
 }
 
 fn read_post_processing(
@@ -447,7 +753,7 @@ mod tests {
             loaded.original_tag.get_string("extra"),
             Some("kept for the remaining chunk loaders")
         );
-        let RuntimeChunk::Full(chunk) = loaded.chunk else {
+        let RuntimeChunk::Full(chunk) = &loaded.chunk else {
             panic!("expected LevelChunk")
         };
         assert_eq!(chunk.get_post_processing(), &[block_pos]);
@@ -462,8 +768,9 @@ mod tests {
         blocks.tick(104, 8, &mut |_, kind| block_ids.push(kind.id));
         assert_eq!(fluid_ids, ["minecraft:water"]);
         assert!(block_ids.is_empty());
-        let mut saved_again = CompoundTag::new();
-        chunk.pack_ticks(104).write_nbt(&mut saved_again);
+        let saved_again = loaded.to_nbt(104, &RegistryAccess::new(), true).unwrap();
+        assert_eq!(saved_again.get_long("LastUpdate"), Some(104));
+        assert_eq!(saved_again.get("PostProcessing"), tag.get("PostProcessing"));
         let saved_again = PackedTicks::from_nbt(&saved_again, pos);
         assert!(saved_again.fluids.is_empty());
         assert_eq!(
@@ -486,15 +793,25 @@ mod tests {
         assert!(fluids.get_container(pos).is_none());
 
         tag.put_string("Status", "minecraft:features");
+        tag.put_long_array("carving_mask", &[i64::MIN, 2]);
         let loaded = SerializableChunkData::parse(tag, pos, &context)
             .unwrap()
             .into_runtime(None);
-        let RuntimeChunk::Proto(chunk) = loaded.chunk else {
+        let RuntimeChunk::Proto(chunk) = &loaded.chunk else {
             panic!("expected ProtoChunk")
         };
         assert_eq!(chunk.chunk_status, ChunkStatus::Features);
         assert_eq!(chunk.post_processing, [block_pos]);
         assert_eq!(chunk.pack_ticks().fluids[0].delay, -2);
+        let bits = chunk.carving_mask.as_ref().unwrap();
+        assert!(bits[63]);
+        assert!(bits[65]);
+        let saved = loaded.to_nbt(120, &RegistryAccess::new(), true).unwrap();
+        assert_eq!(
+            saved.get_long_array("carving_mask"),
+            Some([i64::MIN, 2].as_slice())
+        );
+        assert_eq!(saved.get_string("Status"), Some("minecraft:features"));
     }
 
     #[test]
@@ -530,6 +847,7 @@ mod tests {
 
         let mut section = CompoundTag::new();
         section.put_byte("Y", -4);
+        section.put_string("fixture:section_data", "preserved");
         section.put("block_states", Tag::Compound(states));
         let mut light_data = [0; ARRAY_SIZE];
         light_data[0] = 7;
@@ -569,6 +887,67 @@ mod tests {
         assert_eq!(
             nibbles[1].as_ref().unwrap().lock().unwrap().get_visible(0),
             7
+        );
+
+        drop(nibbles);
+        let mut loaded = data.into_runtime(None);
+        let access = loaded.chunk.access_mut();
+        let other_pos = BlockPos::new(-14, -64, 32);
+        access.sections[0].set_block_state(2, 0, 0, block);
+        access
+            .heightmaps
+            .get_mut(&HeightmapType::WorldSurface)
+            .unwrap()
+            .set_height(2, 0, -63);
+        let biome = TestPalettes
+            .biome(&Identifier::minecraft("forest"))
+            .unwrap();
+        access.sections[0].biomes.set(1, 0, 0, biome);
+        let mut pending = CompoundTag::new();
+        pending.put_int("x", -14);
+        pending.put_int("y", -64);
+        pending.put_int("z", 32);
+        pending.put_string("id", "minecraft:chest");
+        access.set_pending_block_entity(other_pos, pending);
+        let saved = loaded.to_nbt(240, &RegistryAccess::new(), true).unwrap();
+        let bytes = crate::nbt::io::write(&saved).unwrap();
+        let reread = crate::nbt::io::read_bytes(
+            &bytes,
+            &mut crate::nbt::accounter::NbtAccounter::uncompressed_quota(),
+        )
+        .unwrap();
+        let data = SerializableChunkData::parse(reread, pos, &context).unwrap();
+        assert_eq!(data.last_update_time, 240);
+        assert!(data
+            .chunk
+            .get_block_state(&other_pos)
+            .is_block_id("minecraft:stone"));
+        assert_eq!(
+            data.chunk.heightmaps[&HeightmapType::WorldSurface].get_first_available(2, 0),
+            -63
+        );
+        assert_eq!(
+            data.chunk.sections[0]
+                .biomes
+                .get(1, 0, 0)
+                .key()
+                .unwrap()
+                .id(),
+            &Identifier::minecraft("forest")
+        );
+        assert!(data.chunk.pending_block_entities.contains_key(&other_pos));
+        assert!(data.chunk.is_light_correct);
+        let nibbles = data.chunk.starlight_block_nibbles.lock().unwrap();
+        assert_eq!(
+            nibbles[1].as_ref().unwrap().lock().unwrap().get_visible(0),
+            7
+        );
+        let section = saved.get_list_or_empty("sections")[0]
+            .as_compound()
+            .unwrap();
+        assert_eq!(
+            section.get_string("fixture:section_data"),
+            Some("preserved")
         );
 
         let error = SerializableChunkData::parse(tag, ChunkPos::new(0, 0), &context)

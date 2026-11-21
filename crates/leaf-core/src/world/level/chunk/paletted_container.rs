@@ -110,6 +110,32 @@ impl<T: Clone + PartialEq + Eq + Hash + 'static> PalettedContainer<T> {
         Ok(())
     }
 
+    /// Собирает локальную дисковую палитру даже для контейнера с глобальными ID.
+    pub fn pack(&self) -> (Vec<T>, Vec<i64>) {
+        if self.data.configuration.bits_in_memory() == 0 {
+            return (vec![self.get_by_index(0)], Vec::new());
+        }
+
+        let mut values = Vec::new();
+        let mut ids = std::collections::HashMap::new();
+        let indices: Vec<_> = (0..self.strategy.entry_count)
+            .map(|index| {
+                let value = self.get_by_index(index);
+                *ids.entry(value.clone()).or_insert_with(|| {
+                    let id = values.len() as i32;
+                    values.push(value);
+                    id
+                })
+            })
+            .collect();
+        let bits = self.strategy.get_configuration_for_palette_size(values.len()).bits_in_storage();
+        let mut storage = Self::create_storage(bits, indices.len());
+        for (index, id) in indices.into_iter().enumerate() {
+            storage.set(index, id);
+        }
+        (values, storage.get_raw().to_vec())
+    }
+
     /// `get(x, y, z)`.
     pub fn get(&self, x: i32, y: i32, z: i32) -> T {
         self.get_by_index(self.strategy.get_index(x, y, z))
