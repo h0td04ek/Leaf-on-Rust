@@ -504,6 +504,9 @@ fn builtin_suggestions(
                 add_matching(entries, mode.get_name(), lower);
             }
         }
+        ArgumentType::ItemStack => {
+            return crate::command::arguments::item::suggest(prefix, entries)
+        }
         ArgumentType::Time { .. } => {
             let number_end = crate::command::arguments::vanilla::number_end(prefix);
             if prefix[..number_end].parse::<f32>().is_ok() {

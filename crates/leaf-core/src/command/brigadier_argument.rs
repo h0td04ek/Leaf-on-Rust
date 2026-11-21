@@ -1,5 +1,6 @@
 //! Основные типы аргументов Brigadier и их сетевые шаблоны.
 
+use crate::command::arguments::item::{self, ItemInput};
 use crate::command::arguments::vanilla::{self, CommandAngle, CommandRotation, Coordinates};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::Identifier;
@@ -25,6 +26,7 @@ pub enum ArgumentType {
     ColumnPos,
     Vec3,
     Vec2,
+    ItemStack,
     Angle,
     Rotation,
     Identifier,
@@ -48,6 +50,7 @@ pub enum ArgumentValue {
     Identifier(Identifier),
     GameMode(GameType),
     Uuid(Uuid),
+    Item(ItemInput),
 }
 
 impl ArgumentType {
@@ -63,6 +66,7 @@ impl ArgumentType {
             Self::ColumnPos => 9,
             Self::Vec3 => 10,
             Self::Vec2 => 11,
+            Self::ItemStack => 14,
             Self::Angle => 28,
             Self::Rotation => 29,
             Self::Identifier => 36,
@@ -75,6 +79,10 @@ impl ArgumentType {
 
     pub(crate) fn parse(self, input: &str, cursor: usize) -> Option<(ArgumentValue, usize)> {
         let reader = &input[cursor..];
+        if self == Self::ItemStack {
+            return item::parse(reader)
+                .map(|(value, end)| (ArgumentValue::Item(value), cursor + end));
+        }
         if self.registry_id() > 5 {
             return vanilla::parse(self, reader).map(|(value, end)| (value, cursor + end));
         }
@@ -145,6 +153,7 @@ impl ArgumentType {
             9 => Some(Self::ColumnPos),
             10 => Some(Self::Vec3),
             11 => Some(Self::Vec2),
+            14 => Some(Self::ItemStack),
             28 => Some(Self::Angle),
             29 => Some(Self::Rotation),
             36 => Some(Self::Identifier),
@@ -165,6 +174,7 @@ impl ArgumentType {
             | Self::ColumnPos
             | Self::Vec3
             | Self::Vec2
+            | Self::ItemStack
             | Self::Angle
             | Self::Rotation
             | Self::Identifier

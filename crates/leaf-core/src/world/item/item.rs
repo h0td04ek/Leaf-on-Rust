@@ -96,6 +96,10 @@ pub fn item_by_id(id: i32) -> Option<Arc<Item>> {
     registry().read().unwrap().get(id as usize).cloned()
 }
 
+pub(crate) fn item_identifiers() -> Vec<Identifier> {
+    registry().read().unwrap().iter().map(|item| item.id.clone()).collect()
+}
+
 /// Поиск по Identifier.
 pub fn item_by_identifier(id: &Identifier) -> Option<Arc<Item>> {
     registry().read().unwrap().iter().find(|i| i.id == *id).cloned()

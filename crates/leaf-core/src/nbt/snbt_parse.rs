@@ -25,11 +25,12 @@ impl std::error::Error for ParseError {}
 struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
     fn new(input: &'a str) -> Self {
-        Self { input: input.as_bytes(), pos: 0 }
+        Self { input: input.as_bytes(), pos: 0, depth: 0 }
     }
 
     fn error<T>(&self, msg: impl Into<String>) -> Result<T, ParseError> {
@@ -71,6 +72,16 @@ impl<'a> Parser<'a> {
     // ------------------------------------------------------------ values
 
     fn parse_value(&mut self) -> Result<Tag, ParseError> {
+        if self.depth >= Tag::MAX_DEPTH {
+            return self.error("SNBT is too deeply nested");
+        }
+        self.depth += 1;
+        let result = self.parse_value_at_depth();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_value_at_depth(&mut self) -> Result<Tag, ParseError> {
         self.skip_ws();
         match self.peek() {
             Some(b'{') => self.parse_compound(),
@@ -379,6 +390,12 @@ fn split_suffix(text: &str) -> (&str, Option<char>) {
     } else {
         (text, None)
     }
+}
+
+pub(crate) fn parse_prefix(input: &str) -> Result<(Tag, usize), ParseError> {
+    let mut parser = Parser::new(input);
+    let tag = parser.parse_value()?;
+    Ok((tag, parser.pos))
 }
 
 /// `TagParser.parseTag`.
