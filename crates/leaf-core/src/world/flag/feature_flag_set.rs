@@ -44,4 +44,28 @@ impl FeatureFlagSet {
     pub fn contains(&self, id: &Identifier) -> bool {
         self.flags.contains(id)
     }
+
+    /// `join(other)` — объединение множеств.
+    pub fn join(&self, other: &FeatureFlagSet) -> Self {
+        let mut flags = self.flags.clone();
+        flags.extend(other.flags.iter().cloned());
+        Self { flags }
+    }
+
+    /// `isSubsetOf(other)` — все флаги self содержатся в other.
+    pub fn is_subset_of(&self, other: &FeatureFlagSet) -> bool {
+        self.flags.iter().all(|f| other.flags.contains(f))
+    }
+
+    /// `FeatureFlags.DEFAULT_FLAGS` — `VANILLA_SET`.
+    pub fn default_flags() -> Self {
+        Self::all_vanilla()
+    }
+
+    /// `FeatureFlags.MINECART_IMPROVEMENTS`-сет.
+    pub fn minecart_improvements() -> Self {
+        Self::subset(&[FeatureFlag::new(
+            Identifier::parse("minecraft:minecart_improvements").expect("flag id"),
+        )])
+    }
 }

@@ -17,6 +17,7 @@ pub mod attribute;
 pub mod entity;
 
 pub mod difficulty;
+pub mod difficulty_instance;
 pub mod interaction_hand;
 pub mod simple_container;
 pub mod ticks;

@@ -8,6 +8,8 @@ use crate::world::flag::feature_flag::FeatureFlag;
 pub const VANILLA_FLAGS: &[&str] = &[
     "vanilla",
     "trade_rebalance",
+    "redstone_experiments",
+    "minecart_improvements",
 ];
 
 /// `FeatureFlags.REGISTRY`-подобный список.
