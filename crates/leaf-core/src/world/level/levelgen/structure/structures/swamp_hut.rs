@@ -1,6 +1,7 @@
 //! Перенос `structures/SwampHutStructure.java` + `SwampHutPiece.java`.
 
 use super::super::bounding_box::BoundingBox;
+use super::super::pieces_container::PieceHeader;
 use super::super::scattered_feature_piece::ScatteredFeaturePieceData;
 use super::super::structure::{
     on_top_of_chunk_center, GenerationContext, GenerationStub, Structure, StructureSettings,
@@ -63,32 +64,21 @@ impl SwampHutPiece {
     }
 
     /// `new(tag)` — загрузка из NBT.
-    pub fn from_nbt(tag: &CompoundTag) -> Self {
-        let scattered = ScatteredFeaturePieceData::load(tag);
-        // Java: orientation из StructurePiece-базового тега.
-        let direction = Direction::by_name(tag.get_string("O").unwrap_or("north"))
-            .unwrap_or(Direction::NORTH);
-        let bounding_box = BoundingBox::new(
-            tag.get_int("TPX").unwrap_or(0),
-            tag.get_int("TPY").unwrap_or(0),
-            tag.get_int("TPZ").unwrap_or(0),
-            tag.get_int("TPX").unwrap_or(0) + scattered.width - 1,
-            tag.get_int("TPY").unwrap_or(0) + scattered.height - 1,
-            tag.get_int("TPZ").unwrap_or(0) + scattered.depth - 1,
-        );
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
         let mut piece = Self {
-            scattered,
-            bounding_box,
-            gen_depth: 0,
-            orientation: Some(direction),
-            direction,
+            scattered: ScatteredFeaturePieceData::load(tag),
+            bounding_box: header.bounds,
+            gen_depth: header.depth,
+            orientation: header.orientation,
+            direction: header.orientation.unwrap_or(Direction::NORTH),
             mirror: Mirror::NONE,
             rotation: Rotation::NONE,
             spawned_witch: tag.get_bool("Witch").unwrap_or(false),
             spawned_cat: tag.get_bool("Cat").unwrap_or(false),
         };
-        piece_set_orientation(Some(direction), &mut piece.mirror, &mut piece.rotation);
-        piece
+        piece_set_orientation(header.orientation, &mut piece.mirror, &mut piece.rotation);
+        Some(piece)
     }
 
     /// `getWorldPos(x, y, z)` — через PieceTransform.
@@ -179,7 +169,7 @@ impl StructurePiece for SwampHutPiece {
     }
 
     fn piece_type_id(&self) -> Identifier {
-        Identifier::minecraft("swamp_hut")
+        Identifier::minecraft("tesh")
     }
 
     fn add_additional_save_data(&self, tag: &mut CompoundTag) {

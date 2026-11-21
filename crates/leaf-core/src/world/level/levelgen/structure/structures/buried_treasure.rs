@@ -2,6 +2,7 @@
 //! `structures/BuriedTreasurePieces.java`.
 
 use super::super::bounding_box::BoundingBox;
+use super::super::pieces_container::PieceHeader;
 use super::super::structure::{
     on_top_of_chunk_center, GenerationContext, GenerationStub, Structure, StructureSettings,
 };
@@ -46,6 +47,15 @@ impl BuriedTreasurePiece {
             mirror: crate::world::level::block::mirror::Mirror::NONE,
             rotation: crate::world::level::block::rotation::Rotation::NONE,
         }
+    }
+
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
+        let mut piece = Self::new(BlockPos::new(header.bounds.min_x, header.bounds.min_y, header.bounds.min_z));
+        piece.bounding_box = header.bounds;
+        piece.gen_depth = header.depth;
+        piece.set_orientation(header.orientation);
+        Some(piece)
     }
 
     /// `isLiquid(state)` — water/lava default state.
@@ -93,7 +103,7 @@ impl StructurePiece for BuriedTreasurePiece {
     }
 
     fn piece_type_id(&self) -> Identifier {
-        Identifier::minecraft("buried_treasure")
+        Identifier::minecraft("btp")
     }
 
     fn add_additional_save_data(&self, _tag: &mut CompoundTag) {}

@@ -4,6 +4,7 @@
 //! сундуки, рычаги/поршни).
 
 use super::super::bounding_box::BoundingBox;
+use super::super::pieces_container::PieceHeader;
 use super::super::scattered_feature_piece::ScatteredFeaturePieceData;
 use super::super::single_piece_structure::single_piece_structure;
 use super::super::structure::{Structure, StructureSettings};
@@ -95,22 +96,13 @@ impl JungleTemplePiece {
     }
 
     /// `new(tag)` — загрузка из NBT.
-    pub fn from_nbt(tag: &CompoundTag) -> Self {
-        let scattered = ScatteredFeaturePieceData::load(tag);
-        let direction = Direction::by_name(tag.get_string("O").unwrap_or("north"))
-            .unwrap_or(Direction::NORTH);
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
         let mut piece = Self {
-            scattered,
-            bounding_box: BoundingBox::new(
-                tag.get_int("TPX").unwrap_or(0),
-                tag.get_int("TPY").unwrap_or(0),
-                tag.get_int("TPZ").unwrap_or(0),
-                tag.get_int("TPX").unwrap_or(0) + 12 - 1,
-                tag.get_int("TPY").unwrap_or(0) + 10 - 1,
-                tag.get_int("TPZ").unwrap_or(0) + 15 - 1,
-            ),
-            gen_depth: 0,
-            orientation: Some(direction),
+            scattered: ScatteredFeaturePieceData::load(tag),
+            bounding_box: header.bounds,
+            gen_depth: header.depth,
+            orientation: header.orientation,
             mirror: Mirror::NONE,
             rotation: Rotation::NONE,
             placed_main_chest: tag.get_bool("placedMainChest").unwrap_or(false),
@@ -118,8 +110,8 @@ impl JungleTemplePiece {
             placed_trap1: tag.get_bool("placedTrap1").unwrap_or(false),
             placed_trap2: tag.get_bool("placedTrap2").unwrap_or(false),
         };
-        piece_set_orientation(Some(direction), &mut piece.mirror, &mut piece.rotation);
-        piece
+        piece_set_orientation(header.orientation, &mut piece.mirror, &mut piece.rotation);
+        Some(piece)
     }
 
     /// `generateBox(..., false, random, STONE_SELECTOR)` —
@@ -183,7 +175,7 @@ impl StructurePiece for JungleTemplePiece {
     }
 
     fn piece_type_id(&self) -> Identifier {
-        Identifier::minecraft("jungle_pyramid")
+        Identifier::minecraft("tejp")
     }
 
     fn add_additional_save_data(&self, tag: &mut CompoundTag) {

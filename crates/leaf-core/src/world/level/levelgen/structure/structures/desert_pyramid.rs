@@ -4,6 +4,7 @@
 //! подвале + 4 сундука).
 
 use super::super::bounding_box::BoundingBox;
+use super::super::pieces_container::PieceHeader;
 use super::super::pieces_container::PiecesContainer;
 use super::super::scattered_feature_piece::ScatteredFeaturePieceData;
 use super::super::single_piece_structure::single_piece_structure;
@@ -71,22 +72,13 @@ impl DesertPyramidPiece {
     }
 
     /// `new(tag)` — загрузка из NBT.
-    pub fn from_nbt(tag: &CompoundTag) -> Self {
-        let scattered = ScatteredFeaturePieceData::load(tag);
-        let direction = Direction::by_name(tag.get_string("O").unwrap_or("north"))
-            .unwrap_or(Direction::NORTH);
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
         let mut piece = Self {
-            scattered,
-            bounding_box: BoundingBox::new(
-                tag.get_int("TPX").unwrap_or(0),
-                tag.get_int("TPY").unwrap_or(0),
-                tag.get_int("TPZ").unwrap_or(0),
-                tag.get_int("TPX").unwrap_or(0) + 21 - 1,
-                tag.get_int("TPY").unwrap_or(0) + 15 - 1,
-                tag.get_int("TPZ").unwrap_or(0) + 21 - 1,
-            ),
-            gen_depth: 0,
-            orientation: Some(direction),
+            scattered: ScatteredFeaturePieceData::load(tag),
+            bounding_box: header.bounds,
+            gen_depth: header.depth,
+            orientation: header.orientation,
             mirror: Mirror::NONE,
             rotation: Rotation::NONE,
             has_placed_chest: [
@@ -98,8 +90,8 @@ impl DesertPyramidPiece {
             potential_suspicious_sand_world_positions: Vec::new(),
             random_collapsed_roof_pos: BlockPos::ZERO,
         };
-        piece_set_orientation(Some(direction), &mut piece.mirror, &mut piece.rotation);
-        piece
+        piece_set_orientation(header.orientation, &mut piece.mirror, &mut piece.rotation);
+        Some(piece)
     }
 
     /// `getWorldPos(x, y, z)`.
@@ -314,7 +306,7 @@ impl StructurePiece for DesertPyramidPiece {
     }
 
     fn piece_type_id(&self) -> Identifier {
-        Identifier::minecraft("desert_pyramid")
+        Identifier::minecraft("tedp")
     }
 
     fn add_additional_save_data(&self, tag: &mut CompoundTag) {

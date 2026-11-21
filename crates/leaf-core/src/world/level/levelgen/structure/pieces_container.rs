@@ -2,6 +2,7 @@
 //! `PiecesContainer` и `StructurePieceType`-реестр.
 
 use crate::core::block_pos::BlockPos;
+use crate::core::direction::Direction;
 use crate::nbt::compound::CompoundTag;
 use crate::nbt::tag::Tag;
 use crate::resources::identifier::Identifier;
@@ -62,15 +63,19 @@ impl PiecesContainer {
             let mut tag = CompoundTag::new();
             tag.put("id", Tag::String(piece.piece_type_id().to_string()));
             let bb = piece.bounding_box();
-            let mut bb_tag = CompoundTag::new();
-            bb_tag.put("minX", Tag::Int(bb.min_x));
-            bb_tag.put("minY", Tag::Int(bb.min_y));
-            bb_tag.put("minZ", Tag::Int(bb.min_z));
-            bb_tag.put("maxX", Tag::Int(bb.max_x));
-            bb_tag.put("maxY", Tag::Int(bb.max_y));
-            bb_tag.put("maxZ", Tag::Int(bb.max_z));
-            tag.put("BB", Tag::Compound(bb_tag));
-            tag.put("O", Tag::Int(piece.orientation().map(|d| d.get_2d_data_value()).unwrap_or(-1)));
+            tag.put_int_array(
+                "BB",
+                &[bb.min_x, bb.min_y, bb.min_z, bb.max_x, bb.max_y, bb.max_z],
+            );
+            tag.put(
+                "O",
+                Tag::Int(
+                    piece
+                        .orientation()
+                        .map(|d| d.get_2d_data_value())
+                        .unwrap_or(-1),
+                ),
+            );
             tag.put("GD", Tag::Int(piece.gen_depth()));
             piece.add_additional_save_data(&mut tag);
             list.push(Tag::Compound(tag));
@@ -84,9 +89,15 @@ impl PiecesContainer {
     pub fn load(items: &[Tag]) -> Option<Self> {
         let mut pieces: Vec<Box<dyn StructurePiece>> = Vec::new();
         for item in items {
-            let Some(tag) = item.as_compound() else { continue };
-            let Some(id_str) = tag.get_string("id") else { continue };
-            let Ok(id) = Identifier::parse(id_str) else { continue };
+            let Some(tag) = item.as_compound() else {
+                continue;
+            };
+            let Some(id_str) = tag.get_string("id") else {
+                continue;
+            };
+            let Ok(id) = Identifier::parse(&id_str.to_ascii_lowercase()) else {
+                continue;
+            };
             let Some(piece) = piece_from_nbt(&id, tag) else {
                 continue;
             };
@@ -112,12 +123,58 @@ pub fn register_piece_type(id: Identifier, factory: PieceFactory) {
 
 /// `piece_from_nbt` — создать часть по NBT через реестр.
 pub fn piece_from_nbt(id: &Identifier, tag: &CompoundTag) -> Option<Box<dyn StructurePiece>> {
-    let factory = piece_registry().read().unwrap().get(id).cloned()?;
-    factory(tag)
+    let factory = piece_registry().read().unwrap().get(id).cloned();
+    if let Some(factory) = factory {
+        return factory(tag);
+    }
+    if id.get_namespace() != "minecraft" {
+        return None;
+    }
+
+    use super::structures::{
+        buried_treasure::BuriedTreasurePiece, desert_pyramid::DesertPyramidPiece,
+        jungle_temple::JungleTemplePiece, swamp_hut::SwampHutPiece,
+    };
+    match id.get_path() {
+        "btp" | "buried_treasure" => Some(Box::new(BuriedTreasurePiece::from_nbt(tag)?)),
+        "tedp" | "desert_pyramid" => Some(Box::new(DesertPyramidPiece::from_nbt(tag)?)),
+        "tejp" | "jungle_pyramid" => Some(Box::new(JungleTemplePiece::from_nbt(tag)?)),
+        "tesh" | "swamp_hut" => Some(Box::new(SwampHutPiece::from_nbt(tag)?)),
+        _ => None,
+    }
 }
 
-/// Чтение `BB` из тега (compound-форма, см. `save`).
+pub(crate) struct PieceHeader {
+    pub bounds: BoundingBox,
+    pub orientation: Option<Direction>,
+    pub depth: i32,
+}
+
+impl PieceHeader {
+    pub(crate) fn read(tag: &CompoundTag) -> Option<Self> {
+        let orientation = if let Some(name) = tag.get_string("O") {
+            Direction::by_name(name)
+        } else {
+            let direction = tag.get_int_or("O", 0);
+            (direction != -1).then(|| Direction::from_2d_data_value(direction))
+        };
+        Some(Self {
+            bounds: bounding_box_from_tag(tag)?,
+            orientation,
+            depth: tag.get_int_or("GD", 0),
+        })
+    }
+}
+
+/// Сохранения Leaf используют массив из шести координат. Ранний Rust-код
+/// записывал compound с именованными координатами, его тоже читаем.
 pub fn bounding_box_from_tag(tag: &CompoundTag) -> Option<BoundingBox> {
+    if let Some(values) = tag.get_int_array("BB") {
+        let &[x0, y0, z0, x1, y1, z1] = values else {
+            return None;
+        };
+        return Some(BoundingBox::new(x0, y0, z0, x1, y1, z1));
+    }
     let bb = tag.get_compound("BB")?;
     Some(BoundingBox::new(
         bb.get_int("minX")?,
@@ -145,7 +202,92 @@ impl PiecesContainer {
         pos: crate::core::block_pos::BlockPos,
     ) {
         if let Some(piece) = self.pieces.get_mut(index) {
-            piece.post_process(level, structure_manager, generator, random, box_, chunk_pos, pos);
+            piece.post_process(
+                level,
+                structure_manager,
+                generator,
+                random,
+                box_,
+                chunk_pos,
+                pos,
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_leaf_piece_ids_headers_and_type_specific_fields() {
+        let coords = [-42, -12, 73, -22, 4, 99];
+        let cases = [
+            ("BTP", "minecraft:btp", None, -1),
+            (
+                "minecraft:TeDP",
+                "minecraft:tedp",
+                Some("hasPlacedChest1"),
+                1,
+            ),
+            ("minecraft:tejp", "minecraft:tejp", Some("placedTrap2"), 2),
+            ("minecraft:tesh", "minecraft:tesh", Some("Cat"), 3),
+        ];
+        for (id, canonical, flag, orientation) in cases {
+            let mut input = CompoundTag::new();
+            input.put_string("id", id);
+            input.put_int_array("BB", &coords);
+            input.put_int("O", orientation);
+            input.put_int("GD", 7);
+            if let Some(flag) = flag {
+                input.put_bool(flag, true);
+            }
+            let container = PiecesContainer::load(&[Tag::Compound(input)]).unwrap();
+            let piece = &container.pieces()[0];
+            assert_eq!(
+                piece.bounding_box(),
+                BoundingBox::new(-42, -12, 73, -22, 4, 99)
+            );
+            assert_eq!(piece.gen_depth(), 7);
+            assert_eq!(
+                piece.orientation().map(|d| d.get_2d_data_value()),
+                (orientation >= 0).then_some(orientation)
+            );
+            let Tag::List(pieces) = container.save() else {
+                panic!("expected piece list")
+            };
+            let saved = pieces[0].as_compound().unwrap();
+            assert_eq!(saved.get_string("id"), Some(canonical));
+            assert_eq!(saved.get_int_array("BB"), Some(coords.as_slice()));
+            assert_eq!(saved.get_int("O"), Some(orientation));
+            if let Some(flag) = flag {
+                assert_eq!(saved.get_bool(flag), Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn reads_previous_rust_piece_encoding_and_rejects_malformed_boxes() {
+        let mut piece = CompoundTag::new();
+        piece.put_string("id", "minecraft:desert_pyramid");
+        piece.put_string("O", "west");
+        let mut bounds = CompoundTag::new();
+        for (key, value) in ["minX", "minY", "minZ", "maxX", "maxY", "maxZ"]
+            .into_iter()
+            .zip([32, 63, 45, 52, 79, 65])
+        {
+            bounds.put_int(key, value);
+        }
+        piece.put("BB", Tag::Compound(bounds));
+        let input = PiecesContainer::load(&[Tag::Compound(piece.clone())]).unwrap();
+        assert_eq!(input.pieces()[0].orientation(), Some(Direction::WEST));
+        assert_eq!(
+            input.pieces()[0].bounding_box(),
+            BoundingBox::new(32, 63, 45, 52, 79, 65)
+        );
+
+        piece.put_int_array("BB", &[1, 2]);
+        let input = PiecesContainer::load(&[Tag::Compound(piece)]).unwrap();
+        assert!(input.is_empty());
     }
 }
