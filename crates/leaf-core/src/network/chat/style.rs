@@ -79,10 +79,7 @@ impl Style {
     where
         F: FnOnce(Style) -> Style,
     {
-        let mut s = base.clone();
-        f(std::mem::take(&mut s));
-        // checkEmptyAfterChange: если всё обнулилось — вернуть EMPTY
-        if s.is_empty() { Style::empty() } else { s }
+        f(base.clone())
     }
 
     /// `withColor(TextColor)`.
