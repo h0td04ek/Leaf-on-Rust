@@ -4,7 +4,7 @@
 //! рекурсивная генерация до глубины 8).
 
 use super::super::bounding_box::BoundingBox;
-use super::super::pieces_container::PiecesContainer;
+use super::super::pieces_container::{PieceHeader, PiecesContainer};
 use super::super::structure::{
     GenerationContext, GenerationStub, Structure, StructureSettings,
 };
@@ -643,6 +643,26 @@ pub struct MineShaftCorridorPiece {
 }
 
 impl MineShaftCorridorPiece {
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
+        let ty = MineshaftType::by_id(tag.get_int_or("MST", 0));
+        let mut piece = Self {
+            bounding_box: header.bounds,
+            gen_depth: header.depth,
+            orientation: None,
+            mirror: Mirror::NONE,
+            rotation: Rotation::NONE,
+            ty,
+            has_rails: false,
+            spider_corridor: false,
+            has_placed_spider: false,
+            num_sections: 0,
+        };
+        piece.set_orientation(header.orientation);
+        piece.load_additional_save_data(tag);
+        Some(piece)
+    }
+
     pub fn new(gen_depth: i32, random: &mut dyn RandomSource, bounding_box: BoundingBox, orientation: Direction, ty: MineshaftType) -> Self {
         let mut piece = Self {
             bounding_box,
@@ -831,10 +851,13 @@ impl StructurePiece for MineShaftCorridorPiece {
     fn gen_depth(&self) -> i32 { self.gen_depth }
     fn set_gen_depth(&mut self, gen_depth: i32) { self.gen_depth = gen_depth; }
     fn orientation(&self) -> Option<Direction> { self.orientation }
-    fn set_orientation(&mut self, orientation: Option<Direction>) { self.orientation = orientation; }
+    fn set_orientation(&mut self, orientation: Option<Direction>) {
+        self.orientation = orientation;
+        piece_set_orientation(orientation, &mut self.mirror, &mut self.rotation);
+    }
     fn rotation(&self) -> Rotation { self.rotation }
     fn mirror(&self) -> Mirror { self.mirror }
-    fn piece_type_id(&self) -> Identifier { piece_id("MSCorridor") }
+    fn piece_type_id(&self) -> Identifier { piece_id("mscorridor") }
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn load_additional_save_data(&mut self, tag: &CompoundTag) {
@@ -985,6 +1008,15 @@ pub struct MineShaftCrossingPiece {
 }
 
 impl MineShaftCrossingPiece {
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
+        let ty = MineshaftType::by_id(tag.get_int_or("MST", 0));
+        let mut piece = Self::new(header.depth, header.bounds, None, ty);
+        piece.set_orientation(header.orientation);
+        piece.load_additional_save_data(tag);
+        Some(piece)
+    }
+
     pub fn new(gen_depth: i32, bounding_box: BoundingBox, direction: Option<Direction>, ty: MineshaftType) -> Self {
         let is_two_floored = bounding_box.get_y_span() > 3;
         Self {
@@ -1043,10 +1075,13 @@ impl StructurePiece for MineShaftCrossingPiece {
     fn gen_depth(&self) -> i32 { self.gen_depth }
     fn set_gen_depth(&mut self, gen_depth: i32) { self.gen_depth = gen_depth; }
     fn orientation(&self) -> Option<Direction> { self.orientation }
-    fn set_orientation(&mut self, orientation: Option<Direction>) { self.orientation = orientation; }
+    fn set_orientation(&mut self, orientation: Option<Direction>) {
+        self.orientation = orientation;
+        piece_set_orientation(orientation, &mut self.mirror, &mut self.rotation);
+    }
     fn rotation(&self) -> Rotation { self.rotation }
     fn mirror(&self) -> Mirror { self.mirror }
-    fn piece_type_id(&self) -> Identifier { piece_id("MSCrossing") }
+    fn piece_type_id(&self) -> Identifier { piece_id("mscrossing") }
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn load_additional_save_data(&mut self, tag: &CompoundTag) {
@@ -1135,6 +1170,23 @@ pub struct MineShaftRoomPiece {
 }
 
 impl MineShaftRoomPiece {
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
+        let ty = MineshaftType::by_id(tag.get_int_or("MST", 0));
+        let mut piece = Self {
+            bounding_box: header.bounds,
+            gen_depth: header.depth,
+            orientation: None,
+            mirror: Mirror::NONE,
+            rotation: Rotation::NONE,
+            ty,
+            child_entrance_boxes: Rc::new(RefCell::new(Vec::new())),
+        };
+        piece.set_orientation(header.orientation);
+        piece.load_additional_save_data(tag);
+        Some(piece)
+    }
+
     /// `new(genDepth, random, x, z, type)` — комната 7-13 × 4-9 × 7-13
     /// на y=50.
     pub fn new(gen_depth: i32, random: &mut dyn RandomSource, x: i32, z: i32, ty: MineshaftType) -> Self {
@@ -1163,10 +1215,13 @@ impl StructurePiece for MineShaftRoomPiece {
     fn gen_depth(&self) -> i32 { self.gen_depth }
     fn set_gen_depth(&mut self, gen_depth: i32) { self.gen_depth = gen_depth; }
     fn orientation(&self) -> Option<Direction> { self.orientation }
-    fn set_orientation(&mut self, orientation: Option<Direction>) { self.orientation = orientation; }
+    fn set_orientation(&mut self, orientation: Option<Direction>) {
+        self.orientation = orientation;
+        piece_set_orientation(orientation, &mut self.mirror, &mut self.rotation);
+    }
     fn rotation(&self) -> Rotation { self.rotation }
     fn mirror(&self) -> Mirror { self.mirror }
-    fn piece_type_id(&self) -> Identifier { piece_id("MSRoom") }
+    fn piece_type_id(&self) -> Identifier { piece_id("msroom") }
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn move_by(&mut self, x: i32, y: i32, z: i32) {
@@ -1178,20 +1233,13 @@ impl StructurePiece for MineShaftRoomPiece {
 
     fn load_additional_save_data(&mut self, tag: &CompoundTag) {
         self.ty = MineshaftType::by_id(tag.get_int("MST").unwrap_or(0));
-        // `Entrances` — BoundingBox list; читаем через NBT-список
-        // int-массивов если формат доступен, иначе пропускаем.
-        if let Some(list) = tag.get_list("Entrances") {
-            for entry in list {
-                if let Some(ints) = entry.as_int_array() {
-                    if ints.len() >= 6 {
-                        self.child_entrance_boxes.borrow_mut().push(BoundingBox::new(
-                            ints[0], ints[1], ints[2], ints[3], ints[4], ints[5],
-                        ));
-                    }
-                }
+        let mut boxes = self.child_entrance_boxes.borrow_mut();
+        boxes.clear();
+        for entry in tag.get_list_or_empty("Entrances") {
+            if let Some(&[x0, y0, z0, x1, y1, z1]) = entry.as_int_array() {
+                boxes.push(BoundingBox::new(x0, y0, z0, x1, y1, z1));
             }
         }
-        // save — добавляется ниже в add_additional_save_data.
     }
 
     fn add_additional_save_data(&self, tag: &mut CompoundTag) {
@@ -1279,6 +1327,12 @@ pub struct MineShaftStairsPiece {
 }
 
 impl MineShaftStairsPiece {
+    pub fn from_nbt(tag: &CompoundTag) -> Option<Self> {
+        let header = PieceHeader::read(tag)?;
+        let ty = MineshaftType::by_id(tag.get_int_or("MST", 0));
+        Some(Self::new(header.depth, header.bounds, header.orientation, ty))
+    }
+
     pub fn new(gen_depth: i32, bounding_box: BoundingBox, orientation: Option<Direction>, ty: MineshaftType) -> Self {
         let mut piece = Self {
             bounding_box,
@@ -1324,10 +1378,13 @@ impl StructurePiece for MineShaftStairsPiece {
     fn gen_depth(&self) -> i32 { self.gen_depth }
     fn set_gen_depth(&mut self, gen_depth: i32) { self.gen_depth = gen_depth; }
     fn orientation(&self) -> Option<Direction> { self.orientation }
-    fn set_orientation(&mut self, orientation: Option<Direction>) { self.orientation = orientation; }
+    fn set_orientation(&mut self, orientation: Option<Direction>) {
+        self.orientation = orientation;
+        piece_set_orientation(orientation, &mut self.mirror, &mut self.rotation);
+    }
     fn rotation(&self) -> Rotation { self.rotation }
     fn mirror(&self) -> Mirror { self.mirror }
-    fn piece_type_id(&self) -> Identifier { piece_id("MSStairs") }
+    fn piece_type_id(&self) -> Identifier { piece_id("msstairs") }
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn load_additional_save_data(&mut self, tag: &CompoundTag) {

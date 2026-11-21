@@ -132,14 +132,24 @@ pub fn piece_from_nbt(id: &Identifier, tag: &CompoundTag) -> Option<Box<dyn Stru
     }
 
     use super::structures::{
-        buried_treasure::BuriedTreasurePiece, desert_pyramid::DesertPyramidPiece,
-        jungle_temple::JungleTemplePiece, swamp_hut::SwampHutPiece,
+        buried_treasure::BuriedTreasurePiece,
+        desert_pyramid::DesertPyramidPiece,
+        jungle_temple::JungleTemplePiece,
+        mineshaft::{
+            MineShaftCorridorPiece, MineShaftCrossingPiece, MineShaftRoomPiece,
+            MineShaftStairsPiece,
+        },
+        swamp_hut::SwampHutPiece,
     };
     match id.get_path() {
         "btp" | "buried_treasure" => Some(Box::new(BuriedTreasurePiece::from_nbt(tag)?)),
         "tedp" | "desert_pyramid" => Some(Box::new(DesertPyramidPiece::from_nbt(tag)?)),
         "tejp" | "jungle_pyramid" => Some(Box::new(JungleTemplePiece::from_nbt(tag)?)),
         "tesh" | "swamp_hut" => Some(Box::new(SwampHutPiece::from_nbt(tag)?)),
+        "mscorridor" => Some(Box::new(MineShaftCorridorPiece::from_nbt(tag)?)),
+        "mscrossing" => Some(Box::new(MineShaftCrossingPiece::from_nbt(tag)?)),
+        "msroom" => Some(Box::new(MineShaftRoomPiece::from_nbt(tag)?)),
+        "msstairs" => Some(Box::new(MineShaftStairsPiece::from_nbt(tag)?)),
         _ => None,
     }
 }
@@ -289,5 +299,66 @@ mod tests {
         piece.put_int_array("BB", &[1, 2]);
         let input = PiecesContainer::load(&[Tag::Compound(piece)]).unwrap();
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn loads_and_serializes_all_mineshaft_pieces_with_saved_state() {
+        let coords = [-41, 28, 12, -30, 34, 24];
+        let entrance = vec![-31, 28, 12, -30, 30, 14];
+        let entries = [
+            ("MSCorridor", "minecraft:mscorridor", 2),
+            ("MSCrossing", "minecraft:mscrossing", -1),
+            ("MSRoom", "minecraft:msroom", -1),
+            ("MSStairs", "minecraft:msstairs", 1),
+        ];
+        let pieces = entries
+            .iter()
+            .map(|(id, _, orientation)| {
+                let mut tag = CompoundTag::new();
+                tag.put_string("id", id);
+                tag.put_int("O", *orientation);
+                tag.put_int("GD", 6);
+                tag.put_int_array("BB", &coords);
+                tag.put_int("MST", 1);
+                match *id {
+                    "MSCorridor" => {
+                        tag.put_bool("hr", false);
+                        tag.put_bool("sc", true);
+                        tag.put_bool("hps", true);
+                        tag.put_int("Num", 2);
+                    }
+                    "MSCrossing" => {
+                        tag.put_bool("tf", true);
+                        tag.put_int("D", 3);
+                    }
+                    "MSRoom" => {
+                        tag.put(
+                            "Entrances",
+                            Tag::List(vec![Tag::IntArray(entrance.clone())]),
+                        );
+                    }
+                    _ => {}
+                }
+                Tag::Compound(tag)
+            })
+            .collect::<Vec<_>>();
+        let mut container = PiecesContainer::load(&pieces).unwrap();
+        assert_eq!(container.pieces().len(), pieces.len());
+        container.pieces[2].load_additional_save_data(pieces[2].as_compound().unwrap());
+        let Tag::List(saved) = container.save() else {
+            panic!("expected piece list")
+        };
+        for (index, (_, id, orientation)) in entries.into_iter().enumerate() {
+            let data = saved[index].as_compound().unwrap();
+            assert_eq!(data.get_string("id"), Some(id));
+            assert_eq!(data.get_int("O"), Some(orientation));
+            assert_eq!(data.get_int_array("BB"), Some(coords.as_slice()));
+            assert_eq!(data.get_int("GD"), Some(6));
+            assert_eq!(data.get_int("MST"), Some(1));
+            let original = pieces[index].as_compound().unwrap();
+            for key in ["hr", "sc", "hps", "Num", "tf", "D", "Entrances"] {
+                assert_eq!(data.get(key), original.get(key), "{id} field {key}");
+            }
+        }
     }
 }
