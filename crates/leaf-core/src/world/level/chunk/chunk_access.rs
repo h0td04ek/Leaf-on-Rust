@@ -112,7 +112,7 @@ impl ChunkAccess {
         sections: Vec<LevelChunkSection>,
     ) -> Self {
         let coordinate_key = ChunkPos::as_long_static(chunk_pos.x, chunk_pos.z);
-        let light_section_count = level_height_accessor.get_sections_count() as usize;
+        let light_section_count = level_height_accessor.get_sections_count() as usize + 2;
         Self {
             chunk_pos,
             coordinate_key,

@@ -73,6 +73,43 @@ impl<T: Clone + PartialEq + Eq + Hash + 'static> PalettedContainer<T> {
         }
     }
 
+    /// Восстанавливает палитру и упакованные индексы из NBT секции.
+    pub fn unpack(&mut self, values: Vec<T>, words: Option<&[i64]>) -> Result<(), String> {
+        let size = self.strategy.entry_count;
+        if values.is_empty() || values.len() > size {
+            return Err(format!("invalid palette size {}", values.len()));
+        }
+        let configuration = self.strategy.get_configuration_for_palette_size(values.len());
+        let bits = configuration.bits_in_storage();
+        let storage = if bits == 0 {
+            BitStorage::Zero { size }
+        } else {
+            let words = words.ok_or_else(|| "missing data for a multi-value palette".to_owned())?;
+            let packed = SimpleBitStorage::from_raw(bits, size, words.to_vec())?;
+            if (0..size).any(|index| packed.get(index) as usize >= values.len()) {
+                return Err("palette indices exceed the encoded palette size".to_owned());
+            }
+            if configuration.always_repack() {
+                let map = self.global_map();
+                let ids: Vec<_> = values.iter().map(|value| map.get_id(value)).collect();
+                let memory_bits = configuration.bits_in_memory();
+                if ids.iter().any(|&id| id < 0 || (id as u64) >= (1u64 << memory_bits)) {
+                    return Err("palette contains an unregistered value".to_owned());
+                }
+                let mut global = Self::create_storage(memory_bits, size);
+                for index in 0..size {
+                    global.set(index, ids[packed.get(index) as usize]);
+                }
+                global
+            } else {
+                BitStorage::Simple(packed)
+            }
+        };
+        let palette = configuration.create_palette(values);
+        self.data = Data { configuration, storage, palette };
+        Ok(())
+    }
+
     /// `get(x, y, z)`.
     pub fn get(&self, x: i32, y: i32, z: i32) -> T {
         self.get_by_index(self.strategy.get_index(x, y, z))

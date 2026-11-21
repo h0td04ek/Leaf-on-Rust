@@ -85,9 +85,9 @@ impl SWMRNibbleArray {
         Self {
             state_updating: state,
             state_visible: state,
+            storage_visible: bytes.clone(),
             storage_updating: bytes,
             updating_dirty: false,
-            storage_visible: None,
             cached_is_all_zero: false,
             cached_is_all_zero_valid: false,
         }

@@ -81,6 +81,27 @@ impl ChunkStatus {
         ChunkStatus::Full,
     ];
 
+    /// Имя статуса в NBT чанка. Старые сохранения могут опускать namespace.
+    pub fn by_name(name: &str) -> Option<Self> {
+        let name = name.strip_prefix("minecraft:").unwrap_or(name);
+        let status = match name {
+            "empty" => Self::Empty,
+            "structure_starts" => Self::StructureStarts,
+            "structure_references" => Self::StructureReferences,
+            "biomes" => Self::Biomes,
+            "noise" => Self::Noise,
+            "surface" => Self::Surface,
+            "carvers" => Self::Carvers,
+            "features" => Self::Features,
+            "initialize_light" => Self::InitializeLight,
+            "light" => Self::Light,
+            "spawn" => Self::Spawn,
+            "full" => Self::Full,
+            _ => return None,
+        };
+        Some(status)
+    }
+
     /// `isOrAfter`.
     pub fn is_or_after(&self, other: ChunkStatus) -> bool {
         self.ordinal() >= other.ordinal()
