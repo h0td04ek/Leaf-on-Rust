@@ -114,9 +114,17 @@ impl GameType {
         ), Vec::new())
     }
 
-    /// `updatePlayerAbilities` — требует `player::Abilities` (портируется).
-    /// Здесь только логика флагов через колбэк не нужна — метод добавим
-    /// когда будет `Abilities`.
+    /// `updatePlayerAbilities`.
+    pub fn update_player_abilities(self, abilities: &mut crate::entity::player::abilities::Abilities) {
+        let spectator = self == Self::Spectator;
+        abilities.instabuild = self.is_creative();
+        abilities.mayfly = abilities.instabuild || spectator;
+        abilities.invulnerable = abilities.mayfly;
+        if !abilities.instabuild {
+            abilities.flying = spectator;
+        }
+        abilities.may_build = !self.is_block_placing_restricted();
+    }
 
     /// `STREAM_CODEC` — idMapper (VarInt id).
     pub fn stream_codec() -> impl crate::network::codec::stream_codec::StreamCodec<

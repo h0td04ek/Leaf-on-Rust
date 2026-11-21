@@ -10,6 +10,7 @@ use crate::nbt::tag::Tag;
 use crate::network::chat::component::Component;
 use crate::util::uuid::Uuid;
 use crate::world::level::block::state::block_state::BlockState;
+use crate::world::level::game_type::GameType;
 use crate::world::level::level_reader::LevelReader;
 use crate::world::phys::aabb::Aabb;
 use crate::world::phys::vec3::Vec3;
@@ -123,6 +124,7 @@ pub struct Entity {
     pub invisible: bool,
     /// `invulnerable` — неуязвимость (босс/команды).
     pub invulnerable: bool,
+    pub(crate) player_game_mode: Option<GameType>,
     /// `glowing` — светящийся.
     pub glowing: bool,
     /// `noPhysics` — без физики.
@@ -216,6 +218,7 @@ impl Entity {
             eye_height_old: 1.62,
             invisible: false,
             invulnerable: false,
+            player_game_mode: None,
             glowing: false,
             no_physics: false,
             blocks_building: true,
@@ -768,7 +771,7 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn get_main_hand_item(&self) -> Option<crate::world::item::item_stack::ItemStack> { None }
 
     /// `isSpectator()`.
-    pub fn is_spectator(&self) -> bool { false }
+    pub fn is_spectator(&self) -> bool { self.player_game_mode == Some(GameType::Spectator) }
 
     /// `getType() == EntityType.X` — проверка типа по registry-id
     /// (`minecraft:item` и т.д.).
@@ -786,7 +789,7 @@ pub fn is_alive_and_well(&self) -> bool {
     }
 
     /// `isCreative()` — creative-режим (Player; default false).
-    pub fn is_creative(&self) -> bool { false }
+    pub fn is_creative(&self) -> bool { self.player_game_mode == Some(GameType::Creative) }
 
     /// `getLookAngle()` — единичный вектор взгляда.
     pub fn get_look_angle(&self) -> Vec3 {
@@ -1267,7 +1270,7 @@ pub fn is_alive_and_well(&self) -> bool {
     pub fn heal(&mut self, _amount: f32) {}
 
     /// `isInvulnerable()`.
-    pub fn is_invulnerable(&self) -> bool { self.invulnerable }
+    pub fn is_invulnerable(&self) -> bool { self.invulnerable || self.is_creative() || self.is_spectator() }
 
     /// `calculateViewVector(xRot, yRot)` — единичный вектор взгляда.
     /// `getViewVector(partialTicks)`.
@@ -1287,7 +1290,7 @@ pub fn is_alive_and_well(&self) -> bool {
     }
 
     /// `isPlayer()` — переопределяется в `Player`.
-    pub fn is_player(&self) -> bool { false }
+    pub fn is_player(&self) -> bool { self.player_game_mode.is_some() }
 
     /// `isDescending()` — спуск на элитрах (Player переопределит
     /// при порте; Elytra-логика ставит флаг).
@@ -1304,7 +1307,7 @@ pub fn is_alive_and_well(&self) -> bool {
 
     /// `affectsSpawning` — поле Player (в Java — `Player.affectsSpawning`,
     /// default true). Default false для не-игроков.
-    pub fn affects_spawning(&self) -> bool { false }
+    pub fn affects_spawning(&self) -> bool { self.is_player() }
 
     /// `instanceof Container` — сущность-контейнер
     /// (`EntitySelector.CONTAINER_ENTITY_SELECTOR`). Default false.

@@ -375,6 +375,15 @@ fn misc_entity_type(
     )
 }
 
+/// `EntityType.PLAYER` — `sized(0.6, 1.8).eyeHeight(1.62)`.
+pub fn player_entity_type() -> EntityType {
+    let mut entity_type = misc_entity_type("player", 0.6, 1.8, 1.62, 32, 2);
+    entity_type.max_health = 20.0;
+    entity_type.attack_damage = 1.0;
+    entity_type.speed = 0.1;
+    entity_type
+}
+
 /// `EntityType.ITEM` — `sized(0.25, 0.25).eyeHeight(0.2125)`.
 pub fn item_entity_type() -> EntityType {
     misc_entity_type("item", 0.25, 0.25, 0.2125, 6, 20)

@@ -9,6 +9,7 @@ pub mod entity_type;
 pub mod entity_spawn_reason;
 pub mod spawn_placements;
 pub mod mob_category;
+pub mod player;
 pub mod pose;
 
 pub use entity::Entity;

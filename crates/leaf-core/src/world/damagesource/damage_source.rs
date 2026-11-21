@@ -293,6 +293,7 @@ impl Clone for crate::world::entity::entity::Entity {
             eye_height_old: self.eye_height_old,
             invisible: self.invisible,
             invulnerable: self.invulnerable,
+            player_game_mode: self.player_game_mode,
             glowing: self.glowing,
             no_physics: self.no_physics,
             blocks_building: self.blocks_building,
