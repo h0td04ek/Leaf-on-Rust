@@ -306,7 +306,15 @@ fn load_list(reader: &mut Reader, acc: &mut NbtAccounter) -> Result<Tag, NbtErro
         acc.account_bytes_per_item(4, count as i64)?;
         let mut list = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            list.push(load_tag(reader, acc, elem_id)?);
+            let mut element = load_tag(reader, acc, elem_id)?;
+            if let Tag::Compound(compound) = &mut element {
+                if compound.len() == 1 {
+                    if let Some(wrapped) = compound.remove("") {
+                        element = wrapped;
+                    }
+                }
+            }
+            list.push(element);
         }
         Ok(Tag::List(list))
     })();
@@ -491,16 +499,31 @@ fn write_payload(writer: &mut Writer, tag: &Tag) -> Result<(), NbtError> {
             Ok(())
         }
         Tag::List(list) => {
-            let elem_id = list.first().map(Tag::id).unwrap_or(TAG_END);
-            if list.iter().any(|t| t.id() != elem_id) {
-                return Err(NbtError::Format(
-                    "ListTag elements must all have the same type".into(),
-                ));
+            let first = list.first().map(Tag::id).unwrap_or(TAG_END);
+            let mut elem_id = first;
+            for element in list {
+                if element.id() == TAG_END {
+                    return Err(NbtError::Format("ListTag cannot contain TAG_End".into()));
+                }
+                if element.id() != first {
+                    elem_id = TAG_COMPOUND;
+                }
             }
+
             writer.write_u8(elem_id);
             writer.write_i32(list.len() as i32);
-            for t in list {
-                write_payload(writer, t)?;
+            for element in list {
+                let plain_compound = element.as_compound()
+                    .is_some_and(|tag| tag.len() != 1 || !tag.contains(""));
+                if elem_id == TAG_COMPOUND && !plain_compound {
+                    // Vanilla оборачивает разнотипные элементы в compound с пустым ключом.
+                    writer.write_u8(element.id());
+                    writer.write_utf_fallback("");
+                    write_payload(writer, element)?;
+                    writer.write_u8(TAG_END);
+                } else {
+                    write_payload(writer, element)?;
+                }
             }
             Ok(())
         }
@@ -577,6 +600,23 @@ pub fn write_compressed<W: Write>(tag: &CompoundTag, writer: W) -> io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_list_uses_leaf_compound_wrappers_and_unwraps_only_once() {
+        let mut compound = CompoundTag::new();
+        compound.put_int("", 4);
+        let tag = Tag::List(vec![Tag::String("x".into()), Tag::Compound(compound)]);
+        let expected = [
+            9, 10, 0, 0, 0, 2,      // TAG_List with TAG_Compound elements
+            8, 0, 0, 0, 1, b'x', 0, // { "": "x" }
+            10, 0, 0, 3, 0, 0, 0, 0, 0, 4, 0, 0, // { "": { "": 4 } }
+        ];
+        let bytes = write_any_tag(&tag).unwrap();
+        assert_eq!(bytes, expected);
+        let mut reader = Reader::new(&bytes);
+        let restored = read_any_tag(&mut reader, &mut NbtAccounter::unlimited_heap()).unwrap();
+        assert_eq!(restored, tag);
+    }
 
     #[test]
     fn roundtrip_compound() {

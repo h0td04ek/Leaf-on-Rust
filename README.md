@@ -78,13 +78,13 @@ Set-Location run
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-22. `cargo test --workspace --locked --offline` прошёл **138 тестов** (136 в `leaf-core` и 2 в `leaf-runner`). Один doctest помечен как пропущенный.
+Актуально на 2026-11-22. `cargo test --workspace --locked --offline` прошёл **139 тестов** (137 в `leaf-core` и 2 в `leaf-runner`). Один doctest помечен как пропущенный.
 
 ### ✅ Работает и проверено тестами
 
 | Подсистема | Что проверено |
 |---|---|
-| **NBT и SNBT** | Бинарное чтение и запись, GZIP, MUTF-8, ограничение чтения NBT и round-trip через SNBT. |
+| **NBT и SNBT** | Бинарное чтение и запись, GZIP, MUTF-8, ограничение чтения NBT, разнотипные списки в формате Leaf 1.21.11 и round-trip через SNBT. |
 | **RNG** | Последовательности и операции `LegacyRandomSource`, `SingleThreadedRandomSource` и `XoroshiroRandomSource` сверяются с эталонными значениями. |
 | **Позиции и математика** | Упаковка и преобразования `BlockPos`, `SectionPos`, `QuartPos` и `ChunkPos`, операции матриц и кватернионов JOML. |
 | **Сетевые форматы** | Кодирование VarInt, VarLong и UTF-8, отдельные пакетные форматы и сериализация дерева команд. Проверена регистрация сетевых кодеков всех 104 встроенных data components. |
