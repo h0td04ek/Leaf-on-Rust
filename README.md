@@ -146,7 +146,7 @@ cargo test -p leaf-core
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-21. 97 тестов `leaf-core` проходят.
+Актуально на 2026-11-21. 100 тестов `leaf-core` проходят.
 
 ### ✅ Работает и проверено тестами
 
@@ -192,7 +192,7 @@ cargo test -p leaf-core
 
 1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть нативов java.base не реализована в jvm25-rust.
 2. **World/level runtime** — `Level`/`ServerLevel` (chunk loading, generation pipeline, lighting engine, block-entity ticking), конкретные структуры (`structure/structures/*` — все 16 wrapper'ов портированы: desert pyramid, jungle temple, igloo, swamp hut, shipwreck, ocean ruin, ruined portal, nether fossil, jigsaw, end city, mineshaft, ocean monument, woodland mansion, nether fortress, stronghold; `StructureFeatureIndexSavedData` + `LegacyStructureDataHandler` портированы — structures/* завершены на 100%; `templatesystem`, `placement`, `pools` готовы).
-3. **Commands** — brigadier-база → `CommandNode`-дерево, dispatcher, argument types, synchronization (пакеты уже есть).
+3. **Commands** — базовый диспетчер Brigadier, дерево, шесть примитивных типов аргументов и отправка доступных команд реализованы. Остались аргументы Minecraft, подсказки, команды и подключение к серверу.
 4. **Entity-иерархия** — `Player` полный порт, projectile/item-entity Mob-операции через LevelReader-хуки.
 5. **Component payloads** — ~55 типов (`FoodProperties`, `Consumable`, `PotionContents`, `Equippable`, `Tool`...) + registry bootstrap (`HolderSet`/`EitherHolder`).
 6. **Plugin API** — Bukkit/Paper события и менеджеры.
