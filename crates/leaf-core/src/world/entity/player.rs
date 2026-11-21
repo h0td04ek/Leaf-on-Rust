@@ -4,8 +4,12 @@ use std::sync::Arc;
 
 use crate::authlib::game_profile::GameProfile;
 use crate::core::holder::Holder;
-use crate::entity::player::abilities::Abilities;
+use crate::entity::ai::attributes::attributes;
+use crate::entity::player::abilities::{Abilities, Packed};
+use crate::nbt::{CompoundTag, Tag};
 use crate::network::chat::component::Component;
+use crate::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
+use crate::resources::Identifier;
 use crate::world::damagesource::combat_tracker::CombatTracker;
 use crate::world::food::food_data::{FoodData, FoodTick};
 use crate::world::food::FoodProperties;
@@ -21,6 +25,17 @@ pub struct Player {
     profile: GameProfile,
     abilities: Abilities,
     pub food_data: FoodData,
+    pub experience: Experience,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Experience {
+    pub progress: f32,
+    pub level: i32,
+    pub total: i32,
+    pub score: i32,
+    pub enchantment_seed: i32,
+    last_level_up_tick: i32,
 }
 
 impl Player {
@@ -36,6 +51,7 @@ impl Player {
             profile,
             abilities: Abilities::default(),
             food_data: FoodData::default(),
+            experience: Experience::default(),
         }
     }
 
@@ -57,6 +73,121 @@ impl Player {
         self.living
             .entity
             .set_no_physics(mode == GameType::Spectator);
+    }
+
+    pub fn xp_needed_for_next_level(&self) -> i32 {
+        let level = self.experience.level.max(0);
+        match level {
+            0..15 => 7 + level * 2,
+            15..30 => 37 + (level - 15) * 5,
+            _ => 112i32.saturating_add((level - 30).saturating_mul(9)),
+        }
+    }
+
+    pub fn give_experience_points(&mut self, points: i32) {
+        self.experience.score = self.experience.score.wrapping_add(points);
+        self.experience.progress += points as f32 / self.xp_needed_for_next_level() as f32;
+        self.experience.total = self.experience.total.saturating_add(points).max(0);
+        while self.experience.progress < 0.0 {
+            let remainder = self.experience.progress * self.xp_needed_for_next_level() as f32;
+            let can_lower = self.experience.level > 0;
+            self.give_experience_levels(-1);
+            if can_lower {
+                self.experience.progress = 1.0 + remainder / self.xp_needed_for_next_level() as f32;
+            }
+        }
+        while self.experience.progress >= 1.0 {
+            if self.experience.level == i32::MAX {
+                self.experience.progress = f32::from_bits(1.0f32.to_bits() - 1);
+                break;
+            }
+            let remainder =
+                (self.experience.progress - 1.0) * self.xp_needed_for_next_level() as f32;
+            self.give_experience_levels(1);
+            self.experience.progress = remainder / self.xp_needed_for_next_level() as f32;
+        }
+    }
+
+    pub fn give_experience_levels(&mut self, levels: i32) {
+        self.experience.level = self.experience.level.saturating_add(levels);
+        self.reset_xp_if_below_zero();
+        let tick = self.living.entity.tick_count();
+        if levels > 0
+            && self.experience.level % 5 == 0
+            && self.experience.last_level_up_tick < tick.saturating_sub(100)
+        {
+            if let Some(level) = self.living.entity.level.as_ref() {
+                let volume = (self.experience.level as f32 / 30.0).min(1.0) * 0.75;
+                level.play_sound(
+                    self.living.entity.position(),
+                    &Identifier::minecraft("entity.player.levelup"),
+                    volume,
+                    1.0,
+                );
+            }
+            self.experience.last_level_up_tick = tick;
+        }
+    }
+
+    pub fn on_enchantment_performed(&mut self, level_cost: i32) {
+        self.experience.level = self.experience.level.saturating_sub(level_cost);
+        self.reset_xp_if_below_zero();
+        self.experience.enchantment_seed = self.living.entity.random_mut().next_int();
+    }
+
+    fn reset_xp_if_below_zero(&mut self) {
+        if self.experience.level < 0 {
+            self.experience.level = 0;
+            self.experience.progress = 0.0;
+            self.experience.total = 0;
+        }
+    }
+
+    pub fn experience_packet(&self) -> ClientboundSetExperiencePacket {
+        ClientboundSetExperiencePacket::new(
+            self.experience.progress,
+            self.experience.total,
+            self.experience.level,
+        )
+    }
+
+    pub fn add_additional_save_data(&self, tag: &mut CompoundTag) {
+        self.living.add_additional_save_data(tag);
+        crate::nbt::utils::add_current_data_version(tag);
+        tag.put_float("XpP", self.experience.progress);
+        tag.put_int("XpLevel", self.experience.level);
+        tag.put_int("XpTotal", self.experience.total);
+        tag.put_int("XpSeed", self.experience.enchantment_seed);
+        tag.put_int("Score", self.experience.score);
+        self.food_data.add_additional_save_data(tag);
+        tag.put("abilities", Tag::Compound(self.abilities.pack().to_nbt()));
+    }
+
+    pub fn read_additional_save_data(&mut self, tag: &CompoundTag) {
+        self.living.read_additional_save_data(tag);
+        self.living.entity.uuid = self.profile.id;
+        self.experience.progress = tag
+            .get_float("XpP")
+            .filter(|p| p.is_finite())
+            .unwrap_or_default();
+        self.experience.level = tag.get_int_or("XpLevel", 0).max(0);
+        self.experience.total = tag.get_int_or("XpTotal", 0).max(0);
+        self.experience.enchantment_seed = tag.get_int_or("XpSeed", 0);
+        self.experience.score = tag.get_int_or("Score", 0);
+        if self.experience.enchantment_seed == 0 {
+            self.experience.enchantment_seed = self.living.entity.random_mut().next_int();
+        }
+        self.food_data.read_additional_save_data(tag);
+        if let Some(abilities) = tag.get_compound("abilities") {
+            self.abilities.apply(&Packed::from_nbt(abilities));
+        }
+        if let Some(speed) = self
+            .living
+            .attributes
+            .get_instance(&attributes::movement_speed())
+        {
+            speed.set_base_value(f64::from(self.abilities.walking_speed));
+        }
     }
 
     pub fn can_eat(&self, can_always_eat: bool) -> bool {
@@ -120,6 +251,39 @@ impl Player {
 mod tests {
     use super::*;
     use crate::util::uuid::Uuid;
+
+    #[test]
+    fn experience_crosses_level_boundaries_and_loads_vanilla_fields() {
+        let profile = GameProfile::new(Uuid::new(1, 2), "Leaf");
+        let mut player = Player::new(profile.clone(), None);
+        player.give_experience_points(7);
+        assert_eq!(
+            player.experience_packet(),
+            ClientboundSetExperiencePacket::new(0.0, 7, 1)
+        );
+        player.give_experience_points(-1);
+        assert_eq!(player.experience.level, 0);
+        assert!((player.experience.progress - 6.0 / 7.0).abs() < 1.0e-6);
+        player.give_experience_points(-20);
+        assert_eq!(player.experience.progress, 0.0);
+        assert_eq!(player.experience.total, 0);
+
+        player.give_experience_levels(30);
+        assert_eq!(player.xp_needed_for_next_level(), 112);
+        player.on_enchantment_performed(1);
+        assert_eq!(player.experience.level, 29);
+        player.experience.enchantment_seed = 41;
+        player.abilities.set_walking_speed(0.24);
+        player.food_data.food_level = 15;
+
+        let mut tag = CompoundTag::new();
+        player.add_additional_save_data(&mut tag);
+        let mut restored = Player::new(profile, None);
+        restored.read_additional_save_data(&tag);
+        assert_eq!(restored.experience, player.experience);
+        assert_eq!(restored.abilities.walking_speed, 0.24);
+        assert_eq!(restored.food_data.food_level, 15);
+    }
 
     #[test]
     fn game_mode_updates_base_entity_and_abilities() {

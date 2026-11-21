@@ -1,5 +1,7 @@
 //! Перенос `net.minecraft.world.entity.player.Abilities`.
 
+use crate::nbt::CompoundTag;
+
 /// `Abilities` — флаги способностей игрока.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Abilities {
@@ -105,4 +107,30 @@ pub struct Packed {
     pub flying_speed: f32,
     /// `walkingSpeed`.
     pub walking_speed: f32,
+}
+
+impl Packed {
+    pub fn from_nbt(tag: &CompoundTag) -> Self {
+        Self {
+            invulnerable: tag.get_bool_or("invulnerable", DEFAULT_INVULNERABLE),
+            flying: tag.get_bool_or("flying", DEFAULT_FLYING),
+            may_fly: tag.get_bool_or("mayfly", DEFAULT_MAY_FLY),
+            instabuild: tag.get_bool_or("instabuild", DEFAULT_INSTABUILD),
+            may_build: tag.get_bool_or("mayBuild", DEFAULT_MAY_BUILD),
+            flying_speed: tag.get_float("flySpeed").unwrap_or(DEFAULT_FLYING_SPEED),
+            walking_speed: tag.get_float("walkSpeed").unwrap_or(DEFAULT_WALKING_SPEED),
+        }
+    }
+
+    pub fn to_nbt(self) -> CompoundTag {
+        let mut tag = CompoundTag::new();
+        tag.put_bool("invulnerable", self.invulnerable);
+        tag.put_bool("flying", self.flying);
+        tag.put_bool("mayfly", self.may_fly);
+        tag.put_bool("instabuild", self.instabuild);
+        tag.put_bool("mayBuild", self.may_build);
+        tag.put_float("flySpeed", self.flying_speed);
+        tag.put_float("walkSpeed", self.walking_speed);
+        tag
+    }
 }
