@@ -146,7 +146,7 @@ cargo test -p leaf-core
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-21. 105 тестов `leaf-core` проходят.
+Актуально на 2026-11-21. 107 тестов `leaf-core` проходят.
 
 ### ✅ Работает и проверено тестами
 
@@ -193,7 +193,7 @@ cargo test -p leaf-core
 1. **Нативные методы JVM** — сервер упирается в natives (`FileNotFoundException`); часть нативов java.base не реализована в jvm25-rust.
 2. **World/level runtime** — `Level`/`ServerLevel` (chunk loading, generation pipeline, lighting engine, block-entity ticking), конкретные структуры (`structure/structures/*` — все 16 wrapper'ов портированы: desert pyramid, jungle temple, igloo, swamp hut, shipwreck, ocean ruin, ruined portal, nether fossil, jigsaw, end city, mineshaft, ocean monument, woodland mansion, nether fortress, stronghold; `StructureFeatureIndexSavedData` + `LegacyStructureDataHandler` портированы — structures/* завершены на 100%; `templatesystem`, `placement`, `pools` готовы).
 3. **Commands** — базовый диспетчер Brigadier, дерево, шесть примитивных типов аргументов и отправка доступных команд реализованы. Остались аргументы Minecraft, подсказки, команды и подключение к серверу.
-4. **Entity-иерархия** — добавлены базовый `Player`, переключение режимов, способности и `FoodData`. Остались инвентарь, опыт, взаимодействия и серверное подключение игрока, а также projectile/item-entity операции через `LevelReader`.
+4. **Entity-иерархия** — добавлены базовый `Player`, переключение режимов, способности, `FoodData` и слияние дропов с учётом компонентов. Остались инвентарь, опыт, взаимодействия и серверное подключение игрока, а также projectile/item-entity операции через `LevelReader`.
 5. **Component payloads** — все 104 встроенных типа имеют сетевые кодеки. Сложные NBT-компоненты карты, отладочной палки, замка и лута пока хранятся как теги. Остались их игровые модели, persistent-кодеки других компонентов и резолв именованных holder-наборов.
 6. **Plugin API** — Bukkit/Paper события и менеджеры.
 7. **Полный прогон** — `nogui` сервер должен дойти до "Done".

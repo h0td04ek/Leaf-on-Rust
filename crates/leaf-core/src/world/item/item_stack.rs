@@ -183,6 +183,11 @@ impl ItemStack {
         a.item == b.item
     }
 
+    /// `isSameItemSameComponents` — сравнение без размера стопки.
+    pub fn is_same_item_same_components(a: &ItemStack, b: &ItemStack) -> bool {
+        Self::is_same_item(a, b) && a.components == b.components
+    }
+
     /// `copyWithCount(count)`.
     pub fn copy_with_count(&self, count: i32) -> ItemStack {
         let mut s = self.copy();
