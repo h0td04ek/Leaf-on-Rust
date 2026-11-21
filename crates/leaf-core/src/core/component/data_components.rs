@@ -2,20 +2,20 @@
 //! `bootstrap()` регистрирует все 104 `DataComponentType` в точном
 //! порядке vanilla (wire-id = индекс реестра).
 //!
-//! `stream_codec: None` — у типа нет network-кодека: для transient-only
-//! компонентов (`custom_data`, `intangible_projectile`, `map_decorations`,
-//! `debug_stick_state`, `recipes`, `lock`, `container_loot`) это точное
-//! соответствие Java (`streamCodec == null`); для типов, чьи payload-классы
-//! ещё портируются (`world::item::component::*` и связанные реестры),
-//! codec появится при переносе соответствующего класса.
+//! Для компонентов без явного stream-кодека Java передаёт результат
+//! persistent-кодека как NBT. Записи, требующие ещё не портированных
+//! игровых типов, сохраняются в виде NBT-compound.
 
 use crate::core::component::data_component_type::{
-    register_data_component_type, stream_codec_of, ComponentStreamCodec, DataComponentType,
+    register_builtin_data_component_type as register_data_component_type, stream_codec_of,
+    ComponentNbtCodec, ComponentStreamCodec, DataComponentType,
 };
 use crate::core::holder::Holder;
+use crate::nbt::{CompoundTag, Tag};
 use crate::network::chat::component::Component;
 use crate::network::chat::component_json;
 use crate::network::codec::byte_buf_codecs;
+use crate::network::codec::stream_codec::sync_fn;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::resources::identifier::Identifier;
 use crate::sounds::sound_event::SoundEvent;
@@ -82,6 +82,52 @@ fn mk(
         stream_codec,
         nbt_codec: None,
     }
+}
+
+fn persistent<T>(
+    id: &str,
+    encode: fn(&T) -> Result<Tag, String>,
+    decode: fn(&Tag) -> Result<T, String>,
+) -> DataComponentType
+where
+    T: Clone + Send + Sync + PartialEq + std::fmt::Debug + 'static,
+{
+    let wire = sync_fn(
+        move |buf: &mut FriendlyByteBuf, value: &T| {
+            let tag = encode(value).expect("component NBT encode");
+            buf.write_nbt(Some(&tag)).expect("write component NBT");
+        },
+        move |buf: &mut FriendlyByteBuf| {
+            let tag = buf.read_nbt().expect("read component NBT").expect("missing component NBT");
+            decode(&tag).expect("component NBT decode")
+        },
+    );
+    let mut ty = mk(id, false, false, Some(stream_codec_of::<T, _>(wire)));
+    ty.nbt_codec = Some(ComponentNbtCodec::new(encode, decode));
+    ty
+}
+
+fn read_compound_payload(tag: &Tag) -> Result<CompoundTag, String> {
+    match tag {
+        Tag::Compound(tag) => Ok(tag.clone()),
+        _ => Err("expected an NBT compound for component payload".to_owned()),
+    }
+}
+
+fn persistent_compound(id: &str) -> DataComponentType {
+    persistent(id, |tag: &CompoundTag| Ok(Tag::Compound(tag.clone())), read_compound_payload)
+}
+
+fn read_recipes(tag: &Tag) -> Result<Vec<Identifier>, String> {
+    let Tag::List(recipes) = tag else {
+        return Err("expected an NBT list of recipe identifiers".to_owned());
+    };
+    recipes.iter().map(|recipe| {
+        let Tag::String(id) = recipe else {
+            return Err("expected a recipe identifier".to_owned());
+        };
+        Identifier::parse(id).map_err(|error| error.to_string())
+    }).collect()
 }
 
 fn var_int() -> Option<ComponentStreamCodec> {
@@ -163,10 +209,19 @@ macro_rules! payload_codec {
     };
 }
 
-/// `DataComponents.bootstrap` — регистрация всех типов по порядку.
-pub fn bootstrap() {
-    // 1. custom_data — persistent, БЕЗ network-кодека.
-    register_data_component_type(mk("custom_data", false, false, None));
+fn register_builtin_types() {
+    register_data_component_type(persistent(
+        "custom_data",
+        |data: &CustomData| Ok(Tag::Compound(data.tag.clone())),
+        |tag| {
+            let compound = match tag {
+                Tag::String(snbt) => crate::nbt::snbt_parse::parse_compound(snbt)
+                    .map_err(|error| error.to_string())?,
+                _ => read_compound_payload(tag)?,
+            };
+            Ok(CustomData::new(compound))
+        },
+    ));
     // 2-5. скалярные.
     register_data_component_type(mk("max_stack_size", false, false, var_int()));
     register_data_component_type(mk("max_damage", false, false, var_int()));
@@ -196,7 +251,14 @@ pub fn bootstrap() {
     register_data_component_type(mk("repair_cost", false, false, var_int()));
     register_data_component_type(mk("creative_slot_lock", true, false, unit()));
     register_data_component_type(mk("enchantment_glint_override", false, false, bool_codec()));
-    register_data_component_type(mk("intangible_projectile", false, false, None)); // net=False
+    register_data_component_type(persistent(
+        "intangible_projectile",
+        |_: &Unit| Ok(Tag::Compound(CompoundTag::new())),
+        |tag| match tag {
+            Tag::Compound(_) => Ok(Unit),
+            _ => Err("expected a compound for intangible_projectile".to_owned()),
+        },
+    ));
     // 24-35.
     register_data_component_type(mk("food", false, false, payload_codec!(FoodProperties, FoodProperties::stream_codec()))); // FoodProperties
     register_data_component_type(mk("consumable", false, false, payload_codec!(Consumable, Consumable::stream_codec()))); // Consumable
@@ -222,7 +284,7 @@ pub fn bootstrap() {
     register_data_component_type(mk("map_color", false, false, payload_codec!(MapItemColor, MapItemColor::stream_codec())));
     register_data_component_type(mk("map_id", false, false, payload_codec!(MapId, MapId::stream_codec()))); // MapId
     // 46-49.
-    register_data_component_type(mk("map_decorations", false, false, None)); // net=False
+    register_data_component_type(persistent_compound("map_decorations"));
     register_data_component_type(mk("map_post_processing", true, false, payload_codec!(MapPostProcessing, MapPostProcessing::stream_codec())));
     register_data_component_type(mk("charged_projectiles", false, false, payload_codec!(ChargedProjectiles, ChargedProjectiles::stream_codec())));
     register_data_component_type(mk("bundle_contents", false, false, payload_codec!(BundleContents, BundleContents::stream_codec())));
@@ -234,7 +296,7 @@ pub fn bootstrap() {
     register_data_component_type(mk("written_book_content", false, false, payload_codec!(WrittenBookContent, WrittenBookContent::stream_codec())));
     register_data_component_type(mk("trim", false, false, payload_codec!(ArmorTrim, ArmorTrim::stream_codec())));
     // 56-65.
-    register_data_component_type(mk("debug_stick_state", false, false, None)); // net=False
+    register_data_component_type(persistent_compound("debug_stick_state"));
     register_data_component_type(mk("entity_data", false, false, Some(stream_codec_of::<TypedEntityData<Holder<EntityType>>, _>(TypedEntityData::stream_codec(EntityType::stream_codec())))));
     register_data_component_type(mk("bucket_entity_data", false, false, payload_codec!(CustomData, CustomData::stream_codec())));
     register_data_component_type(mk("block_entity_data", false, false, Some(stream_codec_of::<TypedEntityData<Holder<BlockEntityType>>, _>(TypedEntityData::stream_codec(crate::core::holder::holder_registry_stream_codec::<BlockEntityType>())))));
@@ -243,7 +305,11 @@ pub fn bootstrap() {
     register_data_component_type(mk("ominous_bottle_amplifier", false, false, payload_codec!(OminousBottleAmplifier, OminousBottleAmplifier::stream_codec()))); // OminousBottleAmplifier
     register_data_component_type(mk("jukebox_playable", false, false, payload_codec!(JukeboxPlayable, JukeboxPlayable::stream_codec())));
     register_data_component_type(mk("provides_banner_patterns", false, false, Some(stream_codec_of::<TagKey<crate::world::level::block::entity::banner_pattern::BannerPattern>, _>(TagKey::stream_codec(crate::resources::resource_key::ResourceKey::create_registry_key(Identifier::parse("minecraft:banner_pattern").expect("banner_pattern registry")))))));
-    register_data_component_type(mk("recipes", false, false, None)); // net=False
+    register_data_component_type(persistent(
+        "recipes",
+        |recipes: &Vec<Identifier>| Ok(Tag::List(recipes.iter().map(|recipe| Tag::String(recipe.to_string())).collect())),
+        read_recipes,
+    ));
     // 66-79.
     register_data_component_type(mk("lodestone_tracker", false, false, payload_codec!(LodestoneTracker, LodestoneTracker::stream_codec())));
     register_data_component_type(mk("firework_explosion", false, false, payload_codec!(FireworkExplosion, FireworkExplosion::stream_codec())));
@@ -256,8 +322,8 @@ pub fn bootstrap() {
     register_data_component_type(mk("container", false, false, payload_codec!(ItemContainerContents, ItemContainerContents::stream_codec())));
     register_data_component_type(mk("block_state", false, false, payload_codec!(BlockItemStateProperties, BlockItemStateProperties::stream_codec())));
     register_data_component_type(mk("bees", false, false, payload_codec!(Bees, Bees::stream_codec())));
-    register_data_component_type(mk("lock", false, false, None)); // net=False
-    register_data_component_type(mk("container_loot", false, false, None)); // net=False
+    register_data_component_type(persistent_compound("lock"));
+    register_data_component_type(persistent_compound("container_loot"));
     register_data_component_type(mk("break_sound", false, false, sound_event_holder()));
     // 80-104. variant-компоненты — Holder<variant>/enum-кодеки.
     register_data_component_type(mk("villager/variant", false, false, holder_registry::<VillagerType>())); // VillagerType
@@ -289,7 +355,53 @@ pub fn bootstrap() {
 
 static BOOTSTRAP_ONCE: Once = Once::new();
 
+/// `DataComponents.bootstrap` — однократная регистрация всех встроенных типов.
+pub fn bootstrap() {
+    BOOTSTRAP_ONCE.call_once(register_builtin_types);
+}
+
 /// Ленивый bootstrap — вызывается перед обращением к реестру.
 pub fn ensure_bootstrapped() {
-    BOOTSTRAP_ONCE.call_once(bootstrap);
+    bootstrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::component::data_component_patch::DataComponentPatch;
+    use crate::core::component::data_component_type::{
+        all_data_component_types, data_component_type_by_identifier,
+    };
+    use crate::network::codec::stream_codec::StreamCodec;
+
+    #[test]
+    fn bootstraps_once_with_a_wire_codec_for_each_builtin() {
+        bootstrap();
+        bootstrap();
+        let types = all_data_component_types();
+        assert_eq!(types.len(), 104);
+        assert!(types.iter().all(|ty| ty.stream_codec.is_some()));
+        assert_eq!(types[0].id.to_string(), "minecraft:custom_data");
+        assert_eq!(types[103].id.to_string(), "minecraft:shulker/color");
+    }
+
+    #[test]
+    fn custom_data_wire_id_zero_keeps_its_nbt_payload() {
+        let id = Identifier::parse("custom_data").unwrap();
+        let ty = data_component_type_by_identifier(&id).unwrap();
+        let mut tag = CompoundTag::new();
+        tag.put_int("x", 7);
+        let data = CustomData::new(tag);
+        let mut builder = DataComponentPatch::builder();
+        builder.set(&ty, data.clone());
+        let patch = builder.build();
+
+        let mut buf = FriendlyByteBuf::new();
+        let codec = DataComponentPatch::stream_codec();
+        codec.encode(&mut buf, &patch);
+        assert_eq!(buf.readable_bytes_vec(), [1, 0, 0, 10, 3, 0, 1, b'x', 0, 0, 0, 7, 0]);
+        let decoded = codec.decode(&mut buf);
+        assert_eq!(decoded.get::<CustomData>(&ty), Some(&data));
+        assert_eq!(buf.readable_bytes(), 0);
+    }
 }

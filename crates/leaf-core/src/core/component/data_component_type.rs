@@ -140,8 +140,7 @@ pub struct DataComponentType {
     pub transient: bool,
     /// `ignoreSwapAnimation`.
     pub ignore_swap_animation: bool,
-    /// `streamCodec` — network-кодек значения (`@Nullable`:
-    /// transient-only типы не имеют network-кодека).
+    /// `streamCodec` — сетевой кодек значения.
     pub stream_codec: Option<ComponentStreamCodec>,
     /// `codec` — persistent NBT-кодек (`Codec<T>`); `None` —
     /// ещё не портирован (encode через VALUE_MAP_CODEC упадёт,
@@ -180,18 +179,17 @@ fn registry() -> &'static RwLock<Vec<Arc<DataComponentType>>> {
 }
 
 /// `DataComponentType.STREAM_CODEC` —
-/// `ByteBufCodecs.registry(DATA_COMPONENT_TYPE)` (VarInt id+1).
+/// `ByteBufCodecs.registry(DATA_COMPONENT_TYPE)` (нулевой VarInt ID).
 pub fn data_component_type_stream_codec(
 ) -> impl StreamCodec<FriendlyByteBuf, Arc<DataComponentType>> {
     crate::network::codec::stream_codec::sync_fn(
         |buf: &mut FriendlyByteBuf, t: &Arc<DataComponentType>| {
             let id = data_component_type_id(t).expect("unregistered component type");
-            buf.write_var_int(id + 1);
+            buf.write_var_int(id);
         },
         |buf: &mut FriendlyByteBuf| {
             let i = buf.read_var_int();
-            assert!(i != 0, "invalid data component type id");
-            data_component_type_arc_by_id(i - 1).expect("unknown component type id")
+            data_component_type_arc_by_id(i).expect("unknown component type id")
         },
     )
 }
@@ -224,9 +222,13 @@ pub fn data_component_type_by_identifier(id: &Identifier) -> Option<DataComponen
         .map(|t| (**t).clone())
 }
 
-/// Регистрация типа — вызывается из `data_components::bootstrap` в
-/// точном порядке vanilla. Возвращает wire-id.
+/// Регистрирует дополнительный тип после встроенных компонентов.
 pub fn register_data_component_type(ty: DataComponentType) -> i32 {
+    crate::core::component::data_components::ensure_bootstrapped();
+    register_builtin_data_component_type(ty)
+}
+
+pub(crate) fn register_builtin_data_component_type(ty: DataComponentType) -> i32 {
     let mut reg = registry().write().unwrap();
     let id = reg.len() as i32;
     reg.push(Arc::new(ty));
