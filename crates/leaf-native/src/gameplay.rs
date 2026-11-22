@@ -12,6 +12,7 @@ use leaf_core::network::protocol::game::{
     clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket,
     clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket,
     clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
+    clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket,
     clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket,
     clientbound_take_item_entity_packet::ClientboundTakeItemEntityPacket,
 };
@@ -24,8 +25,9 @@ use leaf_core::world::phys::vec3::Vec3;
 use crate::audience::Audience;
 use crate::commands::Commands;
 use crate::items::{item_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY, ITEM_ENTITY};
+use crate::player_data::PlayerData;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{FlatWorld, AIR, SPAWN_Y};
+use crate::world::{FlatWorld, AIR};
 
 const CHEST: usize = 38;
 const OFFHAND: usize = 40;
@@ -40,12 +42,8 @@ pub struct PlayContext<'a> {
 }
 
 pub struct Gameplay {
-    pub position: Vec3,
+    pub player: PlayerData,
     entity_id: i32,
-    inventory: [ItemStack; 41],
-    selection: usize,
-    pitch: f32,
-    yaw: f32,
     on_ground: bool,
     creative_flying: bool,
     gliding: bool,
@@ -63,14 +61,10 @@ struct DropEntity {
 }
 
 impl Gameplay {
-    pub fn new(entity_id: i32) -> Self {
+    pub fn new(entity_id: i32, player: PlayerData) -> Self {
         Self {
+            player,
             entity_id,
-            position: Vec3::new(0.5, f64::from(SPAWN_Y), 0.5),
-            inventory: std::array::from_fn(|_| ItemStack::empty()),
-            selection: 0,
-            pitch: 0.0,
-            yaw: 0.0,
             on_ground: true,
             creative_flying: false,
             gliding: false,
@@ -87,29 +81,32 @@ impl Gameplay {
         wire: &mut Wire,
         ids: &PacketIds,
     ) -> io::Result<()> {
+        let mut position = self.player.position;
+        let mut yaw = self.player.yaw;
+        let mut pitch = self.player.pitch;
         if matches!(kind, "move_player_pos" | "move_player_pos_rot") {
-            let position = Vec3::new(
+            position = Vec3::new(
                 f64::from_be_bytes(body.fixed()?),
                 f64::from_be_bytes(body.fixed()?),
                 f64::from_be_bytes(body.fixed()?),
             );
-            if ![position.x, position.y, position.z]
-                .iter()
-                .all(|v| v.is_finite() && v.abs() <= 30_000_000.0)
-            {
+            if !PlayerData::valid_position(position) {
                 return Err(invalid("invalid player position"));
             }
-            self.position = position;
         }
         if matches!(kind, "move_player_rot" | "move_player_pos_rot") {
-            self.yaw = f32::from_be_bytes(body.fixed()?);
-            self.pitch = f32::from_be_bytes(body.fixed()?);
-            if !self.yaw.is_finite() || !self.pitch.is_finite() {
+            yaw = f32::from_be_bytes(body.fixed()?);
+            pitch = f32::from_be_bytes(body.fixed()?);
+            if !yaw.is_finite() || !pitch.is_finite() {
                 return Err(invalid("invalid player rotation"));
             }
         }
-        self.on_ground = body.fixed::<1>()?[0] & 1 != 0;
+        let on_ground = body.fixed::<1>()?[0] & 1 != 0;
         body.finish()?;
+        self.player.position = position;
+        self.player.yaw = yaw;
+        self.player.pitch = pitch;
+        self.on_ground = on_ground;
         if self.on_ground && self.gliding {
             self.set_gliding(false, wire, ids)?;
         }
@@ -128,7 +125,7 @@ impl Gameplay {
                 let slot = i16::from_be_bytes(body.fixed()?);
                 body.finish()?;
                 if (0..9).contains(&slot) {
-                    self.selection = slot as usize;
+                    self.player.selection = slot as usize;
                 }
             }
             "set_creative_mode_slot" => {
@@ -137,10 +134,10 @@ impl Gameplay {
                 body.finish()?;
                 match slot {
                     -1 if !stack.is_empty() => self.throw_stack(stack, wire, ctx)?,
-                    5..=8 => self.inventory[(44 - slot) as usize] = stack,
-                    9..=35 => self.inventory[slot as usize] = stack,
-                    36..=44 => self.inventory[(slot - 36) as usize] = stack,
-                    45 => self.inventory[OFFHAND] = stack,
+                    5..=8 => self.player.inventory[(44 - slot) as usize] = stack,
+                    9..=35 => self.player.inventory[slot as usize] = stack,
+                    36..=44 => self.player.inventory[(slot - 36) as usize] = stack,
+                    45 => self.player.inventory[OFFHAND] = stack,
                     _ => {}
                 }
                 if self.gliding && !self.has_elytra() {
@@ -177,19 +174,19 @@ impl Gameplay {
                     }
                     3 | 4 => {
                         let amount = if action == 3 {
-                            self.inventory[self.selection].get_count()
+                            self.player.inventory[self.player.selection].get_count()
                         } else {
                             1
                         };
-                        if !self.inventory[self.selection].is_empty() {
-                            let stack = self.inventory[self.selection].split(amount);
-                            self.sync_slot(self.selection, wire, ctx.ids)?;
+                        if !self.player.inventory[self.player.selection].is_empty() {
+                            let stack = self.player.inventory[self.player.selection].split(amount);
+                            self.sync_slot(self.player.selection, wire, ctx.ids)?;
                             self.throw_stack(stack, wire, ctx)?;
                         }
                     }
                     6 => {
-                        self.inventory.swap(self.selection, OFFHAND);
-                        self.sync_slot(self.selection, wire, ctx.ids)?;
+                        self.player.inventory.swap(self.player.selection, OFFHAND);
+                        self.sync_slot(self.player.selection, wire, ctx.ids)?;
                         self.sync_slot(OFFHAND, wire, ctx.ids)?;
                     }
                     _ => {}
@@ -219,12 +216,14 @@ impl Gameplay {
             "use_item" => {
                 let hand = body.count(1)?;
                 let sequence = body.varint()?;
-                self.yaw = f32::from_be_bytes(body.fixed()?);
-                self.pitch = f32::from_be_bytes(body.fixed()?);
+                let yaw = f32::from_be_bytes(body.fixed()?);
+                let pitch = f32::from_be_bytes(body.fixed()?);
                 body.finish()?;
-                if !self.yaw.is_finite() || !self.pitch.is_finite() {
+                if !yaw.is_finite() || !pitch.is_finite() {
                     return Err(invalid("invalid player rotation"));
                 }
+                self.player.yaw = yaw;
+                self.player.pitch = pitch;
                 self.use_item(hand, wire, ctx)?;
                 wire.send(ctx.ids, &ClientboundBlockChangedAckPacket::new(sequence))?;
             }
@@ -238,11 +237,12 @@ impl Gameplay {
                 if self.in_reach(pos) {
                     let placed = pos.relative(direction);
                     let slot = self.hand_slot(hand);
-                    if let Some(state) = Items::vanilla().place_state(&self.inventory[slot]) {
+                    if let Some(state) = Items::vanilla().place_state(&self.player.inventory[slot])
+                    {
                         let feet = BlockPos::new(
-                            self.position.x.floor() as i32,
-                            self.position.y.floor() as i32,
-                            self.position.z.floor() as i32,
+                            self.player.position.x.floor() as i32,
+                            self.player.position.y.floor() as i32,
+                            self.player.position.z.floor() as i32,
                         );
                         if placed != feet
                             && placed != feet.offset(0, 1, 0)
@@ -266,9 +266,21 @@ impl Gameplay {
         Ok(())
     }
 
+    pub fn sync_inventory(&self, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
+        for (slot, item) in self.player.inventory.iter().enumerate() {
+            if !item.is_empty() {
+                self.sync_slot(slot, wire, ids)?;
+            }
+        }
+        wire.send(
+            ids,
+            &ClientboundSetHeldSlotPacket::new(self.player.selection as i32),
+        )
+    }
+
     pub fn kit(&mut self, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
-        if self.inventory[CHEST].is_empty() {
-            self.inventory[CHEST] = stack(ELYTRA, 1);
+        if self.player.inventory[CHEST].is_empty() {
+            self.player.inventory[CHEST] = stack(ELYTRA, 1);
             self.sync_slot(CHEST, wire, ctx.ids)?;
         } else if !self.has_elytra() {
             let extra = self.insert(stack(ELYTRA, 1), wire, ctx.ids)?;
@@ -283,7 +295,7 @@ impl Gameplay {
         Ok(())
     }
     fn has_elytra(&self) -> bool {
-        let chest = &self.inventory[CHEST];
+        let chest = &self.player.inventory[CHEST];
         item_id(chest) == Some(ELYTRA) && chest.get_damage_value() < 431
     }
 
@@ -314,7 +326,7 @@ impl Gameplay {
 
     fn hand_slot(&self, hand: usize) -> usize {
         if hand == 0 {
-            self.selection
+            self.player.selection
         } else {
             OFFHAND
         }
@@ -322,18 +334,18 @@ impl Gameplay {
 
     fn use_item(&mut self, hand: usize, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
         let slot = self.hand_slot(hand);
-        match item_id(&self.inventory[slot]) {
+        match item_id(&self.player.inventory[slot]) {
             Some(ELYTRA) => {
-                self.inventory.swap(slot, CHEST);
+                self.player.inventory.swap(slot, CHEST);
                 self.sync_slot(slot, wire, ctx.ids)?;
                 self.sync_slot(CHEST, wire, ctx.ids)?;
             }
             Some(FIREWORK) if self.gliding && self.has_elytra() && self.rockets.len() < 16 => {
-                let item = self.inventory[slot].copy_with_count(1);
+                let item = self.player.inventory[slot].copy_with_count(1);
                 let duration = item
                     .get_component::<Fireworks>(&Identifier::minecraft("fireworks"))
                     .map_or(1, |fireworks| fireworks.flight_duration);
-                let entity = spawn(FIREWORK_ENTITY, self.position, Vec3::ZERO, wire, ctx)?;
+                let entity = spawn(FIREWORK_ENTITY, self.player.position, Vec3::ZERO, wire, ctx)?;
                 wire.send(
                     ctx.ids,
                     &ClientboundSetEntityDataPacket::new(
@@ -351,7 +363,11 @@ impl Gameplay {
     }
 
     fn in_reach(&self, pos: BlockPos) -> bool {
-        let eye = Vec3::new(self.position.x, self.position.y + 1.62, self.position.z);
+        let eye = Vec3::new(
+            self.player.position.x,
+            self.player.position.y + 1.62,
+            self.player.position.z,
+        );
         let target = Vec3::new(
             f64::from(pos.x) + 0.5,
             f64::from(pos.y) + 0.5,
@@ -363,7 +379,10 @@ impl Gameplay {
     fn sync_slot(&self, slot: usize, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
         wire.send(
             ids,
-            &ClientboundSetPlayerInventoryPacket::new(slot as i32, self.inventory[slot].clone()),
+            &ClientboundSetPlayerInventoryPacket::new(
+                slot as i32,
+                self.player.inventory[slot].clone(),
+            ),
         )
     }
 
@@ -377,7 +396,7 @@ impl Gameplay {
             if stack.is_empty() {
                 break;
             }
-            let current = &mut self.inventory[slot];
+            let current = &mut self.player.inventory[slot];
             if ItemStack::is_same_item_same_components(current, &stack) && !current.is_empty() {
                 let amount = (current.get_max_stack_size() - current.count)
                     .max(0)
@@ -390,8 +409,11 @@ impl Gameplay {
             }
         }
         if !stack.is_empty() {
-            if let Some(slot) = self.inventory[..36].iter().position(ItemStack::is_empty) {
-                self.inventory[slot] = stack;
+            if let Some(slot) = self.player.inventory[..36]
+                .iter()
+                .position(ItemStack::is_empty)
+            {
+                self.player.inventory[slot] = stack;
                 self.sync_slot(slot, wire, ids)?;
                 return Ok(ItemStack::empty());
             }
@@ -405,8 +427,8 @@ impl Gameplay {
         wire: &mut Wire,
         ctx: &PlayContext<'_>,
     ) -> io::Result<()> {
-        let direction = Vec3::direction_from_rotation(self.pitch, self.yaw);
-        let pos = self.position.add(0.0, 1.32, 0.0);
+        let direction = Vec3::direction_from_rotation(self.player.pitch, self.player.yaw);
+        let pos = self.player.position.add(0.0, 1.32, 0.0);
         self.spawn_drop(item, pos, direction.scale(0.3), wire, ctx)
     }
 
@@ -487,7 +509,7 @@ impl Gameplay {
             if age >= Duration::from_secs(2)
                 && drop
                     .position
-                    .distance_to_sqr(&self.position.add(0.0, 0.5, 0.0))
+                    .distance_to_sqr(&self.player.position.add(0.0, 0.5, 0.0))
                     < 1.44
             {
                 let count = drop.stack.get_count();

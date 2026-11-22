@@ -1,5 +1,6 @@
 //! Перенос `net.minecraft.world.item.component.FireworkExplosion`.
 
+use crate::nbt::{CompoundTag, Tag};
 use crate::network::codec::byte_buf_codecs;
 use crate::network::codec::stream_codec::{sync_fn, StreamCodec};
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
@@ -89,6 +90,56 @@ impl FireworkExplosion {
             has_trail: false,
             has_twinkle: false,
         }
+    }
+
+    pub(crate) fn to_nbt(&self) -> Tag {
+        let mut tag = CompoundTag::new();
+        tag.put_string("shape", self.shape.get_serialized_name());
+        if !self.colors.is_empty() {
+            tag.put_int_array("colors", &self.colors);
+        }
+        if !self.fade_colors.is_empty() {
+            tag.put_int_array("fade_colors", &self.fade_colors);
+        }
+        if self.has_trail {
+            tag.put_bool("has_trail", true);
+        }
+        if self.has_twinkle {
+            tag.put_bool("has_twinkle", true);
+        }
+        Tag::Compound(tag)
+    }
+
+    pub(crate) fn from_nbt(tag: &Tag) -> Result<Self, String> {
+        let tag = tag.as_compound().ok_or("expected a firework explosion compound")?;
+        let name = tag.get_string("shape").ok_or("missing firework explosion shape")?;
+        let shape = (0..5)
+            .map(FireworkExplosionShape::by_id)
+            .find(|shape| shape.get_serialized_name() == name)
+            .ok_or("unknown firework explosion shape")?;
+        let colors = |key| -> Result<Vec<i32>, String> {
+            match tag.get(key) {
+                None => Ok(Vec::new()),
+                Some(Tag::IntArray(values)) => Ok(values.clone()),
+                Some(Tag::List(values)) => values.iter().map(|value| {
+                    value.as_int().ok_or_else(|| format!("invalid {key} value"))
+                }).collect(),
+                Some(_) => Err(format!("invalid {key}")),
+            }
+        };
+        let boolean = |key| -> Result<bool, String> {
+            match tag.get(key) {
+                None => Ok(false),
+                Some(value) => value.as_bool().ok_or_else(|| format!("invalid {key}")),
+            }
+        };
+        Ok(Self {
+            shape,
+            colors: colors("colors")?,
+            fade_colors: colors("fade_colors")?,
+            has_trail: boolean("has_trail")?,
+            has_twinkle: boolean("has_twinkle")?,
+        })
     }
 
     /// `COLOR_LIST_STREAM_CODEC` — list(INT).

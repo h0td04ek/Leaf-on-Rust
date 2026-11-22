@@ -57,6 +57,7 @@ use crate::chunk_stream::{
 use crate::commands::Commands;
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
+use crate::player_data::PlayerStore;
 use crate::registries::Registries;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, SPAWN_Y};
@@ -65,6 +66,7 @@ pub const MAX_PLAYERS: usize = 8;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(8);
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 const TELEPORT_ID: i32 = 1;
+const PLAYER_SAVE_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Server {
     handshake: PacketIds,
@@ -77,6 +79,7 @@ pub struct Server {
     play_in: PacketIds,
     play_out: PacketIds,
     registries: Registries,
+    player_data: PlayerStore,
     commands: Commands,
     audience: Audience,
     flat_world: FlatWorld,
@@ -87,7 +90,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(player_data: PlayerStore) -> Self {
         Items::vanilla();
         let registries = Registries::load();
         Self {
@@ -102,6 +105,7 @@ impl Server {
             play_out: PacketIds::from_protocol(game_protocols::clientbound_template().bind()),
             flat_world: FlatWorld::new(registries.plains_id),
             registries,
+            player_data,
             commands: Commands::new(),
             audience: Audience::default(),
             sockets: AtomicUsize::new(0),
@@ -191,9 +195,17 @@ impl Server {
                 joined: false,
             }
         };
+        let player = match self.player_data.load(uuid) {
+            Ok(player) => player,
+            Err(error) => {
+                eprintln!("Could not load player {uuid}: {error}");
+                return self.login_disconnect(wire, "Failed to read saved player data.");
+            }
+        };
+        let profile = GameProfile::new(uuid, &name);
         wire.send(
             &self.login_out,
-            &ClientboundLoginFinishedPacket::new(GameProfile::new(uuid, &name)),
+            &ClientboundLoginFinishedPacket::new(profile.clone()),
         )?;
         wire.expect(&self.login_in, "login_acknowledged")?
             .finish()?;
@@ -203,10 +215,24 @@ impl Server {
 
         let entity = self.next_entity.fetch_add(1, Ordering::Relaxed);
         let subscription = self.audience.subscribe(uuid);
-        self.spawn(wire, GameProfile::new(uuid, &name), entity, view_distance)?;
+        let mut game = Gameplay::new(entity, player);
+        self.spawn(wire, profile.clone(), entity, view_distance, &game)?;
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
-        self.play(wire, &name, uuid, entity, view_distance, &subscription)
+
+        let mut saved = Vec::new();
+        let result = self.play(
+            wire,
+            &profile,
+            &mut game,
+            view_distance,
+            &subscription,
+            &mut saved,
+        );
+        if let Err(error) = self.player_data.save(uuid, &game.player, &mut saved) {
+            eprintln!("Could not save player {uuid} on disconnect: {error}");
+        }
+        result
     }
 
     fn login_disconnect(&self, wire: &mut Wire, reason: &str) -> io::Result<()> {
@@ -277,6 +303,7 @@ impl Server {
         profile: GameProfile,
         entity: i32,
         view_distance: i32,
+        game: &Gameplay,
     ) -> io::Result<()> {
         let ids = &self.play_out;
         let dimension = LevelKey::overworld();
@@ -344,15 +371,16 @@ impl Server {
             )),
         )?;
         wire.send(ids, &ClientboundSetHealthPacket::new(20.0, 20, 5.0))?;
+        game.sync_inventory(wire, ids)?;
         wire.send(
             ids,
             &ClientboundPlayerPositionPacket::of(
                 TELEPORT_ID,
                 PositionMoveRotation::new(
-                    Vec3::new(0.5, f64::from(SPAWN_Y), 0.5),
-                    Vec3::new(0.0, 0.0, 0.0),
-                    0.0,
-                    0.0,
+                    game.player.position,
+                    Vec3::ZERO,
+                    game.player.yaw,
+                    game.player.pitch,
                 ),
                 Default::default(),
             ),
@@ -366,12 +394,14 @@ impl Server {
     fn play(
         &self,
         wire: &mut Wire,
-        name: &str,
-        uuid: Uuid,
-        entity: i32,
+        profile: &GameProfile,
+        game: &mut Gameplay,
         view_distance: i32,
         subscription: &crate::audience::Subscription,
+        saved: &mut Vec<u8>,
     ) -> io::Result<()> {
+        let name = &profile.name;
+        let uuid = profile.id;
         let context = PlayContext {
             world: &self.flat_world,
             ids: &self.play_out,
@@ -379,8 +409,8 @@ impl Server {
             commands: &self.commands,
             entity_ids: &self.next_entity,
         };
-        let mut game = Gameplay::new(entity);
-        let mut chunks = ChunkStream::start(view_distance, wire, &self.play_out)?;
+        let mut chunks =
+            ChunkStream::start(game.player.chunk(), view_distance, wire, &self.play_out)?;
         wire.play_timeout()?;
         let mut last_ping = Instant::now();
         let mut outstanding = None;
@@ -388,7 +418,15 @@ impl Server {
         let mut confirmed = false;
         let mut player_loaded = false;
         let mut next_world_refresh = Instant::now();
+        let mut next_save = Instant::now() + PLAYER_SAVE_INTERVAL;
         loop {
+            let now = Instant::now();
+            if now >= next_save {
+                if let Err(error) = self.player_data.save(uuid, &game.player, saved) {
+                    eprintln!("Could not autosave player {uuid}: {error}");
+                }
+                next_save = now + PLAYER_SAVE_INTERVAL;
+            }
             if Instant::now() >= next_world_refresh {
                 self.commands.world.lock().unwrap().refresh(&self.audience);
                 next_world_refresh = Instant::now() + Duration::from_secs(1);
@@ -480,10 +518,7 @@ impl Server {
                     if confirmed =>
                 {
                     game.movement(kind, body, wire, &self.play_out)?;
-                    let next = (
-                        game.position.x.floor() as i32 >> 4,
-                        game.position.z.floor() as i32 >> 4,
-                    );
+                    let next = game.player.chunk();
                     chunks.move_to(next, wire, &self.play_out)?;
                 }
                 kind if confirmed => game.handle(kind, body, wire, &context)?,

@@ -1,5 +1,6 @@
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -7,9 +8,31 @@ use leaf_core::network::codec::stream_codec::StreamCodec;
 use leaf_core::network::friendly_byte_buf::FriendlyByteBuf;
 use leaf_core::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 
+use leaf_core::entity::position_move_rotation::PositionMoveRotation;
+use leaf_core::resources::Identifier;
+use leaf_core::util::uuid::Uuid;
+use leaf_core::world::item::{component::fireworks::Fireworks, item_stack::ItemStack};
+use leaf_core::world::phys::vec3::Vec3;
+
+use crate::player_data::PlayerStore;
 use crate::session::Server;
 
-fn connect() -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
+struct TestWorld(PathBuf);
+
+impl TestWorld {
+    fn new() -> Self {
+        Self(std::env::temp_dir().join(format!("leaf-native-test-{}", Uuid::random())))
+    }
+}
+
+impl Drop for TestWorld {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
+    let store = PlayerStore::open(&world.0).unwrap();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     client
@@ -17,7 +40,7 @@ fn connect() -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
         .unwrap();
     let worker = thread::spawn(move || {
         let (stream, _) = listener.accept()?;
-        Server::new().handle(stream)
+        Server::new(store).handle(stream)
     });
     (client, worker)
 }
@@ -59,7 +82,8 @@ fn handshake(stream: &mut TcpStream, target: i32, version: i32) {
 
 #[test]
 fn replies_to_status_and_ping() {
-    let (mut client, worker) = connect();
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
     handshake(&mut client, 1, 774);
     send(&mut client, 0, |_| {});
     let (id, mut body) = receive(&mut client);
@@ -78,56 +102,9 @@ fn replies_to_status_and_ping() {
 
 #[test]
 fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
-    let (mut client, worker) = connect();
-    handshake(&mut client, 2, 774);
-    send(&mut client, 0, |buf| {
-        buf.write_utf("NativeSmoke").unwrap();
-        buf.write_bytes(&[0; 16]);
-    });
-    let (id, mut body) = receive(&mut client);
-    assert_eq!(id, 2);
-    assert_eq!(body.read_uuid().version(), 3);
-    assert_eq!(body.read_utf().unwrap(), "NativeSmoke");
-    assert_eq!(body.read_var_int(), 0);
-    send(&mut client, 3, |_| {});
-    client_information(&mut client, 0, 32);
-
-    assert_eq!(receive(&mut client).0, 12);
-    let (id, mut packs) = receive(&mut client);
-    assert_eq!(id, 14);
-    assert_eq!(packs.read_var_int(), 1);
-    for expected in ["minecraft", "core", "1.21.11"] {
-        assert_eq!(packs.read_utf().unwrap(), expected);
-    }
-    send(&mut client, 7, |buf| {
-        buf.write_var_int(1);
-        for value in ["minecraft", "core", "1.21.11"] {
-            buf.write_utf(value).unwrap();
-        }
-    });
-
-    let mut saw_dimension = false;
-    let mut got_tags = false;
-    loop {
-        let (id, mut packet) = receive(&mut client);
-        match id {
-            7 => saw_dimension |= packet.read_utf().unwrap() == "minecraft:dimension_type",
-            13 => got_tags = true,
-            3 => break,
-            _ => panic!("unexpected configuration packet ID {id}"),
-        }
-    }
-    assert!(saw_dimension && got_tags);
-    send(&mut client, 3, |_| {});
-
-    let (id, mut login) = receive(&mut client);
-    assert_eq!(id, 48);
-    let entity = login.read_int();
-    login.read_bool();
-    assert_eq!(login.read_var_int(), 1);
-    assert_eq!(login.read_utf().unwrap(), "minecraft:overworld");
-    login.read_var_int(); // maximum players
-    assert_eq!(login.read_var_int(), 32);
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    let entity = enter_play(&mut client, "NativeSmoke", 32);
 
     let mut rendered = Vec::new();
     let mut advertised_commands = false;
@@ -387,4 +364,186 @@ fn spawned(stream: &mut TcpStream, kind: i32) -> i32 {
     body.read_uuid();
     assert_eq!(body.read_var_int(), kind);
     id
+}
+
+fn enter_play(client: &mut TcpStream, name: &str, distance: i32) -> i32 {
+    handshake(client, 2, 774);
+    send(client, 0, |buf| {
+        buf.write_utf(name).unwrap();
+        buf.write_bytes(&[0; 16]);
+    });
+    let (id, mut body) = receive(client);
+    assert_eq!(id, 2);
+    assert_eq!(body.read_uuid().version(), 3);
+    assert_eq!(body.read_utf().unwrap(), name);
+    assert_eq!(body.read_var_int(), 0);
+    send(client, 3, |_| {});
+    client_information(client, 0, distance);
+
+    assert_eq!(receive(client).0, 12);
+    let (id, mut packs) = receive(client);
+    assert_eq!(id, 14);
+    assert_eq!(packs.read_var_int(), 1);
+    for expected in ["minecraft", "core", "1.21.11"] {
+        assert_eq!(packs.read_utf().unwrap(), expected);
+    }
+    send(client, 7, |buf| {
+        buf.write_var_int(1);
+        for value in ["minecraft", "core", "1.21.11"] {
+            buf.write_utf(value).unwrap();
+        }
+    });
+
+    let mut saw_dimension = false;
+    let mut got_tags = false;
+    loop {
+        let (id, mut packet) = receive(client);
+        match id {
+            7 => saw_dimension |= packet.read_utf().unwrap() == "minecraft:dimension_type",
+            13 => got_tags = true,
+            3 => break,
+            _ => panic!("unexpected configuration packet ID {id}"),
+        }
+    }
+    assert!(saw_dimension && got_tags);
+    send(client, 3, |_| {});
+
+    let (id, mut login) = receive(client);
+    assert_eq!(id, 48);
+    let entity = login.read_int();
+    login.read_bool();
+    assert_eq!(login.read_var_int(), 1);
+    assert_eq!(login.read_utf().unwrap(), "minecraft:overworld");
+    login.read_var_int(); // maximum players
+    assert_eq!(login.read_var_int(), distance);
+
+    entity
+}
+
+#[test]
+fn restores_player_inventory_and_exact_location_after_server_restart() {
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "Persistent", 2);
+    let mut spawn = packet(&mut client, 70);
+    send(&mut client, 0, |buf| {
+        buf.write_var_int(spawn.read_var_int());
+    });
+
+    send(&mut client, 55, |buf| {
+        let mut properties = FriendlyByteBuf::new();
+        properties
+            .write_var_int(3)
+            .write_var_int(1)
+            .write_var_int(4);
+        properties.write_var_int(1).write_int(0xff0000);
+        properties.write_var_int(1).write_int(0x0000ff);
+        properties.write_bool(true).write_bool(false);
+        buf.write_short(39)
+            .write_var_int(12)
+            .write_var_int(1242)
+            .write_var_int(1)
+            .write_var_int(0);
+        buf.write_var_int(67)
+            .write_var_int(properties.writer_index() as i32);
+        buf.write_bytes(&properties.copy_bytes());
+    });
+    for (slot, count, item) in [(6, 1, 862), (45, 17, 1)] {
+        send(&mut client, 55, |buf| {
+            buf.write_short(slot)
+                .write_var_int(count)
+                .write_var_int(item);
+            buf.write_var_int(0).write_var_int(0);
+        });
+    }
+    send(&mut client, 52, |buf| {
+        buf.write_short(3);
+    });
+
+    let first = Vec3::new(-513.25, 74.5, 1025.75);
+    send_location(&mut client, first, 112.5, -12.25);
+    let mut origin = packet(&mut client, 92);
+    let center = (origin.read_var_int(), origin.read_var_int());
+    if center == (0, 0) {
+        origin = packet(&mut client, 92);
+        assert_eq!((origin.read_var_int(), origin.read_var_int()), (-33, 64));
+    } else {
+        assert_eq!(center, (-33, 64));
+    }
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "Persistent", 2);
+    let mut slots = Vec::new();
+    let mut selected = None;
+    let teleport = loop {
+        let (id, mut body) = receive(&mut client);
+        match id {
+            103 => selected = Some(body.read_var_int()),
+            106 => slots.push((
+                body.read_var_int(),
+                ItemStack::optional_stream_codec().decode(&mut body),
+            )),
+            70 => break body,
+            _ => {}
+        }
+    };
+    assert_eq!(selected, Some(3));
+    assert_eq!(
+        slots
+            .iter()
+            .map(|(slot, item)| (*slot, item.count))
+            .collect::<Vec<_>>(),
+        [(3, 12), (38, 1), (40, 17)]
+    );
+    let rockets = slots[0]
+        .1
+        .get_component::<Fireworks>(&Identifier::minecraft("fireworks"))
+        .unwrap();
+    assert_eq!(rockets.flight_duration, 3);
+    assert_eq!(rockets.explosions[0].colors, [0xff0000]);
+    assert_eq!(rockets.explosions[0].fade_colors, [0x0000ff]);
+    assert!(rockets.explosions[0].has_trail);
+    let mut teleport = teleport;
+    let teleport_id = teleport.read_var_int();
+    let restored = PositionMoveRotation::read(&mut teleport);
+    assert_eq!(restored.position, first);
+    assert_eq!((restored.y_rot, restored.x_rot), (112.5, -12.25));
+
+    let mut center = packet(&mut client, 92);
+    assert_eq!((center.read_var_int(), center.read_var_int()), (-33, 64));
+    let mut first_chunk = packet(&mut client, 44);
+    assert_eq!((first_chunk.read_int(), first_chunk.read_int()), (-33, 64));
+
+    send(&mut client, 0, |buf| {
+        buf.write_var_int(teleport_id);
+    });
+    send(&mut client, 55, |buf| {
+        buf.write_short(45).write_var_int(0);
+    });
+    let next = Vec3::new(54.5, 80.25, -101.5);
+    send_location(&mut client, next, 10.0, 30.0);
+    let mut center = packet(&mut client, 92);
+    assert_eq!((center.read_var_int(), center.read_var_int()), (3, -7));
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let store = PlayerStore::open(&world.0).unwrap();
+    let data = store
+        .load(Uuid::create_offline_player_uuid("Persistent"))
+        .unwrap();
+    assert_eq!(data.position, next);
+    assert_eq!((data.yaw, data.pitch), (10.0, 30.0));
+    assert!(data.inventory[40].is_empty());
+    assert_eq!(data.inventory[3].count, 12);
+}
+
+fn send_location(client: &mut TcpStream, position: Vec3, yaw: f32, pitch: f32) {
+    send(client, 30, |buf| {
+        buf.write_vec3(&position)
+            .write_float(yaw)
+            .write_float(pitch)
+            .write_byte(0);
+    });
 }

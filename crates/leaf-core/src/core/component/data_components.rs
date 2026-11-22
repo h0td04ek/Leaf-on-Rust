@@ -526,8 +526,16 @@ fn register_builtin_types() {
     ));
     // 66-79.
     register_data_component_type(mk("lodestone_tracker", false, false, payload_codec!(LodestoneTracker, LodestoneTracker::stream_codec())));
-    register_data_component_type(mk("firework_explosion", false, false, payload_codec!(FireworkExplosion, FireworkExplosion::stream_codec())));
-    register_data_component_type(mk("fireworks", false, false, payload_codec!(Fireworks, Fireworks::stream_codec())));
+    register_data_component_type(with_nbt(
+        mk("firework_explosion", false, false, payload_codec!(FireworkExplosion, FireworkExplosion::stream_codec())),
+        |value: &FireworkExplosion| Ok(value.to_nbt()),
+        FireworkExplosion::from_nbt,
+    ));
+    register_data_component_type(with_nbt(
+        mk("fireworks", false, false, payload_codec!(Fireworks, Fireworks::stream_codec())),
+        Fireworks::to_nbt,
+        Fireworks::from_nbt,
+    ));
     register_data_component_type(mk("profile", false, false, payload_codec!(ResolvableProfile, ResolvableProfile::stream_codec()))); // ResolvableProfile
     register_data_component_type(identifier_component("note_block_sound"));
     register_data_component_type(mk("banner_patterns", false, false, payload_codec!(BannerPatternLayers, BannerPatternLayers::stream_codec())));

@@ -3,6 +3,7 @@ mod chunk_stream;
 mod commands;
 mod gameplay;
 mod items;
+mod player_data;
 mod registries;
 mod session;
 mod wire;
@@ -10,9 +11,11 @@ mod world;
 
 use std::io;
 use std::net::{Ipv4Addr, TcpListener};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use player_data::PlayerStore;
 use session::{Server, MAX_PLAYERS};
 
 fn main() -> ExitCode {
@@ -24,20 +27,16 @@ fn main() -> ExitCode {
 }
 
 fn run() -> io::Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let port = match args.as_slice() {
-        [] => 25565,
-        [arg] if arg == "--help" || arg == "-h" => {
-            println!("leaf-native [--port PORT]\nLocal Minecraft Java 1.21.11 flat-world preview.");
-            return Ok(());
-        }
-        [flag, port] if flag == "--port" => port
-            .parse::<u16>()
-            .map_err(|_| io::Error::other("--port expects an integer between 0 and 65535"))?,
-        _ => return Err(io::Error::other("usage: leaf-native [--port PORT]")),
+    let (port, world) = match options()? {
+        Some(options) => options,
+        None => return Ok(()),
     };
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
-    let server = Arc::new(Server::new());
+    let server = Arc::new(Server::new(PlayerStore::open(&world)?));
+    println!(
+        "Player data directory: {}",
+        world.join("playerdata").display()
+    );
     println!(
         "Leaf native flat-world preview ready at {} (Java 1.21.11, offline login, up to {MAX_PLAYERS} sessions)",
         listener.local_addr()?,
@@ -65,6 +64,41 @@ fn run() -> io::Result<()> {
             })?;
     }
     Ok(())
+}
+
+fn options() -> io::Result<Option<(u16, PathBuf)>> {
+    let mut args = std::env::args_os().skip(1);
+    let mut port = 25565;
+    let mut world = PathBuf::from("native-world");
+    while let Some(flag) = args.next() {
+        match flag.to_str() {
+            Some("--port") => {
+                port = args
+                    .next()
+                    .and_then(|value| value.to_str()?.parse().ok())
+                    .ok_or_else(|| {
+                        io::Error::other("--port expects an integer between 0 and 65535")
+                    })?;
+            }
+            Some("--data-dir") => {
+                world = args
+                    .next()
+                    .filter(|value| !value.is_empty() && value != "--port" && value != "--help")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| io::Error::other("--data-dir expects a directory"))?;
+            }
+            Some("--help" | "-h") => {
+                println!("leaf-native [--port PORT] [--data-dir PATH]\nLocal Minecraft Java 1.21.11 flat-world preview.");
+                return Ok(None);
+            }
+            _ => {
+                return Err(io::Error::other(
+                    "usage: leaf-native [--port PORT] [--data-dir PATH]",
+                ))
+            }
+        }
+    }
+    Ok(Some((port, world)))
 }
 
 #[cfg(test)]

@@ -35,9 +35,9 @@ pub struct ChunkStream {
 }
 
 impl ChunkStream {
-    pub fn start(radius: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<Self> {
+    pub fn start(center: Chunk, radius: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<Self> {
         let mut stream = Self {
-            center: (0, 0),
+            center,
             radius,
             offsets: offsets(radius),
             loaded: HashSet::new(),
@@ -46,7 +46,10 @@ impl ChunkStream {
             batch_in_flight: false,
             next_batch: Instant::now(),
         };
-        wire.send(ids, &ClientboundSetChunkCacheCenterPacket::new(0, 0))?;
+        wire.send(
+            ids,
+            &ClientboundSetChunkCacheCenterPacket::new(center.0, center.1),
+        )?;
         stream.rebuild_queue(wire, ids)?;
         Ok(stream)
     }
