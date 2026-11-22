@@ -3,6 +3,7 @@ mod chunk_stream;
 mod commands;
 mod gameplay;
 mod items;
+mod peers;
 mod player_data;
 mod registries;
 mod session;

@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use leaf_core::command::brigadier::{CommandDispatcher, CommandExecutionError, CommandNode};
+use leaf_core::command::brigadier_argument::{ArgumentType, ArgumentValue};
 use leaf_core::commands::gamerule::{register_game_rule_command, GameRuleCommandSource};
 use leaf_core::commands::world::{
     register_world_commands, TimeChange, WeatherParameters, WorldCommandSource,
@@ -19,6 +20,7 @@ use leaf_core::random::{LegacyRandomSource, RandomSource};
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::flag::feature_flag_set::FeatureFlagSet;
+use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::level::gamerules::game_rules::{advance_time, advance_weather, block_drops};
 use leaf_core::world::level::gamerules::GameRules;
 
@@ -26,6 +28,11 @@ use crate::audience::Audience;
 use crate::wire::{PacketIds, Wire};
 
 const SEED: i64 = 0;
+
+pub enum PlayerCommand {
+    Kit,
+    SetMode(GameType),
+}
 
 pub struct Commands {
     pub dispatcher: CommandDispatcher<CommandWorld>,
@@ -44,7 +51,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /time, /weather, /difficulty, /seed, /gamerule, /kit",
+                            "/help, /time, /weather, /difficulty, /seed, /gamerule, /gamemode, /kit",
                         ),
                         false,
                     );
@@ -56,18 +63,40 @@ impl Commands {
             .add_node(
                 dispatcher.root(),
                 CommandNode::literal("kit").executes(|source: &mut CommandWorld, _| {
-                    source.kit = true;
+                    source.action = Some(PlayerCommand::Kit);
                     1
                 }),
             )
             .expect("register kit");
+        let mode = dispatcher
+            .add_node(dispatcher.root(), CommandNode::literal("gamemode"))
+            .expect("register gamemode");
+        dispatcher
+            .add_node(
+                mode,
+                CommandNode::argument("mode", ArgumentType::GameMode).executes(
+                    |source: &mut CommandWorld, context| {
+                        let Some(ArgumentValue::GameMode(mode)) = context.argument("mode") else {
+                            unreachable!("registered GameMode argument");
+                        };
+                        source.action = Some(PlayerCommand::SetMode(*mode));
+                        1
+                    },
+                ),
+            )
+            .expect("register gamemode argument");
         Self {
             dispatcher,
             world: std::sync::Mutex::new(CommandWorld::new(features)),
         }
     }
 
-    pub fn execute(&self, command: &str, audience: &Audience, player: Uuid) -> bool {
+    pub fn execute(
+        &self,
+        command: &str,
+        audience: &Audience,
+        player: Uuid,
+    ) -> Option<PlayerCommand> {
         let mut world = self.world.lock().unwrap();
         world.refresh(audience);
         let before = world.snapshot();
@@ -86,7 +115,7 @@ impl Commands {
         for (message, broadcast) in world.feedback.drain(..) {
             audience.chat(message, (!broadcast).then_some(player));
         }
-        std::mem::take(&mut world.kit)
+        world.action.take()
     }
 }
 
@@ -100,7 +129,7 @@ pub struct CommandWorld {
     expires: Option<i64>,
     difficulty: Difficulty,
     feedback: Vec<(Component, bool)>,
-    kit: bool,
+    action: Option<PlayerCommand>,
 }
 
 impl CommandWorld {
@@ -120,7 +149,7 @@ impl CommandWorld {
             expires: None,
             difficulty: Difficulty::Peaceful,
             feedback: vec![],
-            kit: false,
+            action: None,
         }
     }
 

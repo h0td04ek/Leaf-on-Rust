@@ -97,15 +97,16 @@ impl FlatWorld {
         (MIN_Y..MIN_Y + SECTIONS as i32 * 16).contains(&pos.y)
     }
 
-    pub fn change(&self, pos: BlockPos, state: i32, audience: &Audience) -> i32 {
+    pub fn change(&self, pos: BlockPos, state: i32, audience: &Audience) -> Option<i32> {
         let coord = chunk(pos);
         let mut world = self.edits.lock().unwrap();
         let original = base(pos);
-        let mut previous = world
+        let previous = world
             .get(&coord)
             .and_then(|edits| edits.get(&pos).copied())
             .unwrap_or(original);
-        if Self::editable(pos) && (previous == AIR) != (state == AIR) {
+        let changed = Self::editable(pos) && (previous == AIR) != (state == AIR);
+        if changed {
             let changes = world.entry(coord).or_default();
             if state == original {
                 changes.remove(&pos);
@@ -115,15 +116,13 @@ impl FlatWorld {
             if changes.is_empty() {
                 world.remove(&coord);
             }
-        } else if state != AIR {
-            previous = AIR; // No replacement occurred.
         }
         let current = world
             .get(&coord)
             .and_then(|edits| edits.get(&pos).copied())
             .unwrap_or(original);
         audience.broadcast(ClientboundBlockUpdatePacket::new(pos, current), Some(coord));
-        previous
+        changed.then_some(previous)
     }
 
     pub fn send_chunk(&self, x: i32, z: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {

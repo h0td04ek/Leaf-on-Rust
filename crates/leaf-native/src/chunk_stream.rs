@@ -54,6 +54,16 @@ impl ChunkStream {
         Ok(stream)
     }
 
+    pub fn restart(&mut self, center: Chunk, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
+        self.center = center;
+        self.loaded.clear();
+        wire.send(
+            ids,
+            &ClientboundSetChunkCacheCenterPacket::new(center.0, center.1),
+        )?;
+        self.rebuild_queue(wire, ids)
+    }
+
     pub fn loaded(&self) -> &HashSet<Chunk> {
         &self.loaded
     }

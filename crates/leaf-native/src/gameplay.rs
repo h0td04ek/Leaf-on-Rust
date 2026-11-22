@@ -3,13 +3,18 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use leaf_core::core::{block_pos::BlockPos, direction::Direction, holder::Holder};
-use leaf_core::entity::{pose::Pose, position_move_rotation::PositionMoveRotation};
+use leaf_core::entity::{
+    equipment_slot::EquipmentSlot, player::abilities::Abilities,
+    position_move_rotation::PositionMoveRotation,
+};
 use leaf_core::network::protocol::game::{
     clientbound_add_entity_packet::ClientboundAddEntityPacket,
     clientbound_block_changed_ack_packet::ClientboundBlockChangedAckPacket,
     clientbound_block_update_packet::ClientboundBlockUpdatePacket,
     clientbound_entity_event_packet::ClientboundEntityEventPacket,
     clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket,
+    clientbound_game_event_packet::{ClientboundGameEventPacket, CHANGE_GAME_MODE},
+    clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket,
     clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket,
     clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
     clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket,
@@ -20,14 +25,16 @@ use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::resources::Identifier;
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::item::{component::fireworks::Fireworks, item_stack::ItemStack};
+use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::audience::Audience;
 use crate::commands::Commands;
 use crate::items::{item_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY, ITEM_ENTITY};
+use crate::peers::{gliding_packet, View};
 use crate::player_data::PlayerData;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{FlatWorld, AIR};
+use crate::world::{FlatWorld, AIR, SPAWN_Y};
 
 const CHEST: usize = 38;
 const OFFHAND: usize = 40;
@@ -62,16 +69,77 @@ struct DropEntity {
 
 impl Gameplay {
     pub fn new(entity_id: i32, player: PlayerData) -> Self {
+        let creative_flying = player.mode == GameType::Spectator;
         Self {
             player,
             entity_id,
             on_ground: true,
-            creative_flying: false,
+            creative_flying,
             gliding: false,
             drops: vec![],
             rockets: vec![],
             last_tick: Instant::now(),
         }
+    }
+
+    pub fn view(&self) -> View {
+        let equipment = [
+            (EquipmentSlot::Mainhand, self.player.selection),
+            (EquipmentSlot::Offhand, OFFHAND),
+            (EquipmentSlot::Head, 39),
+            (EquipmentSlot::Chest, CHEST),
+            (EquipmentSlot::Legs, 37),
+            (EquipmentSlot::Feet, 36),
+        ]
+        .into_iter()
+        .map(|(slot, index)| (slot, self.player.inventory[index].clone()))
+        .collect();
+        View {
+            motion: PositionMoveRotation::new(
+                self.player.position,
+                Vec3::ZERO,
+                self.player.yaw,
+                self.player.pitch,
+            ),
+            on_ground: self.on_ground,
+            gliding: self.gliding,
+            equipment,
+            mode: self.player.mode,
+        }
+    }
+
+    pub fn abilities(&self) -> ClientboundPlayerAbilitiesPacket {
+        let mut abilities = Abilities::default();
+        self.player.mode.update_player_abilities(&mut abilities);
+        if self.player.mode.is_creative() {
+            abilities.flying = self.creative_flying;
+        }
+        ClientboundPlayerAbilitiesPacket::from_abilities(&abilities)
+    }
+
+    pub fn set_mode(&mut self, mode: GameType, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
+        self.player.mode = mode;
+        if !mode.is_creative() {
+            self.creative_flying = mode == GameType::Spectator;
+        }
+        if self.creative_flying {
+            self.set_gliding(false, wire, ids)?;
+        }
+        wire.send(
+            ids,
+            &ClientboundGameEventPacket::new(CHANGE_GAME_MODE, mode.get_id() as f32),
+        )?;
+        wire.send(ids, &self.abilities())
+    }
+
+    pub fn reset_after_death(&mut self) {
+        self.player.position = Vec3::new(0.5, f64::from(SPAWN_Y), 0.5);
+        self.player.yaw = 0.0;
+        self.player.pitch = 0.0;
+        self.player.health = 20.0;
+        self.on_ground = true;
+        self.creative_flying = self.player.mode == GameType::Spectator;
+        self.gliding = false;
     }
 
     pub fn movement(
@@ -120,6 +188,9 @@ impl Gameplay {
         wire: &mut Wire,
         ctx: &PlayContext<'_>,
     ) -> io::Result<()> {
+        if self.player.mode == GameType::Spectator && name != "player_abilities" {
+            return Ok(());
+        }
         match name {
             "set_carried_item" => {
                 let slot = i16::from_be_bytes(body.fixed()?);
@@ -128,7 +199,7 @@ impl Gameplay {
                     self.player.selection = slot as usize;
                 }
             }
-            "set_creative_mode_slot" => {
+            "set_creative_mode_slot" if self.player.mode.is_creative() => {
                 let slot = i16::from_be_bytes(body.fixed()?);
                 let stack = Items::vanilla().read_creative_stack(&mut body)?;
                 body.finish()?;
@@ -152,10 +223,16 @@ impl Gameplay {
                 body.finish()?;
                 match action {
                     0..=2 => {
-                        if action == 0 && self.in_reach(block) && FlatWorld::editable(block) {
+                        let break_action = if self.player.mode.is_creative() { 0 } else { 2 };
+                        if action == break_action
+                            && !self.player.mode.is_block_placing_restricted()
+                            && self.in_reach(block)
+                        {
                             let old = ctx.world.change(block, AIR, ctx.audience);
                             if ctx.commands.world.lock().unwrap().drops_enabled() {
-                                if let Some(item) = Items::vanilla().block_drop(old) {
+                                if let Some(item) =
+                                    old.and_then(|state| Items::vanilla().block_drop(state))
+                                {
                                     let pos = Vec3::new(
                                         f64::from(block.x) + 0.5,
                                         f64::from(block.y) + 0.35,
@@ -207,7 +284,9 @@ impl Gameplay {
                 }
             }
             "player_abilities" => {
-                self.creative_flying = body.fixed::<1>()?[0] & 2 != 0;
+                let flying = body.fixed::<1>()?[0] & 2 != 0;
+                self.creative_flying = self.player.mode == GameType::Spectator
+                    || self.player.mode.is_creative() && flying;
                 body.finish()?;
                 if self.creative_flying && self.gliding {
                     self.set_gliding(false, wire, ctx.ids)?;
@@ -246,9 +325,15 @@ impl Gameplay {
                         );
                         if placed != feet
                             && placed != feet.offset(0, 1, 0)
+                            && !self.player.mode.is_block_placing_restricted()
                             && ctx.world.block(pos) != AIR
                         {
-                            ctx.world.change(placed, state, ctx.audience);
+                            if ctx.world.change(placed, state, ctx.audience).is_some()
+                                && !self.player.mode.is_creative()
+                            {
+                                self.player.inventory[slot].shrink(1);
+                                self.sync_slot(slot, wire, ctx.ids)?;
+                            }
                         } else {
                             wire.send(
                                 ctx.ids,
@@ -304,24 +389,7 @@ impl Gameplay {
             return Ok(());
         }
         self.gliding = gliding;
-        wire.send(
-            ids,
-            &ClientboundSetEntityDataPacket::new(
-                self.entity_id,
-                vec![
-                    data(0, 0, if gliding { -128_i8 } else { 0_i8 }),
-                    data(
-                        6,
-                        20,
-                        if gliding {
-                            Pose::FallFlying
-                        } else {
-                            Pose::Standing
-                        },
-                    ),
-                ],
-            ),
-        )
+        wire.send(ids, &gliding_packet(self.entity_id, gliding))
     }
 
     fn hand_slot(&self, hand: usize) -> usize {
@@ -356,6 +424,10 @@ impl Gameplay {
                 let lifetime =
                     Duration::from_millis(u64::try_from(10 * (1 + duration)).unwrap_or(20) * 50);
                 self.rockets.push((entity, Instant::now() + lifetime));
+                if !self.player.mode.is_creative() {
+                    self.player.inventory[slot].shrink(1);
+                    self.sync_slot(slot, wire, ctx.ids)?;
+                }
             }
             _ => {}
         }

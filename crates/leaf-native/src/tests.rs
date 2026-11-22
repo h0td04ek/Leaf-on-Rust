@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -33,6 +34,10 @@ impl Drop for TestWorld {
 
 fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
     let store = PlayerStore::open(&world.0).unwrap();
+    connect_server(Arc::new(Server::new(store)))
+}
+
+fn connect_server(server: Arc<Server>) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     client
@@ -40,7 +45,7 @@ fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>)
         .unwrap();
     let worker = thread::spawn(move || {
         let (stream, _) = listener.accept()?;
-        Server::new(store).handle(stream)
+        server.handle(stream)
     });
     (client, worker)
 }
@@ -546,4 +551,125 @@ fn send_location(client: &mut TcpStream, position: Vec3, yaw: f32, pitch: f32) {
             .write_float(pitch)
             .write_byte(0);
     });
+}
+
+#[test]
+fn players_see_each_other_and_can_fight_respawn_and_leave() {
+    let world = TestWorld::new();
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()));
+    let (mut alice, alice_worker) = connect_server(Arc::clone(&server));
+    let alice_id = enter_play(&mut alice, "Alice", 2);
+    acknowledge_teleport(&mut alice);
+
+    let (mut bob, bob_worker) = connect_server(Arc::clone(&server));
+    let bob_id = enter_play(&mut bob, "Bob", 2);
+    acknowledge_teleport(&mut bob);
+    assert_eq!(peer_entity(&mut alice, "Bob"), bob_id);
+    assert_eq!(peer_entity(&mut bob, "Alice"), alice_id);
+
+    // Keep both players close but at different positions.
+    send_location(&mut bob, Vec3::new(0.5, 16.0, 2.5), 180.0, 0.0);
+    let mut movement = multiplayer_packet(&mut alice, 35);
+    assert_eq!(movement.read_var_int(), bob_id);
+    assert_eq!(
+        PositionMoveRotation::read(&mut movement).position,
+        Vec3::new(0.5, 16.0, 2.5)
+    );
+
+    // The defender opts into PvP. Creative is the normal starting mode.
+    send(&mut bob, 6, |buf| {
+        buf.write_utf("gamemode survival").unwrap();
+    });
+    let mut mode = multiplayer_packet(&mut bob, 38);
+    assert_eq!(mode.read_unsigned_byte(), 3); // CHANGE_GAME_MODE
+    assert_eq!(mode.read_float(), 0.0); // SURVIVAL
+
+    // Alice equips the sword and Bob receives the equipment update.
+    send(&mut alice, 55, |buf| {
+        buf.write_short(36)
+            .write_var_int(1)
+            .write_var_int(941)
+            .write_var_int(0)
+            .write_var_int(0);
+    });
+    let mut saw_sword = false;
+    for _ in 0..3 {
+        use leaf_core::network::protocol::game::clientbound_set_equipment_packet::ClientboundSetEquipmentPacket;
+        let mut data = multiplayer_packet(&mut bob, 100);
+        let equipment = ClientboundSetEquipmentPacket::stream_codec().decode(&mut data);
+        if equipment.entity == alice_id
+            && equipment.slots.iter().any(|(_, item)| {
+                item.item_identifier() == Some(Identifier::minecraft("netherite_sword"))
+            })
+        {
+            saw_sword = true;
+            break;
+        }
+    }
+    assert!(saw_sword, "the receiver should see the equipped sword");
+
+    for expected in [12.0, 4.0, 0.0] {
+        send(&mut alice, 25, |buf| {
+            buf.write_var_int(bob_id).write_var_int(1).write_bool(false);
+        });
+        assert_eq!(multiplayer_packet(&mut bob, 102).read_float(), expected);
+        if expected > 0.0 {
+            assert_eq!(multiplayer_packet(&mut bob, 99).read_var_int(), bob_id);
+            thread::sleep(Duration::from_millis(525));
+        }
+    }
+    assert_eq!(multiplayer_packet(&mut bob, 66).read_var_int(), bob_id);
+
+    send(&mut bob, 11, |buf| {
+        buf.write_var_int(0);
+    });
+    multiplayer_packet(&mut bob, 80);
+    assert_eq!(multiplayer_packet(&mut bob, 102).read_float(), 20.0);
+    let mut teleport = multiplayer_packet(&mut bob, 70);
+    let teleport_id = teleport.read_var_int();
+    assert_eq!(
+        PositionMoveRotation::read(&mut teleport).position,
+        Vec3::new(0.5, 16.0, 0.5)
+    );
+    send(&mut bob, 0, |buf| {
+        buf.write_var_int(teleport_id);
+    });
+
+    drop(bob);
+    assert!(bob_worker.join().unwrap().is_err());
+    let mut removed = multiplayer_packet(&mut alice, 67);
+    assert_eq!(removed.read_var_int(), 1);
+    assert_eq!(removed.read_uuid(), Uuid::create_offline_player_uuid("Bob"));
+    drop(alice);
+    assert!(alice_worker.join().unwrap().is_err());
+}
+
+fn acknowledge_teleport(client: &mut TcpStream) {
+    let teleport_id = multiplayer_packet(client, 70).read_var_int();
+    send(client, 0, |buf| {
+        buf.write_var_int(teleport_id);
+    });
+}
+
+fn peer_entity(client: &mut TcpStream, name: &str) -> i32 {
+    let mut entity = multiplayer_packet(client, 1);
+    let id = entity.read_var_int();
+    assert_eq!(entity.read_uuid(), Uuid::create_offline_player_uuid(name));
+    assert_eq!(entity.read_var_int(), 155);
+    id
+}
+
+fn multiplayer_packet(stream: &mut TcpStream, expected: i32) -> FriendlyByteBuf {
+    for _ in 0..128 {
+        let (id, payload) = receive(stream);
+        if id == 11 {
+            send(stream, 10, |buf| {
+                buf.write_float(64.0);
+            });
+        }
+        if id == expected {
+            return payload;
+        }
+    }
+    panic!("expected multiplayer packet {expected}");
 }

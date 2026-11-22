@@ -23,11 +23,14 @@ use leaf_core::network::protocol::configuration::{
 use leaf_core::network::protocol::game::{
     clientbound_commands_packet::ClientboundCommandsPacket,
     clientbound_game_event_packet::{ClientboundGameEventPacket, LEVEL_CHUNKS_LOAD_START},
+    clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket,
     clientbound_login_packet::ClientboundLoginPacket,
-    clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket,
+    clientbound_player_combat_kill_packet::ClientboundPlayerCombatKillPacket,
     clientbound_player_info_update_packet::{ClientboundPlayerInfoUpdatePacket, PlayerInfoEntry},
     clientbound_player_position_packet::ClientboundPlayerPositionPacket,
+    clientbound_respawn_packet::{ClientboundRespawnPacket, KEEP_ALL_DATA},
     clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket,
+    clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket,
     clientbound_set_health_packet::ClientboundSetHealthPacket,
     common_player_spawn_info::CommonPlayerSpawnInfo,
     game_protocols,
@@ -54,9 +57,10 @@ use crate::audience::Audience;
 use crate::chunk_stream::{
     client_view_distance, ChunkStream, MAX_VIEW_DISTANCE, SIMULATION_DISTANCE,
 };
-use crate::commands::Commands;
+use crate::commands::{Commands, PlayerCommand};
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
+use crate::peers::{PeerTracker, Peers, Presence};
 use crate::player_data::PlayerStore;
 use crate::registries::Registries;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
@@ -82,6 +86,7 @@ pub struct Server {
     player_data: PlayerStore,
     commands: Commands,
     audience: Audience,
+    peers: Peers,
     flat_world: FlatWorld,
     sockets: AtomicUsize,
     players: Mutex<HashSet<Uuid>>,
@@ -108,6 +113,7 @@ impl Server {
             player_data,
             commands: Commands::new(),
             audience: Audience::default(),
+            peers: Peers::default(),
             sockets: AtomicUsize::new(0),
             players: Mutex::new(HashSet::new()),
             online: AtomicUsize::new(0),
@@ -220,6 +226,9 @@ impl Server {
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
 
+        let presence = self
+            .peers
+            .join(entity, profile.clone(), game.view(), game.player.health);
         let mut saved = Vec::new();
         let result = self.play(
             wire,
@@ -227,8 +236,10 @@ impl Server {
             &mut game,
             view_distance,
             &subscription,
+            &presence,
             &mut saved,
         );
+        game.player.health = presence.leave();
         if let Err(error) = self.player_data.save(uuid, &game.player, &mut saved) {
             eprintln!("Could not save player {uuid} on disconnect: {error}");
         }
@@ -307,7 +318,7 @@ impl Server {
     ) -> io::Result<()> {
         let ids = &self.play_out;
         let dimension = LevelKey::overworld();
-        let mode = GameType::Creative;
+        let mode = game.player.mode;
         wire.send(
             ids,
             &ClientboundLoginPacket::new(
@@ -320,18 +331,7 @@ impl Server {
                 false,
                 true,
                 false,
-                CommonPlayerSpawnInfo {
-                    dimension_type: Holder::Reference(self.registries.overworld_id),
-                    dimension,
-                    seed: 0,
-                    game_type: mode,
-                    previous_game_type: None,
-                    is_debug: false,
-                    is_flat: true,
-                    last_death_location: None,
-                    portal_cooldown: 0,
-                    sea_level: SPAWN_Y - 1,
-                },
+                self.spawn_info(mode),
                 false,
             ),
         )?;
@@ -343,17 +343,7 @@ impl Server {
                 &ClientboundCommandsPacket::from_dispatcher(&self.commands.dispatcher, &world),
             )?;
         }
-        wire.send(
-            ids,
-            &ClientboundPlayerAbilitiesPacket {
-                invulnerable: true,
-                is_flying: false,
-                can_fly: true,
-                instabuild: true,
-                flying_speed: 0.05,
-                walking_speed: 0.1,
-            },
-        )?;
+        wire.send(ids, &game.abilities())?;
         let mut entry = PlayerInfoEntry::new_minimal(profile.id, true);
         entry.profile = Some(profile);
         entry.game_mode = mode;
@@ -370,12 +360,44 @@ impl Server {
                 0.0,
             )),
         )?;
-        wire.send(ids, &ClientboundSetHealthPacket::new(20.0, 20, 5.0))?;
-        game.sync_inventory(wire, ids)?;
         wire.send(
             ids,
+            &ClientboundSetHealthPacket::new(game.player.health, 20, 5.0),
+        )?;
+        game.sync_inventory(wire, ids)?;
+        self.teleport(wire, game, TELEPORT_ID)?;
+        if game.player.health == 0.0 {
+            wire.send(
+                ids,
+                &ClientboundPlayerCombatKillPacket::new(entity, Component::literal("You died")),
+            )?;
+        }
+        wire.send(
+            ids,
+            &ClientboundGameEventPacket::new(LEVEL_CHUNKS_LOAD_START, 0.0),
+        )
+    }
+
+    fn spawn_info(&self, mode: GameType) -> CommonPlayerSpawnInfo {
+        CommonPlayerSpawnInfo {
+            dimension_type: Holder::Reference(self.registries.overworld_id),
+            dimension: LevelKey::overworld(),
+            seed: 0,
+            game_type: mode,
+            previous_game_type: None,
+            is_debug: false,
+            is_flat: true,
+            last_death_location: None,
+            portal_cooldown: 0,
+            sea_level: SPAWN_Y - 1,
+        }
+    }
+
+    fn teleport(&self, wire: &mut Wire, game: &Gameplay, id: i32) -> io::Result<()> {
+        wire.send(
+            &self.play_out,
             &ClientboundPlayerPositionPacket::of(
-                TELEPORT_ID,
+                id,
                 PositionMoveRotation::new(
                     game.player.position,
                     Vec3::ZERO,
@@ -384,10 +406,6 @@ impl Server {
                 ),
                 Default::default(),
             ),
-        )?;
-        wire.send(
-            ids,
-            &ClientboundGameEventPacket::new(LEVEL_CHUNKS_LOAD_START, 0.0),
         )
     }
 
@@ -398,6 +416,7 @@ impl Server {
         game: &mut Gameplay,
         view_distance: i32,
         subscription: &crate::audience::Subscription,
+        presence: &Presence<'_>,
         saved: &mut Vec<u8>,
     ) -> io::Result<()> {
         let name = &profile.name;
@@ -416,11 +435,38 @@ impl Server {
         let mut outstanding = None;
         let mut ping_id = 0i64;
         let mut confirmed = false;
+        let mut teleport_id = TELEPORT_ID;
+        let mut tracker = PeerTracker::default();
+        let mut next_peer_update = Instant::now();
         let mut player_loaded = false;
         let mut next_world_refresh = Instant::now();
         let mut next_save = Instant::now() + PLAYER_SAVE_INTERVAL;
         loop {
             let now = Instant::now();
+            if let Some(hit) = presence.take_hit() {
+                game.player.health = hit.health;
+                wire.send(
+                    &self.play_out,
+                    &ClientboundSetHealthPacket::new(hit.health, 20, 5.0),
+                )?;
+                wire.send(
+                    &self.play_out,
+                    &ClientboundHurtAnimationPacket::new(presence.id, 0.0),
+                )?;
+                if hit.health == 0.0 {
+                    let death = Component::literal(format!("{name} was slain by {}", hit.killer));
+                    wire.send(
+                        &self.play_out,
+                        &ClientboundPlayerCombatKillPacket::new(presence.id, death.clone()),
+                    )?;
+                    self.audience.chat(death, None);
+                } else {
+                    wire.send(
+                        &self.play_out,
+                        &ClientboundSetEntityMotionPacket::new(presence.id, hit.velocity),
+                    )?;
+                }
+            }
             if now >= next_save {
                 if let Err(error) = self.player_data.save(uuid, &game.player, saved) {
                     eprintln!("Could not autosave player {uuid}: {error}");
@@ -434,6 +480,11 @@ impl Server {
             subscription.flush(wire, &self.play_out, chunks.loaded())?;
             game.tick(wire, &context)?;
             chunks.send_next(&self.flat_world, wire, &self.play_out)?;
+            if now >= next_peer_update {
+                presence.publish(game.view());
+                tracker.sync(presence, chunks.loaded(), wire, &self.play_out)?;
+                next_peer_update = now + Duration::from_millis(50);
+            }
             let elapsed = last_ping.elapsed();
             if outstanding.is_some() && elapsed >= KEEPALIVE_TIMEOUT {
                 return Err(io::Error::other("keepalive timed out"));
@@ -467,7 +518,7 @@ impl Server {
                     chunks.resize(client_view_distance(body)?, wire, &self.play_out)?;
                 }
                 "accept_teleportation" => {
-                    confirmed = body.varint()? == TELEPORT_ID;
+                    confirmed = body.varint()? == teleport_id;
                     body.finish()?;
                 }
                 "chat" => {
@@ -487,12 +538,28 @@ impl Server {
                 }
                 "chat_command" | "chat_command_signed" => {
                     let command = body.string(256)?;
-                    if self.commands.execute(command.trim(), &self.audience, uuid) {
-                        game.kit(wire, &context)?;
-                        self.audience.chat(
-                            Component::literal("Flight kit: elytra and firework rockets"),
-                            Some(uuid),
-                        );
+                    if game.player.health > 0.0 {
+                        match self.commands.execute(command.trim(), &self.audience, uuid) {
+                            Some(PlayerCommand::Kit) => {
+                                game.kit(wire, &context)?;
+                                self.audience.chat(
+                                    Component::literal("Flight kit: elytra and firework rockets"),
+                                    Some(uuid),
+                                );
+                            }
+                            Some(PlayerCommand::SetMode(mode)) => {
+                                game.set_mode(mode, wire, &self.play_out)?;
+                                self.audience.chat(
+                                    Component::literal(format!(
+                                        "Game mode set to {}",
+                                        mode.get_name()
+                                    )),
+                                    Some(uuid),
+                                );
+                            }
+                            None => {}
+                        }
+                        presence.publish(game.view());
                     }
                 }
                 "command_suggestion" => {
@@ -506,6 +573,52 @@ impl Server {
                     );
                     wire.send(&self.play_out, &reply)?;
                 }
+                "client_command" => {
+                    let action = body.varint()?;
+                    body.finish()?;
+                    if action == 0 && presence.health() == 0.0 {
+                        game.reset_after_death();
+                        presence.respawn(game.view());
+                        confirmed = false;
+                        teleport_id = teleport_id.wrapping_add(1);
+                        let ids = &self.play_out;
+                        wire.send(
+                            ids,
+                            &ClientboundRespawnPacket::new(
+                                self.spawn_info(game.player.mode),
+                                KEEP_ALL_DATA,
+                            ),
+                        )?;
+                        wire.send(ids, &game.abilities())?;
+                        wire.send(
+                            ids,
+                            &ClientboundSetHealthPacket::new(game.player.health, 20, 5.0),
+                        )?;
+                        game.sync_inventory(wire, ids)?;
+                        self.teleport(wire, game, teleport_id)?;
+                        wire.send(
+                            ids,
+                            &ClientboundGameEventPacket::new(LEVEL_CHUNKS_LOAD_START, 0.0),
+                        )?;
+                        tracker.reset_entities(wire, ids)?;
+                        chunks.restart(game.player.chunk(), wire, ids)?;
+                    }
+                }
+                "interact" if confirmed && game.player.health > 0.0 => {
+                    let target = body.varint()?;
+                    if body.varint()? == 1 {
+                        body.fixed::<1>()?;
+                        body.finish()?;
+                        if tracker.sees(target) {
+                            presence.attack(target, &self.flat_world);
+                        }
+                    }
+                }
+                "swing" if confirmed && game.player.health > 0.0 => {
+                    let hand = body.count(1)?;
+                    body.finish()?;
+                    presence.swing(if hand == 0 { 0 } else { 3 });
+                }
                 "player_loaded" if !player_loaded => {
                     body.finish()?;
                     player_loaded = true;
@@ -515,13 +628,17 @@ impl Server {
                 | "move_player_pos_rot"
                 | "move_player_rot"
                 | "move_player_status_only")
-                    if confirmed =>
+                    if confirmed && game.player.health > 0.0 =>
                 {
                     game.movement(kind, body, wire, &self.play_out)?;
+                    presence.publish(game.view());
                     let next = game.player.chunk();
                     chunks.move_to(next, wire, &self.play_out)?;
                 }
-                kind if confirmed => game.handle(kind, body, wire, &context)?,
+                kind if confirmed && game.player.health > 0.0 => {
+                    game.handle(kind, body, wire, &context)?;
+                    presence.publish(game.view());
+                }
                 _ => {}
             }
         }

@@ -6,6 +6,7 @@ use leaf_core::nbt::{self, CompoundTag, Tag};
 use leaf_core::util::directory_lock::DirectoryLock;
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::item::item_stack::ItemStack;
+use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::items::item_id;
@@ -20,6 +21,8 @@ pub struct PlayerData {
     pub position: Vec3,
     pub inventory: [ItemStack; INVENTORY_SLOTS],
     pub selection: usize,
+    pub mode: GameType,
+    pub health: f32,
     pub yaw: f32,
     pub pitch: f32,
 }
@@ -30,6 +33,8 @@ impl Default for PlayerData {
             position: Vec3::new(0.5, f64::from(SPAWN_Y), 0.5),
             inventory: std::array::from_fn(|_| ItemStack::empty()),
             selection: 0,
+            mode: GameType::Creative,
+            health: 20.0,
             yaw: 0.0,
             pitch: 0.0,
         }
@@ -75,6 +80,17 @@ impl PlayerData {
             .filter(|value| (0..9).contains(value))
             .ok_or_else(|| invalid("invalid saved hotbar slot"))? as usize;
 
+        let mode = match tag.get("GameMode") {
+            None => GameType::Creative,
+            Some(Tag::Int(value)) if (0..=3).contains(value) => GameType::by_id(*value),
+            Some(_) => return Err(invalid("invalid saved game mode")),
+        };
+        let health = match tag.get("Health") {
+            None => 20.0,
+            Some(Tag::Float(value)) if (0.0..=20.0).contains(value) => *value,
+            Some(_) => return Err(invalid("invalid saved health")),
+        };
+
         let mut inventory = std::array::from_fn(|_| ItemStack::empty());
         let entries = tag
             .get("Inventory")
@@ -104,6 +120,8 @@ impl PlayerData {
             position,
             inventory,
             selection,
+            mode,
+            health,
             yaw: *yaw,
             pitch: *pitch,
         })
@@ -125,6 +143,8 @@ impl PlayerData {
             Tag::List(vec![Tag::Float(self.yaw), Tag::Float(self.pitch)]),
         );
         tag.put_int("SelectedItemSlot", self.selection as i32);
+        tag.put_int("GameMode", self.mode.get_id());
+        tag.put_float("Health", self.health);
         let mut inventory = Vec::new();
         for (index, item) in self.inventory.iter().enumerate() {
             if item.is_empty() {
