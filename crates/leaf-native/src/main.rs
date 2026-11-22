@@ -1,3 +1,7 @@
+mod audience;
+mod commands;
+mod gameplay;
+mod items;
 mod registries;
 mod session;
 mod wire;

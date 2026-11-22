@@ -21,7 +21,7 @@ use leaf_core::network::protocol::configuration::{
     configuration_protocols, ClientboundSelectKnownPacks,
 };
 use leaf_core::network::protocol::game::{
-    clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket,
+    clientbound_commands_packet::ClientboundCommandsPacket,
     clientbound_game_event_packet::{ClientboundGameEventPacket, LEVEL_CHUNKS_LOAD_START},
     clientbound_login_packet::ClientboundLoginPacket,
     clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket,
@@ -29,9 +29,9 @@ use leaf_core::network::protocol::game::{
     clientbound_player_position_packet::ClientboundPlayerPositionPacket,
     clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket,
     clientbound_set_health_packet::ClientboundSetHealthPacket,
-    clientbound_set_time_packet::ClientboundSetTimePacket,
     common_player_spawn_info::CommonPlayerSpawnInfo,
     game_protocols,
+    serverbound_command_suggestion_packet::ServerboundCommandSuggestionPacket,
 };
 use leaf_core::network::protocol::handshake::handshake_protocols;
 use leaf_core::network::protocol::login::{
@@ -47,10 +47,13 @@ use leaf_core::network::protocol::status::{
 use leaf_core::resources::Identifier;
 use leaf_core::server::packs::repository::KnownPack;
 use leaf_core::util::uuid::Uuid;
-use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::level::{game_type::GameType, LevelKey, RespawnData};
 use leaf_core::world::phys::vec3::Vec3;
 
+use crate::audience::Audience;
+use crate::commands::Commands;
+use crate::gameplay::{Gameplay, PlayContext};
+use crate::items::Items;
 use crate::registries::Registries;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, RADIUS, SPAWN_Y};
@@ -71,6 +74,8 @@ pub struct Server {
     play_in: PacketIds,
     play_out: PacketIds,
     registries: Registries,
+    commands: Commands,
+    audience: Audience,
     flat_world: FlatWorld,
     sockets: AtomicUsize,
     players: Mutex<HashSet<Uuid>>,
@@ -80,6 +85,7 @@ pub struct Server {
 
 impl Server {
     pub fn new() -> Self {
+        Items::vanilla();
         let registries = Registries::load();
         Self {
             handshake: PacketIds::from_protocol(handshake_protocols::serverbound()),
@@ -93,6 +99,8 @@ impl Server {
             play_out: PacketIds::from_protocol(game_protocols::clientbound_template().bind()),
             flat_world: FlatWorld::new(registries.plains_id),
             registries,
+            commands: Commands::new(),
+            audience: Audience::default(),
             sockets: AtomicUsize::new(0),
             players: Mutex::new(HashSet::new()),
             online: AtomicUsize::new(0),
@@ -190,10 +198,12 @@ impl Server {
             return Ok(());
         }
 
-        self.spawn(wire, GameProfile::new(uuid, &name))?;
+        let entity = self.next_entity.fetch_add(1, Ordering::Relaxed);
+        let subscription = self.audience.subscribe(uuid);
+        self.spawn(wire, GameProfile::new(uuid, &name), entity)?;
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
-        self.play(wire, &name)
+        self.play(wire, &name, uuid, entity, &subscription)
     }
 
     fn login_disconnect(&self, wire: &mut Wire, reason: &str) -> io::Result<()> {
@@ -250,14 +260,14 @@ impl Server {
         Err(invalid("too many packets during configuration"))
     }
 
-    fn spawn(&self, wire: &mut Wire, profile: GameProfile) -> io::Result<()> {
+    fn spawn(&self, wire: &mut Wire, profile: GameProfile, entity: i32) -> io::Result<()> {
         let ids = &self.play_out;
         let dimension = LevelKey::overworld();
         let mode = GameType::Creative;
         wire.send(
             ids,
             &ClientboundLoginPacket::new(
-                self.next_entity.fetch_add(1, Ordering::Relaxed),
+                entity,
                 false,
                 [dimension.clone()].into_iter().collect(),
                 MAX_PLAYERS as i32,
@@ -281,10 +291,14 @@ impl Server {
                 false,
             ),
         )?;
-        wire.send(
-            ids,
-            &ClientboundChangeDifficultyPacket::new(Difficulty::Peaceful, false),
-        )?;
+        {
+            let world = self.commands.world.lock().unwrap();
+            world.snapshot().send(wire, ids)?;
+            wire.send(
+                ids,
+                &ClientboundCommandsPacket::from_dispatcher(&self.commands.dispatcher, &world),
+            )?;
+        }
         wire.send(
             ids,
             &ClientboundPlayerAbilitiesPacket {
@@ -313,7 +327,6 @@ impl Server {
             )),
         )?;
         wire.send(ids, &ClientboundSetHealthPacket::new(20.0, 20, 5.0))?;
-        wire.send(ids, &ClientboundSetTimePacket::new(0, 6000, false))?;
         wire.send(
             ids,
             &ClientboundPlayerPositionPacket::of(
@@ -333,7 +346,22 @@ impl Server {
         )
     }
 
-    fn play(&self, wire: &mut Wire, name: &str) -> io::Result<()> {
+    fn play(
+        &self,
+        wire: &mut Wire,
+        name: &str,
+        uuid: Uuid,
+        entity: i32,
+        subscription: &crate::audience::Subscription,
+    ) -> io::Result<()> {
+        let context = PlayContext {
+            world: &self.flat_world,
+            ids: &self.play_out,
+            audience: &self.audience,
+            commands: &self.commands,
+            entity_ids: &self.next_entity,
+        };
+        let mut game = Gameplay::new(entity);
         let mut center = (0, 0);
         let mut loaded = HashSet::new();
         self.flat_world
@@ -344,7 +372,14 @@ impl Server {
         let mut ping_id = 0i64;
         let mut confirmed = false;
         let mut player_loaded = false;
+        let mut next_world_refresh = Instant::now();
         loop {
+            if Instant::now() >= next_world_refresh {
+                self.commands.world.lock().unwrap().refresh(&self.audience);
+                next_world_refresh = Instant::now() + Duration::from_secs(1);
+            }
+            subscription.flush(wire, &self.play_out, &loaded)?;
+            game.tick(wire, &context)?;
             let elapsed = last_ping.elapsed();
             if outstanding.is_some() && elapsed >= KEEPALIVE_TIMEOUT {
                 return Err(io::Error::other("keepalive timed out"));
@@ -373,28 +408,65 @@ impl Server {
                     confirmed = body.varint()? == TELEPORT_ID;
                     body.finish()?;
                 }
+                "chat" => {
+                    let message = body.string(256)?;
+                    let _timestamp_and_salt = body.fixed::<16>()?;
+                    if body.fixed::<1>()?[0] != 0 {
+                        body.fixed::<256>()?;
+                    }
+                    body.varint()?;
+                    body.fixed::<4>()?;
+                    body.finish()?;
+                    let message = message.trim();
+                    if !message.is_empty() && !message.chars().any(char::is_control) {
+                        self.audience
+                            .chat(Component::literal(format!("<{name}> {message}")), None);
+                    }
+                }
+                "chat_command" | "chat_command_signed" => {
+                    let command = body.string(256)?;
+                    if self.commands.execute(command.trim(), &self.audience, uuid) {
+                        game.kit(wire, &context)?;
+                        self.audience.chat(
+                            Component::literal("Flight kit: elytra and firework rockets"),
+                            Some(uuid),
+                        );
+                    }
+                }
+                "command_suggestion" => {
+                    let transaction = body.varint()?;
+                    let command = body.string(2048)?;
+                    body.finish()?;
+                    let request = ServerboundCommandSuggestionPacket::new(transaction, command);
+                    let reply = request.reply(
+                        &self.commands.dispatcher,
+                        &self.commands.world.lock().unwrap(),
+                    );
+                    wire.send(&self.play_out, &reply)?;
+                }
                 "player_loaded" if !player_loaded => {
                     body.finish()?;
                     player_loaded = true;
                     println!("{name} loaded the flat world");
                 }
-                "move_player_pos" | "move_player_pos_rot" if confirmed => {
-                    let x = f64::from_be_bytes(body.fixed()?);
-                    let y = f64::from_be_bytes(body.fixed()?);
-                    let z = f64::from_be_bytes(body.fixed()?);
-                    if ![x, y, z]
-                        .iter()
-                        .all(|value| value.is_finite() && value.abs() <= 30_000_000.0)
-                    {
-                        return Err(invalid("invalid player position"));
-                    }
-                    let next = (x.floor() as i32 >> 4, z.floor() as i32 >> 4);
+                kind @ ("move_player_pos"
+                | "move_player_pos_rot"
+                | "move_player_rot"
+                | "move_player_status_only")
+                    if confirmed =>
+                {
+                    game.movement(kind, body, wire, &self.play_out)?;
+                    let next = (
+                        game.position.x.floor() as i32 >> 4,
+                        game.position.z.floor() as i32 >> 4,
+                    );
                     if next != center {
                         self.flat_world
                             .update(wire, &self.play_out, next, &mut loaded)?;
                         center = next;
                     }
                 }
+                kind if confirmed => game.handle(kind, body, wire, &context)?,
                 _ => {}
             }
         }

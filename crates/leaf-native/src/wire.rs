@@ -78,7 +78,7 @@ impl Wire {
         Ok(body)
     }
 
-    pub fn send(&mut self, ids: &PacketIds, packet: &impl Packet) -> io::Result<()> {
+    pub fn send(&mut self, ids: &PacketIds, packet: &(impl Packet + ?Sized)) -> io::Result<()> {
         let kind = packet.packet_type();
         let mut body = FriendlyByteBuf::new();
         body.write_var_int(ids.id(kind.id.get_path())?);
@@ -93,7 +93,7 @@ impl Wire {
     pub fn play_timeout(&mut self) -> io::Result<()> {
         self.stream
             .get_ref()
-            .set_read_timeout(Some(Duration::from_millis(250)))
+            .set_read_timeout(Some(Duration::from_millis(50)))
     }
 
     pub fn ready(&mut self) -> io::Result<bool> {
@@ -138,6 +138,23 @@ impl Cursor {
 
     pub fn varint(&mut self) -> io::Result<i32> {
         read_varint(&mut self.0, 5)
+    }
+
+    pub fn count(&mut self, max: usize) -> io::Result<usize> {
+        let value = self.varint()?;
+        if value < 0 || value as usize > max {
+            return Err(invalid("invalid collection size"));
+        }
+        Ok(value as usize)
+    }
+
+    pub fn subcursor(&mut self, len: usize) -> io::Result<Cursor> {
+        if len > self.remaining() {
+            return Err(invalid("truncated packet field"));
+        }
+        let mut bytes = vec![0; len];
+        self.0.read_exact(&mut bytes)?;
+        Ok(Cursor::new(bytes))
     }
 
     pub fn string(&mut self, max: usize) -> io::Result<String> {
