@@ -269,6 +269,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "leaf-native"
+version = "0.1.0"
+dependencies = [
+ "leaf-core",
+]
+
+[[package]]
 name = "leaf-runner"
 version = "0.1.0"
 

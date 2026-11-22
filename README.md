@@ -6,13 +6,14 @@
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-green?style=for-the-badge)](https://www.minecraft.net)
 [![JVM](https://img.shields.io/badge/runtime-JVM%2025%20on%20Rust-orange?style=for-the-badge)](https://github.com/levin1337/java-25-on-rust)
 
-Проект в разработке. `leaf-core` содержит Rust-компоненты ядра. `leaf-runner` запускает Java-сборку Leaf на [java-25-on-rust](https://github.com/levin1337/java-25-on-rust). Подключение Rust-компонентов к игровому циклу остаётся отдельной задачей.
+Проект в разработке. `leaf-core` содержит Rust-компоненты ядра. `leaf-runner` запускает Java-сборку Leaf на [java-25-on-rust](https://github.com/levin1337/java-25-on-rust). `leaf-native` запускает локальный тестовый мир из Rust. Полный игровой цикл Leaf переносится отдельно.
 
 ## Структура репозитория
 
 | Путь | Содержимое |
 |---|---|
 | [`crates/leaf-core`](crates/leaf-core) | Rust-порт серверных компонентов |
+| [`crates/leaf-native`](crates/leaf-native) | Локальный Rust-сервер с тестовым плоским миром |
 | [`crates/leaf-runner`](crates/leaf-runner) | Лаунчер Java-сборки Leaf для `jvm25-rust` |
 | [`Cargo.toml`](Cargo.toml) и [`Cargo.lock`](Cargo.lock) | Rust workspace и зафиксированные зависимости |
 
@@ -28,6 +29,18 @@ cargo test --workspace --locked
 ```
 
 Для тестов Rust-компонентов достаточно этого checkout и зависимостей Cargo. При наличии зависимостей в локальном кэше добавьте `--offline`.
+
+## Запуск тестового мира без JVM
+
+Из корня репозитория запустите Rust-сервер.
+
+```bash
+cargo run --locked -p leaf-native
+```
+
+В Minecraft Java Edition **1.21.11** откройте «Сетевая игра» → «Прямое подключение» и введите `127.0.0.1:25565`. Если порт занят, запустите `cargo run --locked -p leaf-native -- --port 25566` и укажите `127.0.0.1:25566`. Остановка сервера через `Ctrl+C`.
+
+В этом режиме доступен плоский мир из камня с перемещением и подгрузкой чанков. Мир существует в памяти и создаётся заново при каждом запуске. Инвентарь, изменение блоков, сущности и плагины относятся к полноценному игровому циклу. Для сборки нужны Rust и Cargo. Данные для входа берутся из встроенного пакета клиента 1.21.11. Сервер слушает только `127.0.0.1` и допускает вход без проверки аккаунта.
 
 ## Запуск Java-сборки Leaf на Rust-JVM
 
@@ -78,7 +91,7 @@ Set-Location run
 
 ## 📈 Статус разработки
 
-Актуально на 2026-11-22. `cargo test --workspace --locked --offline` прошёл **152 теста** (150 в `leaf-core` и 2 в `leaf-runner`). Один doctest помечен как пропущенный.
+Актуально на 2026-11-22. `cargo test --workspace --locked --offline` прошёл **154 теста** (150 в `leaf-core`, 2 в `leaf-native` и 2 в `leaf-runner`). Один doctest помечен как пропущенный.
 
 ### ✅ Работает и проверено тестами
 
@@ -98,7 +111,7 @@ Set-Location run
 
 | Подсистема | Состояние |
 |---|---|
-| **`network/protocol`** | Есть регистрации фаз handshake, status, ping, cookie, common, login, configuration и game. В [GameProtocols](crates/leaf-core/src/network/protocol/game/game_protocols.rs) 67 регистраций client → server, 137 server → client и отдельный разделитель server → client bundle. Есть инфраструктура `ProtocolInfo`, dispatch и бандлов, чат-компоненты, стили и события. |
+| **`network/protocol`** | Есть регистрации фаз handshake, status, ping, cookie, common, login, configuration и game. В [GameProtocols](crates/leaf-core/src/network/protocol/game/game_protocols.rs) 66 регистраций client → server, 138 server → client и отдельный разделитель server → client bundle. Есть инфраструктура `ProtocolInfo`, dispatch и бандлов, чат-компоненты, стили и события. |
 | **`core/`, `resources/`, `util/` и JOML** | Перенесены используемые ядром типы позиций, направлений, `Identifier`, `ResourceKey`, `TagKey`, `Holder`, реестры, `mth`, битовое хранилище, векторы, матрицы и кватернионы. |
 | **`world/item` и компоненты** | Есть `ItemStack`, наследование свойств зарегистрированного предмета, карты, патчи и сетевые кодеки компонентов. Сохранение `ItemStack` и экипировки использует NBT-патч с типизированными значениями и отметками удаления. Сохраняются вложенные стопки в контейнерах, мешках, заряженных арбалетах и остатках от использования. Добавлены NBT-кодеки для еды, задержки использования, эффектов использования, дальности атаки, оружия, анимации взмаха и цвета. Часть сложных данных, включая данные карт, замков и лута, хранится как NBT. |
 | **Мир, чанки и освещение** | Есть интерфейсы `Level`, `LevelAccessor`, `LevelReader`, настройки измерения, погода, время, `TickRateManager` и `ServerChunkCache`. Модуль StarLight содержит блочный и небесный слои, SWMR-нибблы, проверку границ и обновление света после изменения блока. |
@@ -122,6 +135,8 @@ Set-Location run
 8. **Полный прогон** — подтвердить запуск `nogui` до `Done` и подключение клиента на Rust-JVM.
 
 ### 🏃 Текущий запуск
+
+`leaf-native` поднимает локальный TCP-сервер с плоским миром. Вход и загрузка мира проверены обычным клиентом Minecraft 1.21.11. TCP-тест дополнительно проверяет подгрузку соседних чанков при перемещении.
 
 `leaf-runner` запускает Java-сборку Leaf на Rust-JVM. В предыдущих локальных прогонах сервер доходил до `PaperBootstrap` и инициализации конфигурации Paper. В dev-режиме зафиксирована ошибка `Invalid TypeToken; must specify type parameters`. Запуск до `Done` пока не подтверждён.
 

@@ -1,0 +1,999 @@
+# Minecraft 1.21.11 vanilla core pack registry identifiers and tag indices.
+[worldgen/biome]
+badlands
+bamboo_jungle
+basalt_deltas
+beach
+birch_forest
+cherry_grove
+cold_ocean
+crimson_forest
+dark_forest
+deep_cold_ocean
+deep_dark
+deep_frozen_ocean
+deep_lukewarm_ocean
+deep_ocean
+desert
+dripstone_caves
+end_barrens
+end_highlands
+end_midlands
+eroded_badlands
+flower_forest
+forest
+frozen_ocean
+frozen_peaks
+frozen_river
+grove
+ice_spikes
+jagged_peaks
+jungle
+lukewarm_ocean
+lush_caves
+mangrove_swamp
+meadow
+mushroom_fields
+nether_wastes
+ocean
+old_growth_birch_forest
+old_growth_pine_taiga
+old_growth_spruce_taiga
+pale_garden
+plains
+river
+savanna
+savanna_plateau
+small_end_islands
+snowy_beach
+snowy_plains
+snowy_slopes
+snowy_taiga
+soul_sand_valley
+sparse_jungle
+stony_peaks
+stony_shore
+sunflower_plains
+swamp
+taiga
+the_end
+the_void
+warm_ocean
+warped_forest
+windswept_forest
+windswept_gravelly_hills
+windswept_hills
+windswept_savanna
+wooded_badlands
+@allows_surface_slime_spawns 54 31
+@allows_tropical_fish_spawns_at_any_height 30
+@has_structure/ancient_city 10
+@has_structure/bastion_remnant 7 34 49 59
+@has_structure/buried_treasure 3 45
+@has_structure/desert_pyramid 14
+@has_structure/end_city 17 18
+@has_structure/igloo 48 46 47
+@has_structure/jungle_temple 1 28
+@has_structure/mineshaft 11 9 13 12 22 35 6 29 58 41 24 3 45 32 23 27 51 47 5 62 60 61 55 48 37 38 1 28 50 21 20 4 36 8 39 25 52 33 26 63 14 42 46 40 53 54 31 43 15 30
+@has_structure/mineshaft_mesa 0 19 64
+@has_structure/nether_fortress 34 49 7 59 2
+@has_structure/nether_fossil 49
+@has_structure/ocean_monument 11 9 13 12
+@has_structure/ocean_ruin_cold 22 6 35 11 9 13
+@has_structure/ocean_ruin_warm 29 58 12
+@has_structure/pillager_outpost 14 40 42 46 55 32 23 27 51 47 5 25
+@has_structure/ruined_portal_desert 14
+@has_structure/ruined_portal_jungle 1 28 50
+@has_structure/ruined_portal_mountain 0 19 64 62 60 61 43 63 52 32 23 27 51 47 5
+@has_structure/ruined_portal_nether 34 49 7 59 2
+@has_structure/ruined_portal_ocean 11 9 13 12 22 35 6 29 58
+@has_structure/ruined_portal_standard 3 45 41 24 55 48 37 38 21 20 4 36 8 39 25 33 26 15 30 42 46 40 53
+@has_structure/ruined_portal_swamp 54 31
+@has_structure/shipwreck 11 9 13 12 22 35 6 29 58
+@has_structure/shipwreck_beached 3 45
+@has_structure/stronghold 33 11 22 9 6 13 35 12 29 58 52 54 31 47 46 45 61 25 62 48 60 55 40 32 3 21 38 20 4 8 39 43 42 28 0 14 64 27 51 24 41 26 37 53 36 50 1 19 63 5 23 15 30 10
+@has_structure/swamp_hut 54
+@has_structure/trail_ruins 55 48 37 38 36 28
+@has_structure/trial_chambers 33 11 22 9 6 13 35 12 29 58 52 54 31 47 46 45 61 25 62 48 60 55 40 32 3 21 38 20 4 8 39 43 42 28 0 14 64 27 51 24 41 26 37 53 36 50 1 19 63 5 23 15 30
+@has_structure/village_desert 14
+@has_structure/village_plains 40 32
+@has_structure/village_savanna 42
+@has_structure/village_snowy 46
+@has_structure/village_taiga 55
+@has_structure/woodland_mansion 8 39
+@is_badlands 0 19 64
+@is_beach 3 45
+@is_deep_ocean 11 9 13 12
+@is_end 56 17 18 44 16
+@is_forest 21 20 4 36 8 39 25
+@is_hill 62 60 61
+@is_jungle 1 28 50
+@is_mountain 32 23 27 51 47 5
+@is_nether 34 49 7 59 2
+@is_ocean 11 9 13 12 22 35 6 29 58
+@is_overworld 33 11 22 9 6 13 35 12 29 58 52 54 31 47 46 45 61 25 62 48 60 55 40 32 3 21 38 20 4 8 39 43 42 28 0 14 64 27 51 24 41 26 37 53 36 50 1 19 63 5 23 15 30 10
+@is_river 41 24
+@is_savanna 42 43 63
+@is_taiga 55 48 37 38
+@mineshaft_blocking 10
+@more_frequent_drowned_spawns 41 24
+@polar_bears_spawn_on_alternate_blocks 22 11
+@produces_corals_from_bonemeal 58
+@reduce_water_ambient_spawns 41 24
+@required_ocean_monument_surrounding 11 9 13 12 22 35 6 29 58 41 24
+@spawns_cold_variant_farm_animals 46 26 23 27 47 22 11 25 10 24 48 45 56 17 18 44 16 6 9 37 38 55 60 61 62 51
+@spawns_cold_variant_frogs 46 26 23 27 47 22 11 25 10 24 48 45 56 17 18 44 16
+@spawns_coral_variant_zombie_nautilus 58
+@spawns_gold_rabbits 14
+@spawns_snow_foxes 46 26 22 48 24 45 23 27 47 25
+@spawns_warm_variant_farm_animals 14 58 1 28 50 42 43 63 34 49 7 59 2 0 19 64 31 12 29
+@spawns_warm_variant_frogs 14 58 1 28 50 42 43 63 34 49 7 59 2 0 19 64 31
+@spawns_white_rabbits 46 26 22 48 24 45 23 27 47 25
+@stronghold_biased_to 40 53 46 26 14 21 20 4 8 39 36 37 38 55 48 42 43 62 61 60 63 28 50 1 0 19 64 32 5 25 47 23 27 51 33 15 30
+@water_on_map_outlines 11 9 13 12 22 35 6 29 58 41 24 54 31
+@without_wandering_trader_spawns 57
+@without_zombie_sieges 33
+[chat_type]
+chat
+emote_command
+msg_command_incoming
+msg_command_outgoing
+say_command
+team_msg_command_incoming
+team_msg_command_outgoing
+[trim_pattern]
+bolt
+coast
+dune
+eye
+flow
+host
+raiser
+rib
+sentry
+shaper
+silence
+snout
+spire
+tide
+vex
+ward
+wayfinder
+wild
+[trim_material]
+amethyst
+copper
+diamond
+emerald
+gold
+iron
+lapis
+netherite
+quartz
+redstone
+resin
+[wolf_variant]
+ashen
+black
+chestnut
+pale
+rusty
+snowy
+spotted
+striped
+woods
+[wolf_sound_variant]
+angry
+big
+classic
+cute
+grumpy
+puglin
+sad
+[pig_variant]
+cold
+temperate
+warm
+[frog_variant]
+cold
+temperate
+warm
+[cat_variant]
+all_black
+black
+british_shorthair
+calico
+jellie
+persian
+ragdoll
+red
+siamese
+tabby
+white
+[cow_variant]
+cold
+temperate
+warm
+[chicken_variant]
+cold
+temperate
+warm
+[zombie_nautilus_variant]
+temperate
+warm
+[painting_variant]
+alban
+aztec
+aztec2
+backyard
+baroque
+bomb
+bouquet
+burning_skull
+bust
+cavebird
+changing
+cotan
+courbet
+creebet
+dennis
+donkey_kong
+earth
+endboss
+fern
+fighters
+finding
+fire
+graham
+humble
+kebab
+lowmist
+match
+meditative
+orb
+owlemons
+passage
+pigscene
+plant
+pointer
+pond
+pool
+prairie_ride
+sea
+skeleton
+skull_and_roses
+stage
+sunflowers
+sunset
+tides
+unpacked
+void
+wanderer
+wasteland
+water
+wind
+wither
+@placeable 24 1 0 2 5 32 47 35 12 37 42 13 46 22 26 8 40 45 39 50 19 33 31 7 38 15 4 23 27 36 44 3 6 9 10 11 17 18 20 25 28 29 30 34 41 43 14
+[dimension_type]
+overworld
+overworld_caves
+the_end
+the_nether
+[damage_type]
+arrow
+bad_respawn_point
+cactus
+campfire
+cramming
+dragon_breath
+drown
+dry_out
+ender_pearl
+explosion
+fall
+falling_anvil
+falling_block
+falling_stalactite
+fireball
+fireworks
+fly_into_wall
+freeze
+generic
+generic_kill
+hot_floor
+in_fire
+in_wall
+indirect_magic
+lava
+lightning_bolt
+mace_smash
+magic
+mob_attack
+mob_attack_no_aggro
+mob_projectile
+on_fire
+out_of_world
+outside_border
+player_attack
+player_explosion
+sonic_boom
+spear
+spit
+stalagmite
+starve
+sting
+sweet_berry_bush
+thorns
+thrown
+trident
+unattributed_fireball
+wind_charge
+wither
+wither_skull
+@always_hurts_ender_dragons 15 9 35 1
+@always_kills_armor_stands 0 45 14 49 47
+@always_most_significant_fall 32
+@always_triggers_silverfish 27
+@avoids_guardian_thorns 27 43 15 9 35 1
+@burn_from_stepping 3 20
+@burns_armor_stands 31
+@bypasses_armor 31 22 4 6 16 18 48 5 40 10 8 17 39 27 23 32 19 36 33
+@bypasses_effects 40
+@bypasses_enchantments 36
+@bypasses_invulnerability 32 19
+@bypasses_resistance 32 19
+@bypasses_shield 31 22 4 6 16 18 48 5 40 10 8 17 39 27 23 32 19 36 33 2 3 7 11 13 20 21 24 25 42
+@bypasses_wolf_armor 32 19 4 6 7 17 22 23 27 33 40 43 48
+@can_break_armor_stand 35 34 37 26
+@damages_helmet 11 12 13
+@ignites_armor_stands 21 3
+@is_drowning 6
+@is_explosion 15 9 35 1
+@is_fall 10 8 39
+@is_fire 21 3 31 24 20 46 14
+@is_freezing 17
+@is_lightning 25
+@is_player_attack 34 37 26
+@is_projectile 0 45 30 46 14 49 44 47
+@mace_smash 26
+@no_anger 29
+@no_impact 6
+@no_knockback 9 35 1 21 25 31 24 20 22 4 6 40 2 10 8 16 32 18 27 48 5 7 42 17 39 33 19 3 37
+@panic_causes 2 17 20 21 24 25 31 0 5 9 14 15 23 27 28 30 35 36 41 44 45 46 47 48 49 34 37 26
+@panic_environmental_causes 2 17 20 21 24 25 31
+@witch_resistant_to 27 23 36 43
+@wither_immune_to 6
+[banner_pattern]
+base
+border
+bricks
+circle
+creeper
+cross
+curly_border
+diagonal_left
+diagonal_right
+diagonal_up_left
+diagonal_up_right
+flow
+flower
+globe
+gradient
+gradient_up
+guster
+half_horizontal
+half_horizontal_bottom
+half_vertical
+half_vertical_right
+mojang
+piglin
+rhombus
+skull
+small_stripes
+square_bottom_left
+square_bottom_right
+square_top_left
+square_top_right
+straight_cross
+stripe_bottom
+stripe_center
+stripe_downleft
+stripe_downright
+stripe_left
+stripe_middle
+stripe_right
+stripe_top
+triangle_bottom
+triangle_top
+triangles_bottom
+triangles_top
+@no_item_required 26 27 28 29 31 38 35 37 32 36 34 33 25 5 30 39 40 41 42 7 10 9 8 3 23 19 17 20 18 1 14 15
+@pattern_item/bordure_indented 6
+@pattern_item/creeper 4
+@pattern_item/field_masoned 2
+@pattern_item/flow 11
+@pattern_item/flower 12
+@pattern_item/globe 13
+@pattern_item/guster 16
+@pattern_item/mojang 21
+@pattern_item/piglin 22
+@pattern_item/skull 24
+[enchantment]
+aqua_affinity
+bane_of_arthropods
+binding_curse
+blast_protection
+breach
+channeling
+density
+depth_strider
+efficiency
+feather_falling
+fire_aspect
+fire_protection
+flame
+fortune
+frost_walker
+impaling
+infinity
+knockback
+looting
+loyalty
+luck_of_the_sea
+lunge
+lure
+mending
+multishot
+piercing
+power
+projectile_protection
+protection
+punch
+quick_charge
+respiration
+riptide
+sharpness
+silk_touch
+smite
+soul_speed
+sweeping_edge
+swift_sneak
+thorns
+unbreaking
+vanishing_curse
+wind_burst
+@curse 2 41
+@double_trade_price 2 41 38 36 14 23 42
+@exclusive_set/armor 28 3 11 27
+@exclusive_set/boots 14 7
+@exclusive_set/bow 16 23
+@exclusive_set/crossbow 24 25
+@exclusive_set/damage 33 35 1 15 6 4
+@exclusive_set/mining 13 34
+@exclusive_set/riptide 19 5
+@in_enchanting_table 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21
+@non_treasure 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21
+@on_mob_spawn_equipment 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21
+@on_random_loot 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21 2 41 14 23
+@on_traded_equipment 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21
+@prevents_bee_spawns_when_mining 34
+@prevents_decorated_pot_shattering 34
+@prevents_ice_melting 34
+@prevents_infested_spawns 34
+@smelts_loot 10
+@tooltip_order 2 41 32 5 42 14 21 33 35 1 15 26 6 4 25 37 24 10 12 17 29 28 3 11 27 9 13 18 34 20 8 30 22 31 0 36 38 7 39 19 40 16 23
+@tradeable 28 11 9 3 27 31 0 39 7 33 35 1 17 10 18 37 8 34 40 13 26 29 12 16 20 22 19 15 32 5 24 30 25 6 4 21 2 41 14 23
+@treasure 2 41 38 36 14 23 42
+[jukebox_song]
+11
+13
+5
+blocks
+cat
+chirp
+creator
+creator_music_box
+far
+lava_chicken
+mall
+mellohi
+otherside
+pigstep
+precipice
+relic
+stal
+strad
+tears
+wait
+ward
+[instrument]
+admire_goat_horn
+call_goat_horn
+dream_goat_horn
+feel_goat_horn
+ponder_goat_horn
+seek_goat_horn
+sing_goat_horn
+yearn_goat_horn
+@goat_horns 4 6 5 3 0 1 7 2
+@regular_goat_horns 4 6 5 3
+@screaming_goat_horns 0 1 7 2
+[test_environment]
+default
+[test_instance]
+always_pass
+[dialog]
+custom_options
+quick_actions
+server_links
+@pause_screen_additions
+@quick_actions
+[timeline]
+day
+early_game
+moon
+villager_schedule
+@in_end 3
+@in_nether 3
+@in_overworld 3 0 2 1
+@universal 3
+[block]
+@acacia_logs
+@air
+@all_hanging_signs
+@all_signs
+@ancient_city_replaceable
+@animals_spawnable_on
+@anvil
+@armadillo_spawnable_on
+@axolotls_spawnable_on
+@azalea_grows_on
+@azalea_root_replaceable
+@badlands_terracotta
+@bamboo_blocks
+@bamboo_plantable_on
+@banners
+@bars
+@base_stone_nether
+@base_stone_overworld
+@bats_spawnable_on
+@beacon_base_blocks
+@beds
+@bee_attractive
+@bee_growables
+@beehives
+@big_dripleaf_placeable
+@birch_logs
+@blocks_wind_charge_explosions
+@buttons
+@camel_sand_step_sound_blocks
+@camels_spawnable_on
+@campfires
+@can_glide_through
+@candle_cakes
+@candles
+@cauldrons
+@cave_vines
+@ceiling_hanging_signs
+@chains
+@cherry_logs
+@climbable
+@coal_ores
+@combination_step_sound_blocks
+@completes_find_tree_tutorial
+@concrete_powder
+@convertable_to_mud
+@copper
+@copper_chests
+@copper_golem_statues
+@copper_ores
+@coral_blocks
+@coral_plants
+@corals
+@crimson_stems
+@crops
+@crystal_sound_blocks
+@dampens_vibrations
+@dark_oak_logs
+@deepslate_ore_replaceables
+@diamond_ores
+@dirt
+@does_not_block_hoppers
+@doors
+@dragon_immune
+@dragon_transparent
+@dripstone_replaceable_blocks
+@dry_vegetation_may_place_on
+@edible_for_sheep
+@emerald_ores
+@enchantment_power_provider
+@enchantment_power_transmitter
+@enderman_holdable
+@fall_damage_resetting
+@features_cannot_replace
+@fence_gates
+@fences
+@fire
+@flower_pots
+@flowers
+@foxes_spawnable_on
+@frog_prefer_jump_to
+@frogs_spawnable_on
+@geode_invalid_blocks
+@goats_spawnable_on
+@gold_ores
+@guarded_by_piglins
+@happy_ghast_avoids
+@hoglin_repellents
+@ice
+@impermeable
+@incorrect_for_copper_tool
+@incorrect_for_diamond_tool
+@incorrect_for_gold_tool
+@incorrect_for_iron_tool
+@incorrect_for_netherite_tool
+@incorrect_for_stone_tool
+@incorrect_for_wooden_tool
+@infiniburn_end
+@infiniburn_nether
+@infiniburn_overworld
+@inside_step_sound_blocks
+@invalid_spawn_inside
+@iron_ores
+@jungle_logs
+@lanterns
+@lapis_ores
+@lava_pool_stone_cannot_replace
+@leaves
+@lightning_rods
+@logs
+@logs_that_burn
+@lush_ground_replaceable
+@maintains_farmland
+@mangrove_logs
+@mangrove_logs_can_grow_through
+@mangrove_roots_can_grow_through
+@mineable/axe
+@mineable/hoe
+@mineable/pickaxe
+@mineable/shovel
+@mob_interactable_doors
+@mooshrooms_spawnable_on
+@moss_replaceable
+@mushroom_grow_block
+@needs_diamond_tool
+@needs_iron_tool
+@needs_stone_tool
+@nether_carver_replaceables
+@nylium
+@oak_logs
+@occludes_vibration_signals
+@overworld_carver_replaceables
+@overworld_natural_logs
+@pale_oak_logs
+@parrots_spawnable_on
+@piglin_repellents
+@planks
+@polar_bears_spawnable_on_alternate
+@portals
+@pressure_plates
+@prevent_mob_spawning_inside
+@rabbits_spawnable_on
+@rails
+@redstone_ores
+@replaceable
+@replaceable_by_mushrooms
+@replaceable_by_trees
+@sand
+@saplings
+@sculk_replaceable
+@sculk_replaceable_world_gen
+@shulker_boxes
+@signs
+@slabs
+@small_dripleaf_placeable
+@small_flowers
+@smelts_to_glass
+@snaps_goat_horn
+@sniffer_diggable_block
+@sniffer_egg_hatch_boost
+@snow
+@snow_layer_can_survive_on
+@snow_layer_cannot_survive_on
+@soul_fire_base_blocks
+@soul_speed_blocks
+@spruce_logs
+@stairs
+@standing_signs
+@stone_bricks
+@stone_buttons
+@stone_ore_replaceables
+@stone_pressure_plates
+@strider_warm_blocks
+@sword_efficient
+@sword_instantly_mines
+@terracotta
+@trail_ruins_replaceable
+@trapdoors
+@triggers_ambient_desert_dry_vegetation_block_sounds
+@triggers_ambient_desert_sand_block_sounds
+@triggers_ambient_dried_ghast_block_sounds
+@underwater_bonemeals
+@unstable_bottom_center
+@valid_spawn
+@vibration_resonators
+@wall_corals
+@wall_hanging_signs
+@wall_post_override
+@wall_signs
+@walls
+@warped_stems
+@wart_blocks
+@wither_immune
+@wither_summon_base_blocks
+@wolves_spawnable_on
+@wooden_buttons
+@wooden_doors
+@wooden_fences
+@wooden_pressure_plates
+@wooden_shelves
+@wooden_slabs
+@wooden_stairs
+@wooden_trapdoors
+@wool
+@wool_carpets
+[item]
+@acacia_logs
+@anvil
+@armadillo_food
+@arrows
+@axes
+@axolotl_food
+@bamboo_blocks
+@banners
+@bars
+@beacon_payment_items
+@beds
+@bee_food
+@birch_logs
+@boats
+@book_cloning_target
+@bookshelf_books
+@breaks_decorated_pots
+@brewing_fuel
+@bundles
+@buttons
+@camel_food
+@camel_husk_food
+@candles
+@cat_food
+@chains
+@cherry_logs
+@chest_armor
+@chest_boats
+@chicken_food
+@cluster_max_harvestables
+@coal_ores
+@coals
+@compasses
+@completes_find_tree_tutorial
+@copper
+@copper_chests
+@copper_golem_statues
+@copper_ores
+@copper_tool_materials
+@cow_food
+@creeper_drop_music_discs
+@creeper_igniters
+@crimson_stems
+@dampens_vibrations
+@dark_oak_logs
+@decorated_pot_ingredients
+@decorated_pot_sherds
+@diamond_ores
+@diamond_tool_materials
+@dirt
+@doors
+@drowned_preferred_weapons
+@duplicates_allays
+@dyeable
+@eggs
+@emerald_ores
+@enchantable/armor
+@enchantable/bow
+@enchantable/chest_armor
+@enchantable/crossbow
+@enchantable/durability
+@enchantable/equippable
+@enchantable/fire_aspect
+@enchantable/fishing
+@enchantable/foot_armor
+@enchantable/head_armor
+@enchantable/leg_armor
+@enchantable/lunge
+@enchantable/mace
+@enchantable/melee_weapon
+@enchantable/mining
+@enchantable/mining_loot
+@enchantable/sharp_weapon
+@enchantable/sweeping
+@enchantable/trident
+@enchantable/vanishing
+@enchantable/weapon
+@fence_gates
+@fences
+@fishes
+@flowers
+@foot_armor
+@fox_food
+@freeze_immune_wearables
+@frog_food
+@furnace_minecart_fuel
+@gaze_disguise_equipment
+@goat_food
+@gold_ores
+@gold_tool_materials
+@hanging_signs
+@happy_ghast_food
+@happy_ghast_tempt_items
+@harnesses
+@head_armor
+@hoes
+@hoglin_food
+@horse_food
+@horse_tempt_items
+@ignored_by_piglin_babies
+@iron_ores
+@iron_tool_materials
+@jungle_logs
+@lanterns
+@lapis_ores
+@leaves
+@lectern_books
+@leg_armor
+@lightning_rods
+@llama_food
+@llama_tempt_items
+@logs
+@logs_that_burn
+@mangrove_logs
+@map_invisibility_equipment
+@meat
+@nautilus_bucket_food
+@nautilus_food
+@nautilus_taming_items
+@netherite_tool_materials
+@non_flammable_wood
+@noteblock_top_instruments
+@oak_logs
+@ocelot_food
+@pale_oak_logs
+@panda_eats_from_ground
+@panda_food
+@parrot_food
+@parrot_poisonous_food
+@pickaxes
+@pig_food
+@piglin_food
+@piglin_loved
+@piglin_preferred_weapons
+@piglin_repellents
+@piglin_safe_armor
+@pillager_preferred_weapons
+@planks
+@rabbit_food
+@rails
+@redstone_ores
+@repairs_chain_armor
+@repairs_copper_armor
+@repairs_diamond_armor
+@repairs_gold_armor
+@repairs_iron_armor
+@repairs_leather_armor
+@repairs_netherite_armor
+@repairs_turtle_helmet
+@repairs_wolf_armor
+@sand
+@saplings
+@shearable_from_copper_golem
+@sheep_food
+@shovels
+@shulker_boxes
+@signs
+@skeleton_preferred_weapons
+@skulls
+@slabs
+@small_flowers
+@smelts_to_glass
+@sniffer_food
+@soul_fire_base_blocks
+@spears
+@spruce_logs
+@stairs
+@stone_bricks
+@stone_buttons
+@stone_crafting_materials
+@stone_tool_materials
+@strider_food
+@strider_tempt_items
+@swords
+@terracotta
+@trapdoors
+@trim_materials
+@trimmable_armor
+@turtle_food
+@villager_picks_up
+@villager_plantable_seeds
+@walls
+@warped_stems
+@wart_blocks
+@wither_skeleton_disliked_weapons
+@wolf_food
+@wooden_buttons
+@wooden_doors
+@wooden_fences
+@wooden_pressure_plates
+@wooden_shelves
+@wooden_slabs
+@wooden_stairs
+@wooden_tool_materials
+@wooden_trapdoors
+@wool
+@wool_carpets
+@zombie_horse_food
+[entity_type]
+@accepts_iron_golem_gift
+@aquatic
+@arrows
+@arthropod
+@axolotl_always_hostiles
+@axolotl_hunt_targets
+@beehive_inhabitors
+@boat
+@burn_in_daylight
+@can_breathe_under_water
+@can_equip_harness
+@can_equip_saddle
+@can_float_while_ridden
+@can_turn_in_boats
+@can_wear_horse_armor
+@can_wear_nautilus_armor
+@candidate_for_iron_golem_gift
+@cannot_be_pushed_onto_boats
+@deflects_projectiles
+@dismounts_underwater
+@fall_damage_immune
+@followable_friendly_mobs
+@freeze_hurts_extra_types
+@freeze_immune_entity_types
+@frog_food
+@ignores_poison_and_regen
+@illager
+@illager_friends
+@immune_to_infested
+@immune_to_oozing
+@impact_projectiles
+@inverted_healing_and_harm
+@nautilus_hostiles
+@no_anger_from_wind_charge
+@non_controlling_rider
+@not_scary_for_pufferfish
+@powder_snow_walkable_mobs
+@raiders
+@redirectable_projectile
+@sensitive_to_bane_of_arthropods
+@sensitive_to_impaling
+@sensitive_to_smite
+@skeletons
+@undead
+@wither_friends
+@zombies
+[fluid]
+@lava
+@water
+[game_event]
+@allay_can_listen
+@ignore_vibrations_sneaking
+@shrieker_can_listen
+@vibrations
+@warden_can_listen
