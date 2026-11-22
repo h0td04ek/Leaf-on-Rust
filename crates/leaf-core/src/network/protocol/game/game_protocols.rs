@@ -477,10 +477,6 @@ pub fn serverbound_template() -> Box<dyn SimpleUnboundProtocol> {
             common_types::serverbound_custom_click_action::<ServerboundCustomClickActionPacket>(),
             ServerboundCustomClickActionPacket::stream_codec(),
         );
-        b.add_packet(
-            GamePacketTypes::clientbound_test_instance_block_status::<ClientboundTestInstanceBlockStatus>(),
-            ClientboundTestInstanceBlockStatus::stream_codec(),
-        );
     })
 }
 
@@ -552,6 +548,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_command_suggestions::<ClientboundCommandSuggestionsPacket>(),
             ClientboundCommandSuggestionsPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_commands::<ClientboundCommandsPacket>(),
+            ClientboundCommandsPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_container_close::<ClientboundContainerClosePacket>(),
@@ -662,6 +662,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundKeepAlivePacket::stream_codec(),
         );
         b.add_packet(
+            GamePacketTypes::clientbound_level_chunk_with_light::<ClientboundLevelChunkWithLightPacket>(),
+            ClientboundLevelChunkWithLightPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_level_event::<ClientboundLevelEventPacket>(),
             ClientboundLevelEventPacket::stream_codec(),
         );
@@ -726,6 +730,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundPongResponsePacket::stream_codec(),
         );
         b.add_packet(
+            GamePacketTypes::clientbound_place_ghost_recipe::<ClientboundPlaceGhostRecipePacket>(),
+            ClientboundPlaceGhostRecipePacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_player_abilities::<ClientboundPlayerAbilitiesPacket>(),
             ClientboundPlayerAbilitiesPacket::stream_codec(),
         );
@@ -764,6 +772,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
         b.add_packet(
             GamePacketTypes::clientbound_player_rotation::<ClientboundPlayerRotationPacket>(),
             ClientboundPlayerRotationPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_recipe_book_add::<ClientboundRecipeBookAddPacket>(),
+            ClientboundRecipeBookAddPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_recipe_book_remove::<ClientboundRecipeBookRemovePacket>(),
@@ -970,6 +982,10 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundTeleportEntityPacket::stream_codec(),
         );
         b.add_packet(
+            GamePacketTypes::clientbound_test_instance_block_status::<ClientboundTestInstanceBlockStatus>(),
+            ClientboundTestInstanceBlockStatus::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_ticking_state::<ClientboundTickingStatePacket>(),
             ClientboundTickingStatePacket::stream_codec(),
         );
@@ -982,12 +998,20 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundTransferPacket::stream_codec(),
         );
         b.add_packet(
+            GamePacketTypes::clientbound_update_advancements::<ClientboundUpdateAdvancementsPacket>(),
+            ClientboundUpdateAdvancementsPacket::stream_codec(),
+        );
+        b.add_packet(
             GamePacketTypes::clientbound_update_attributes::<ClientboundUpdateAttributesPacket>(),
             ClientboundUpdateAttributesPacket::stream_codec(),
         );
         b.add_packet(
             GamePacketTypes::clientbound_update_mob_effect::<ClientboundUpdateMobEffectPacket>(),
             ClientboundUpdateMobEffectPacket::stream_codec(),
+        );
+        b.add_packet(
+            GamePacketTypes::clientbound_update_recipes::<ClientboundUpdateRecipesPacket>(),
+            ClientboundUpdateRecipesPacket::stream_codec(),
         );
         b.add_packet(
             common_types::clientbound_update_tags::<ClientboundUpdateTagsPacket>(),
@@ -1014,32 +1038,8 @@ pub fn clientbound_template() -> Box<dyn SimpleUnboundProtocol> {
             ClientboundClearDialogPacket::stream_codec(),
         );
         b.add_packet(
-            GamePacketTypes::clientbound_update_advancements::<ClientboundUpdateAdvancementsPacket>(),
-            ClientboundUpdateAdvancementsPacket::stream_codec(),
-        );
-        b.add_packet(
-            GamePacketTypes::clientbound_commands::<ClientboundCommandsPacket>(),
-            ClientboundCommandsPacket::stream_codec(),
-        );
-        b.add_packet(
-            GamePacketTypes::clientbound_update_recipes::<ClientboundUpdateRecipesPacket>(),
-            ClientboundUpdateRecipesPacket::stream_codec(),
-        );
-        b.add_packet(
-            GamePacketTypes::clientbound_place_ghost_recipe::<ClientboundPlaceGhostRecipePacket>(),
-            ClientboundPlaceGhostRecipePacket::stream_codec(),
-        );
-        b.add_packet(
-            GamePacketTypes::clientbound_recipe_book_add::<ClientboundRecipeBookAddPacket>(),
-            ClientboundRecipeBookAddPacket::stream_codec(),
-        );
-        b.add_packet(
             common_types::clientbound_show_dialog::<ClientboundShowDialogPacket>(),
             ClientboundShowDialogPacket::stream_codec(),
-        );
-        b.add_packet(
-            GamePacketTypes::clientbound_level_chunk_with_light::<ClientboundLevelChunkWithLightPacket>(),
-            ClientboundLevelChunkWithLightPacket::stream_codec(),
         );
     })
 }
