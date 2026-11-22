@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use leaf_core::core::block_pos::BlockPos;
@@ -7,15 +7,10 @@ use std::io;
 use leaf_core::network::friendly_byte_buf::FriendlyByteBuf;
 use leaf_core::network::protocol::game::{
     clientbound_block_update_packet::ClientboundBlockUpdatePacket,
-    clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket,
-    clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket,
-    clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket,
     clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData,
     clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket,
     clientbound_light_update_packet_data::ClientboundLightUpdatePacketData,
-    clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket,
 };
-use leaf_core::world::level::chunk_pos::ChunkPos;
 
 use crate::audience::Audience;
 use crate::wire::{PacketIds, Wire};
@@ -25,12 +20,12 @@ const SECTIONS: usize = 24;
 pub const AIR: i32 = 0;
 const STONE: i32 = 1;
 pub const SPAWN_Y: i32 = 16;
-pub const RADIUS: i32 = 2;
 
 type Changes = HashMap<BlockPos, i32>;
 
 pub struct FlatWorld {
-    template: ClientboundLevelChunkWithLightPacket,
+    flat_chunk_body: Vec<u8>,
+    light: ClientboundLightUpdatePacketData,
     biome: i32,
     edits: Mutex<HashMap<(i32, i32), Changes>>,
 }
@@ -78,8 +73,12 @@ impl FlatWorld {
             vec![vec![0xff; 2048]; layers - sky],
             Vec::new(),
         );
+        let mut body = FriendlyByteBuf::new();
+        data.write(&mut body);
+        light.write(&mut body);
         Self {
-            template: ClientboundLevelChunkWithLightPacket::new(0, 0, data, light),
+            flat_chunk_body: body.copy_bytes(),
+            light,
             biome,
             edits: Mutex::new(HashMap::new()),
         }
@@ -127,15 +126,26 @@ impl FlatWorld {
         previous
     }
 
-    fn chunk_packet(&self, x: i32, z: i32) -> ClientboundLevelChunkWithLightPacket {
-        let edits = self.edits.lock().unwrap();
-        let data = match edits.get(&(x, z)) {
-            Some(changes) => self.changed_chunk(x, z, changes),
-            None => self.template.chunk_data.clone(),
-        };
-        ClientboundLevelChunkWithLightPacket::new(x, z, data, self.template.light_data.clone())
+    pub fn send_chunk(&self, x: i32, z: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
+        let changed = self
+            .edits
+            .lock()
+            .unwrap()
+            .get(&(x, z))
+            .map(|changes| self.changed_chunk(x, z, changes));
+        if let Some(data) = changed {
+            let packet = ClientboundLevelChunkWithLightPacket::new(x, z, data, self.light.clone());
+            wire.send(ids, &packet)
+        } else {
+            // The unedited terrain and light body are the same in every chunk.
+            let mut prefix = FriendlyByteBuf::new();
+            prefix
+                .write_var_int(ids.id("level_chunk_with_light")?)
+                .write_int(x)
+                .write_int(z);
+            wire.send_parts(&prefix.copy_bytes(), &self.flat_chunk_body)
+        }
     }
-
     fn changed_chunk(&self, x: i32, z: i32, changes: &Changes) -> ClientboundLevelChunkPacketData {
         let mut sections = FriendlyByteBuf::new();
         let mut heights = vec![0_i64; 256usize.div_ceil(7)];
@@ -198,52 +208,6 @@ impl FlatWorld {
             sections.copy_bytes(),
             Vec::new(),
         )
-    }
-
-    pub fn update(
-        &self,
-        wire: &mut Wire,
-        ids: &PacketIds,
-        center: (i32, i32),
-        loaded: &mut HashSet<(i32, i32)>,
-    ) -> io::Result<()> {
-        wire.send(
-            ids,
-            &ClientboundSetChunkCacheCenterPacket::new(center.0, center.1),
-        )?;
-        let mut wanted = Vec::new();
-        for x in center.0 - RADIUS..=center.0 + RADIUS {
-            for z in center.1 - RADIUS..=center.1 + RADIUS {
-                wanted.push((x, z));
-            }
-        }
-        // Send the destination chunk first so the client can complete loading.
-        wanted.sort_by_key(|&(x, z)| (x - center.0).pow(2) + (z - center.1).pow(2));
-        let target: HashSet<_> = wanted.iter().copied().collect();
-        for &(x, z) in loaded.difference(&target) {
-            wire.send(
-                ids,
-                &ClientboundForgetLevelChunkPacket::new(ChunkPos::new(x, z)),
-            )?;
-        }
-
-        let fresh: Vec<_> = wanted
-            .into_iter()
-            .filter(|pos| !loaded.contains(pos))
-            .collect();
-        if !fresh.is_empty() {
-            wire.send(ids, &ClientboundChunkBatchStartPacket::instance())?;
-            for &(x, z) in &fresh {
-                let packet = self.chunk_packet(x, z);
-                wire.send(ids, &packet)?;
-            }
-            wire.send(
-                ids,
-                &ClientboundChunkBatchFinishedPacket::new(fresh.len() as i32),
-            )?;
-        }
-        *loaded = target;
-        Ok(())
     }
 }
 

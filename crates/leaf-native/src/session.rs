@@ -51,12 +51,15 @@ use leaf_core::world::level::{game_type::GameType, LevelKey, RespawnData};
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::audience::Audience;
+use crate::chunk_stream::{
+    client_view_distance, ChunkStream, MAX_VIEW_DISTANCE, SIMULATION_DISTANCE,
+};
 use crate::commands::Commands;
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
 use crate::registries::Registries;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{FlatWorld, RADIUS, SPAWN_Y};
+use crate::world::{FlatWorld, SPAWN_Y};
 
 pub const MAX_PLAYERS: usize = 8;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(8);
@@ -194,16 +197,16 @@ impl Server {
         )?;
         wire.expect(&self.login_in, "login_acknowledged")?
             .finish()?;
-        if !self.configure(wire)? {
+        let Some(view_distance) = self.configure(wire)? else {
             return Ok(());
-        }
+        };
 
         let entity = self.next_entity.fetch_add(1, Ordering::Relaxed);
         let subscription = self.audience.subscribe(uuid);
-        self.spawn(wire, GameProfile::new(uuid, &name), entity)?;
+        self.spawn(wire, GameProfile::new(uuid, &name), entity, view_distance)?;
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
-        self.play(wire, &name, uuid, entity, &subscription)
+        self.play(wire, &name, uuid, entity, view_distance, &subscription)
     }
 
     fn login_disconnect(&self, wire: &mut Wire, reason: &str) -> io::Result<()> {
@@ -213,7 +216,8 @@ impl Server {
         )
     }
 
-    fn configure(&self, wire: &mut Wire) -> io::Result<bool> {
+    fn configure(&self, wire: &mut Wire) -> io::Result<Option<i32>> {
+        let mut view_distance = MAX_VIEW_DISTANCE;
         let ids = &self.configuration_out;
         let core = KnownPack::vanilla("core");
         wire.send(
@@ -223,7 +227,8 @@ impl Server {
             ),
         )?;
         wire.send(ids, &ClientboundSelectKnownPacks::new(vec![core.clone()]))?;
-        let mut choice = self.configuration_packet(wire, "select_known_packs")?;
+        let mut choice =
+            self.configuration_packet(wire, "select_known_packs", &mut view_distance)?;
         let supported = choice.varint()? == 1
             && choice.string(64)? == core.namespace
             && choice.string(64)? == core.id
@@ -235,7 +240,7 @@ impl Server {
                     "This preview requires the built-in Minecraft 1.21.11 core data pack.",
                 )),
             )?;
-            return Ok(false);
+            return Ok(None);
         }
         choice.finish()?;
         for registry in &self.registries.packets {
@@ -243,24 +248,36 @@ impl Server {
         }
         wire.send(ids, &self.registries.tags)?;
         wire.send(ids, &CLIENTBOUND_FINISH_CONFIGURATION_PACKET)?;
-        self.configuration_packet(wire, "finish_configuration")?
+        self.configuration_packet(wire, "finish_configuration", &mut view_distance)?
             .finish()?;
-        Ok(true)
+        Ok(Some(view_distance))
     }
 
-    fn configuration_packet(&self, wire: &mut Wire, expected: &str) -> io::Result<Cursor> {
+    fn configuration_packet(
+        &self,
+        wire: &mut Wire,
+        expected: &str,
+        view_distance: &mut i32,
+    ) -> io::Result<Cursor> {
         for _ in 0..32 {
             let (id, body) = wire.receive()?;
             match self.configuration_in.name(id)? {
                 name if name == expected => return Ok(body),
-                "client_information" | "custom_payload" => {}
+                "client_information" => *view_distance = client_view_distance(body)?,
+                "custom_payload" => {}
                 name => return Err(invalid(format!("expected {expected}, received {name}"))),
             }
         }
         Err(invalid("too many packets during configuration"))
     }
 
-    fn spawn(&self, wire: &mut Wire, profile: GameProfile, entity: i32) -> io::Result<()> {
+    fn spawn(
+        &self,
+        wire: &mut Wire,
+        profile: GameProfile,
+        entity: i32,
+        view_distance: i32,
+    ) -> io::Result<()> {
         let ids = &self.play_out;
         let dimension = LevelKey::overworld();
         let mode = GameType::Creative;
@@ -271,8 +288,8 @@ impl Server {
                 false,
                 [dimension.clone()].into_iter().collect(),
                 MAX_PLAYERS as i32,
-                RADIUS,
-                RADIUS,
+                view_distance,
+                SIMULATION_DISTANCE,
                 false,
                 true,
                 false,
@@ -352,6 +369,7 @@ impl Server {
         name: &str,
         uuid: Uuid,
         entity: i32,
+        view_distance: i32,
         subscription: &crate::audience::Subscription,
     ) -> io::Result<()> {
         let context = PlayContext {
@@ -362,10 +380,7 @@ impl Server {
             entity_ids: &self.next_entity,
         };
         let mut game = Gameplay::new(entity);
-        let mut center = (0, 0);
-        let mut loaded = HashSet::new();
-        self.flat_world
-            .update(wire, &self.play_out, center, &mut loaded)?;
+        let mut chunks = ChunkStream::start(view_distance, wire, &self.play_out)?;
         wire.play_timeout()?;
         let mut last_ping = Instant::now();
         let mut outstanding = None;
@@ -378,8 +393,9 @@ impl Server {
                 self.commands.world.lock().unwrap().refresh(&self.audience);
                 next_world_refresh = Instant::now() + Duration::from_secs(1);
             }
-            subscription.flush(wire, &self.play_out, &loaded)?;
+            subscription.flush(wire, &self.play_out, chunks.loaded())?;
             game.tick(wire, &context)?;
+            chunks.send_next(&self.flat_world, wire, &self.play_out)?;
             let elapsed = last_ping.elapsed();
             if outstanding.is_some() && elapsed >= KEEPALIVE_TIMEOUT {
                 return Err(io::Error::other("keepalive timed out"));
@@ -403,6 +419,14 @@ impl Server {
                         return Err(invalid("unexpected keepalive reply"));
                     }
                     outstanding = None;
+                }
+                "chunk_batch_received" => {
+                    let desired = f32::from_be_bytes(body.fixed()?);
+                    body.finish()?;
+                    chunks.acknowledge(desired);
+                }
+                "client_information" => {
+                    chunks.resize(client_view_distance(body)?, wire, &self.play_out)?;
                 }
                 "accept_teleportation" => {
                     confirmed = body.varint()? == TELEPORT_ID;
@@ -460,11 +484,7 @@ impl Server {
                         game.position.x.floor() as i32 >> 4,
                         game.position.z.floor() as i32 >> 4,
                     );
-                    if next != center {
-                        self.flat_world
-                            .update(wire, &self.play_out, next, &mut loaded)?;
-                        center = next;
-                    }
+                    chunks.move_to(next, wire, &self.play_out)?;
                 }
                 kind if confirmed => game.handle(kind, body, wire, &context)?,
                 _ => {}

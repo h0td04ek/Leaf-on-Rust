@@ -90,6 +90,7 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
     assert_eq!(body.read_utf().unwrap(), "NativeSmoke");
     assert_eq!(body.read_var_int(), 0);
     send(&mut client, 3, |_| {});
+    client_information(&mut client, 0, 32);
 
     assert_eq!(receive(&mut client).0, 12);
     let (id, mut packs) = receive(&mut client);
@@ -122,6 +123,13 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
     let (id, mut login) = receive(&mut client);
     assert_eq!(id, 48);
     let entity = login.read_int();
+    login.read_bool();
+    assert_eq!(login.read_var_int(), 1);
+    assert_eq!(login.read_utf().unwrap(), "minecraft:overworld");
+    login.read_var_int(); // maximum players
+    assert_eq!(login.read_var_int(), 32);
+
+    let mut rendered = Vec::new();
     let mut advertised_commands = false;
     let mut got_chunk = false;
     loop {
@@ -132,6 +140,7 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
                 buf.write_var_int(body.read_var_int());
             }),
             44 if !got_chunk => {
+                rendered.push((0, 0));
                 let packet = ClientboundLevelChunkWithLightPacket::stream_codec().decode(&mut body);
                 assert_eq!((packet.x, packet.z), (0, 0));
                 assert_eq!(packet.chunk_data.buffer.len(), 24 * 6);
@@ -139,14 +148,45 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
                 assert_eq!(packet.light_data.sky_updates.len(), 20);
                 got_chunk = true;
             }
+            44 => rendered.push((body.read_int(), body.read_int())),
             11 => {
-                assert_eq!(body.read_var_int(), 25);
+                assert_eq!(body.read_var_int(), 9);
                 break;
             }
             _ => {}
         }
     }
     assert!(got_chunk && advertised_commands);
+    assert_eq!(rendered.len(), 9);
+
+    send(&mut client, 10, |buf| {
+        buf.write_float(64.0);
+    });
+    loop {
+        let (id, mut body) = receive(&mut client);
+        match id {
+            44 => rendered.push((body.read_int(), body.read_int())),
+            11 => {
+                assert_eq!(body.read_var_int(), 64);
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(rendered.len(), 73);
+    assert!(rendered.contains(&(4, 0)));
+
+    // Shrinking the client view unloads sent chunks and discards stale queued chunks.
+    client_information(&mut client, 13, 2);
+    assert_eq!(packet(&mut client, 93).read_var_int(), 2);
+    for &(x, z) in &rendered {
+        if x.abs() > 2 || z.abs() > 2 {
+            assert_eq!(receive(&mut client).0, 37);
+        }
+    }
+    send(&mut client, 10, |buf| {
+        buf.write_float(64.0);
+    });
 
     send(&mut client, 43, |_| {}); // player loaded
     send(&mut client, 29, |buf| {
@@ -330,6 +370,15 @@ fn packet(stream: &mut TcpStream, expected: i32) -> FriendlyByteBuf {
         }
     }
     panic!("expected packet {expected}");
+}
+
+fn client_information(stream: &mut TcpStream, id: i32, distance: i32) {
+    send(stream, id, |buf| {
+        let mut information =
+            leaf_core::server::level::client_information::ClientInformation::create_default();
+        information.view_distance = distance as i8;
+        information.write(buf);
+    });
 }
 
 fn spawned(stream: &mut TcpStream, kind: i32) -> i32 {

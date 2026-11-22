@@ -83,11 +83,16 @@ impl Wire {
         let mut body = FriendlyByteBuf::new();
         body.write_var_int(ids.id(kind.id.get_path())?);
         packet.write_packet(&mut body);
-        let bytes = body.copy_bytes();
+        self.send_parts(&body.copy_bytes(), &[])
+    }
+
+    pub fn send_parts(&mut self, prefix: &[u8], payload: &[u8]) -> io::Result<()> {
         let mut header = FriendlyByteBuf::new();
-        header.write_var_int(bytes.len() as i32);
-        self.stream.get_mut().write_all(&header.copy_bytes())?;
-        self.stream.get_mut().write_all(&bytes)
+        header.write_var_int((prefix.len() + payload.len()) as i32);
+        let stream = self.stream.get_mut();
+        stream.write_all(&header.copy_bytes())?;
+        stream.write_all(prefix)?;
+        stream.write_all(payload)
     }
 
     pub fn play_timeout(&mut self) -> io::Result<()> {
