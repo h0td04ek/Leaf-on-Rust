@@ -458,12 +458,7 @@ impl Gameplay {
         {
             if !creative && ctx.commands.world.lock().unwrap().drops_enabled() {
                 if let Some(item) = kind.item {
-                    let center = Vec3::new(
-                        f64::from(pos.x) + 0.5,
-                        f64::from(pos.y) + 0.35,
-                        f64::from(pos.z) + 0.5,
-                    );
-                    self.spawn_drop(stack(item, 1), center, Vec3::ZERO, ctx);
+                    self.drop_block(pos, item, ctx);
                 }
             }
         } else {
@@ -792,6 +787,11 @@ impl Gameplay {
         let direction = Vec3::direction_from_rotation(self.player.pitch, self.player.yaw);
         let pos = self.player.position.add(0.0, 1.32, 0.0);
         self.spawn_drop(item, pos, direction.scale(0.3), ctx);
+    }
+
+    pub fn drop_block(&self, pos: BlockPos, item: i32, ctx: &PlayContext<'_>) {
+        let center = pos.get_bottom_center().add(0.0, 0.35, 0.0);
+        self.spawn_drop(stack(item, 1), center, Vec3::ZERO, ctx);
     }
 
     fn spawn_drop(&self, item: ItemStack, pos: Vec3, velocity: Vec3, ctx: &PlayContext<'_>) {

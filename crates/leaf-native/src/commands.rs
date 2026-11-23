@@ -28,23 +28,32 @@ use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::flag::feature_flag_set::FeatureFlagSet;
 use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::level::gamerules::game_rules::{
-    advance_time, advance_weather, block_drops, mob_drops, spawn_mobs, tnt_explodes,
-    tnt_explosion_drop_decay,
+    advance_time, advance_weather, block_drops, max_block_modifications, mob_drops, spawn_mobs,
+    tnt_explodes, tnt_explosion_drop_decay,
 };
 use leaf_core::world::level::gamerules::GameRules;
 
 use crate::audience::Audience;
+use crate::blocks::Blocks;
 use crate::mob_types::{self, MobType};
 use crate::mobs::{self, COMMAND_LIMIT};
 use crate::operators::{Operators, ALL, GAMEMASTERS, OWNERS};
 use crate::ticking::{Action as TickAction, Clock, TickState, ADMIN_PERMISSION, MAX_RATE};
 use crate::wire::{PacketIds, Wire};
+use crate::world::FillMode;
 
 const SEED: i64 = 0;
 
 pub enum PlayerCommand {
     Kit,
     SetMode(GameType, Option<String>),
+    Fill {
+        from: Coordinates,
+        to: Coordinates,
+        state: i32,
+        mode: FillMode,
+        limit: i32,
+    },
     Summon {
         kind: &'static MobType,
         position: Option<Coordinates>,
@@ -69,7 +78,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /kit. Operators: /gamemode, /summon, /tick, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
+                            "/help, /kit. Operators: /gamemode, /fill, /summon, /tick, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
                         ),
                         false,
                     );
@@ -125,6 +134,7 @@ impl Commands {
                 ),
             )
             .expect("register gamemode target");
+        register_fill(&mut dispatcher);
         register_summon(&mut dispatcher);
         register_tick(&mut dispatcher);
         for (command, grant) in [("op", true), ("deop", false)] {
@@ -209,12 +219,108 @@ impl Commands {
     }
 }
 
+fn register_fill(dispatcher: &mut CommandDispatcher<CommandWorld>) {
+    let fill = dispatcher
+        .add_node(
+            dispatcher.root(),
+            CommandNode::literal("fill")
+                .requires(|source: &CommandWorld| source.has_permission(GAMEMASTERS)),
+        )
+        .unwrap();
+    let from = dispatcher
+        .add_node(fill, CommandNode::argument("from", ArgumentType::BlockPos))
+        .unwrap();
+    let to = dispatcher
+        .add_node(from, CommandNode::argument("to", ArgumentType::BlockPos))
+        .unwrap();
+    let suggestions = Identifier::minecraft("ask_server");
+    let block = dispatcher
+        .add_node(
+            to,
+            CommandNode::argument("block", ArgumentType::Identifier)
+                .with_suggestion_provider(suggestions.clone())
+                .executes(|world, context| resolve_fill(world, context, FillMode::Replace(None))),
+        )
+        .unwrap();
+    for (name, mode) in [
+        ("keep", FillMode::Keep),
+        ("outline", FillMode::Outline),
+        ("hollow", FillMode::Hollow),
+        ("destroy", FillMode::Destroy),
+    ] {
+        dispatcher
+            .add_node(
+                block,
+                CommandNode::literal(name)
+                    .executes(move |world, context| resolve_fill(world, context, mode)),
+            )
+            .unwrap();
+    }
+    let replace = dispatcher
+        .add_node(
+            block,
+            CommandNode::literal("replace")
+                .executes(|world, context| resolve_fill(world, context, FillMode::Replace(None))),
+        )
+        .unwrap();
+    dispatcher
+        .add_node(
+            replace,
+            CommandNode::argument("filter", ArgumentType::Identifier)
+                .with_suggestion_provider(suggestions)
+                .executes(|world, context| {
+                    let Some(filter) = fill_block(world, context, "filter") else {
+                        return 0;
+                    };
+                    resolve_fill(world, context, FillMode::Replace(Some(filter)))
+                }),
+        )
+        .unwrap();
+}
+
+fn fill_block(world: &mut CommandWorld, context: &CommandContext, argument: &str) -> Option<i32> {
+    let Some(ArgumentValue::Identifier(id)) = context.argument(argument) else {
+        unreachable!("registered block identifier");
+    };
+    if id.get_namespace() == "minecraft" {
+        if let Some(block) = Blocks::vanilla().named(id.get_path()) {
+            return Some(block.default);
+        }
+    }
+    world.send_success(Component::literal(format!("Unknown block {id}")), false);
+    None
+}
+
+fn resolve_fill(world: &mut CommandWorld, context: &CommandContext, mode: FillMode) -> i32 {
+    let (Some(ArgumentValue::Coordinates(from)), Some(ArgumentValue::Coordinates(to))) =
+        (context.argument("from"), context.argument("to"))
+    else {
+        unreachable!("registered fill corners");
+    };
+    let Some(state) = fill_block(world, context, "block") else {
+        return 0;
+    };
+    world.action = Some(PlayerCommand::Fill {
+        from: *from,
+        to: *to,
+        state,
+        mode,
+        limit: world.rules.get_or_default(&max_block_modifications()),
+    });
+    1
+}
+
 fn register_summon(dispatcher: &mut CommandDispatcher<CommandWorld>) {
     let suggestions = Identifier::minecraft("ask_server");
-    dispatcher.register_suggestion_provider(suggestions.clone(), |_, _, prefix, entries| {
+    dispatcher.register_suggestion_provider(suggestions.clone(), |_, context, prefix, entries| {
         let path = prefix.strip_prefix("minecraft:").unwrap_or(prefix);
+        let names: Box<dyn Iterator<Item = &'static str>> = if context.argument("from").is_some() {
+            Box::new(Blocks::vanilla().names())
+        } else {
+            Box::new(mob_types::names())
+        };
         entries.extend(
-            mob_types::names()
+            names
                 .filter(|name| name.starts_with(path))
                 .map(|name| CommandSuggestion {
                     text: format!("minecraft:{name}"),

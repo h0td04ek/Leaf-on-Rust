@@ -100,6 +100,14 @@ impl Blocks {
         &self.kinds[self.states[state as usize]]
     }
 
+    pub fn named(&self, name: &str) -> Option<&Block> {
+        self.names.get(name).map(|&index| &self.kinds[index])
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.names.keys().copied()
+    }
+
     pub fn for_item(&self, item: i32, face: Direction) -> Option<&Block> {
         let block = &self.kinds[*self.items.get(&item)?];
         if matches!(

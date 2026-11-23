@@ -1,5 +1,9 @@
 #[path = "blast.rs"]
 mod blast;
+#[path = "fill.rs"]
+mod fill;
+
+pub use fill::FillMode;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

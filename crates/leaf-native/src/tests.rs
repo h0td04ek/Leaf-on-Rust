@@ -1098,6 +1098,66 @@ fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
 }
 
 #[test]
+fn fills_a_thousand_tnt_across_chunk_boundaries_for_both_clients() {
+    let world = TestWorld::new();
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
+    let (mut owner, _) = connect_server(Arc::clone(&server));
+    let owner_id = enter_play(&mut owner, "h0td04ek", 2);
+    acknowledge_teleport(&mut owner);
+    let (mut guest, _) = connect_server(server);
+    enter_play(&mut guest, "Witness", 2);
+    acknowledge_teleport(&mut guest);
+    assert_eq!(peer_entity(&mut guest, "h0td04ek"), owner_id);
+    peer_entity(&mut owner, "Witness");
+
+    let fill = "fill ~21 ~9 ~21 ~12 ~ ~12 minecraft:tnt";
+    command(&mut guest, fill);
+    assert!(multiplayer_packet(&mut guest, 119)
+        .copy_bytes()
+        .windows(b"Unknown or incomplete command".len())
+        .any(|window| window == b"Unknown or incomplete command"));
+
+    command(&mut owner, "gamerule max_block_modifications 999");
+    multiplayer_packet(&mut owner, 119);
+    command(&mut owner, fill);
+    assert!(multiplayer_packet(&mut owner, 119)
+        .copy_bytes()
+        .windows(b"maximum 999".len())
+        .any(|window| window == b"maximum 999"));
+    command(&mut owner, "gamerule max_block_modifications 32768");
+    multiplayer_packet(&mut owner, 119);
+
+    command(&mut owner, fill);
+    let tnt = Blocks::vanilla().named("tnt").unwrap().default;
+    let expected = (12..=21)
+        .flat_map(|x| (16..=25).flat_map(move |y| (12..=21).map(move |z| BlockPos::new(x, y, z))))
+        .collect::<std::collections::HashSet<_>>();
+    for client in [&mut owner, &mut guest] {
+        let mut changed = std::collections::HashSet::new();
+        for _ in 0..4 {
+            let section = ClientboundSectionBlocksUpdatePacket::stream_codec()
+                .decode(&mut multiplayer_packet(client, 82));
+            section.run_updates(|pos, state| {
+                assert_eq!(state, tnt);
+                assert!(changed.insert(pos));
+            });
+        }
+        assert_eq!(changed, expected);
+    }
+    assert!(multiplayer_packet(&mut owner, 119)
+        .copy_bytes()
+        .windows(b"Filled 1000 block(s)".len())
+        .any(|window| window == b"Filled 1000 block(s)"));
+
+    // More sections than the subscriber queue can hold as individual messages.
+    command(&mut owner, "fill 0 17 0 4096 17 0 tnt");
+    assert!(multiplayer_packet(&mut owner, 119)
+        .copy_bytes()
+        .windows(b"Filled 4097 block(s)".len())
+        .any(|window| window == b"Filled 4097 block(s)"));
+}
+
+#[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
     let server = Arc::new(

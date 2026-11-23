@@ -10,7 +10,13 @@ use leaf_core::util::uuid::Uuid;
 use crate::wire::{PacketIds, Wire};
 
 type Chunk = (i32, i32);
-type Message = (Option<Chunk>, Arc<dyn Packet + Send + Sync>);
+type ScopedPacket = (Option<Chunk>, Arc<dyn Packet + Send + Sync>);
+
+#[derive(Clone)]
+enum Message {
+    Single(ScopedPacket),
+    Batch(Arc<[ScopedPacket]>),
+}
 
 #[derive(Default)]
 pub struct Audience(Mutex<HashMap<Uuid, mpsc::SyncSender<Message>>>);
@@ -27,11 +33,32 @@ impl Audience {
     }
 
     pub fn broadcast(&self, packet: impl Packet + Send + Sync + 'static, chunk: Option<Chunk>) {
-        let packet = Arc::new(packet);
+        self.broadcast_message(Message::Single((chunk, Arc::new(packet))));
+    }
+
+    pub fn broadcast_batch<P>(&self, packets: impl IntoIterator<Item = (Chunk, P)>)
+    where
+        P: Packet + Send + Sync + 'static,
+    {
+        let packets = packets
+            .into_iter()
+            .map(|(chunk, packet)| {
+                (
+                    Some(chunk),
+                    Arc::new(packet) as Arc<dyn Packet + Send + Sync>,
+                )
+            })
+            .collect::<Arc<[_]>>();
+        if !packets.is_empty() {
+            self.broadcast_message(Message::Batch(packets));
+        }
+    }
+
+    fn broadcast_message(&self, message: Message) {
         self.0
             .lock()
             .unwrap()
-            .retain(|_, sender| sender.try_send((chunk, packet.clone())).is_ok());
+            .retain(|_, sender| sender.try_send(message.clone()).is_ok());
     }
 
     pub fn chat(&self, content: Component, recipient: Option<Uuid>) {
@@ -45,10 +72,11 @@ impl Audience {
 
     pub fn send(&self, recipient: Uuid, packet: impl Packet + Send + Sync + 'static) {
         let mut audience = self.0.lock().unwrap();
-        if audience
-            .get(&recipient)
-            .is_some_and(|sender| sender.try_send((None, Arc::new(packet))).is_err())
-        {
+        if audience.get(&recipient).is_some_and(|sender| {
+            sender
+                .try_send(Message::Single((None, Arc::new(packet))))
+                .is_err()
+        }) {
             audience.remove(&recipient);
         }
     }
@@ -69,9 +97,15 @@ impl Subscription<'_> {
     ) -> io::Result<()> {
         loop {
             match self.receiver.try_recv() {
-                Ok((chunk, packet)) => {
-                    if chunk.is_none_or(|pos| loaded.contains(&pos)) {
-                        wire.send(ids, packet.as_ref())?;
+                Ok(message) => {
+                    let packets = match &message {
+                        Message::Single(packet) => std::slice::from_ref(packet),
+                        Message::Batch(packets) => packets.as_ref(),
+                    };
+                    for (chunk, packet) in packets {
+                        if chunk.is_none_or(|pos| loaded.contains(&pos)) {
+                            wire.send(ids, packet.as_ref())?;
+                        }
                     }
                 }
                 Err(mpsc::TryRecvError::Empty) => return Ok(()),

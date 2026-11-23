@@ -627,6 +627,47 @@ impl Server {
                                     );
                                 }
                             }
+                            Some(PlayerCommand::Fill {
+                                from,
+                                to,
+                                state,
+                                mode,
+                                limit,
+                            }) => {
+                                let player = &game.player;
+                                let resolve =
+                                    |pos: leaf_core::command::arguments::vanilla::Coordinates| {
+                                        pos.block_pos(
+                                            player.position,
+                                            player.position,
+                                            player.yaw,
+                                            player.pitch,
+                                        )
+                                    };
+                                let feedback = match context.world.fill(
+                                    resolve(from),
+                                    resolve(to),
+                                    state,
+                                    mode,
+                                    limit,
+                                    context.audience,
+                                ) {
+                                    Ok(result) => {
+                                        let drops =
+                                            context.commands.world.lock().unwrap().drops_enabled();
+                                        if drops {
+                                            for (pos, item) in result.destroyed {
+                                                game.drop_block(pos, item, &context);
+                                            }
+                                        }
+                                        format!("Filled {} block(s)", result.changed)
+                                    }
+                                    Err(error) => error,
+                                };
+                                context
+                                    .audience
+                                    .chat(Component::literal(feedback), Some(uuid));
+                            }
                             Some(PlayerCommand::Summon {
                                 kind,
                                 position,
