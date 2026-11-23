@@ -1172,3 +1172,87 @@ fn observe_explosion_and_chain(client: &mut TcpStream, tnt: i32, block: BlockPos
     }
     panic!("expected the first explosion, block update and chained TNT");
 }
+
+#[test]
+fn sends_mobs_in_all_loaded_chunks_and_clears_the_edge_on_view_shrink() {
+    use leaf_core::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
+    use std::collections::HashSet;
+
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "h0td04ek", 32);
+    acknowledge_teleport(&mut client);
+    command(&mut client, "gamerule spawn_mobs false");
+    command(&mut client, "summon minecraft:pig ~ ~ ~ 220");
+    command(&mut client, "summon minecraft:pig 512.5 16 0.5");
+    command(&mut client, "summon minecraft:pig 528.5 16 0.5");
+
+    let pig_type = crate::mob_types::named("pig").unwrap().id;
+    let mut loaded = HashSet::new();
+    let mut inner = HashSet::new();
+    let mut outer_id = None;
+    for _ in 0..15_000 {
+        let (id, mut body) = receive(&mut client);
+        match id {
+            44 => {
+                loaded.insert((body.read_int(), body.read_int()));
+            }
+            11 => send(&mut client, 10, |buf| {
+                buf.write_float(64.0);
+            }),
+            43 => send(&mut client, 27, |buf| {
+                buf.write_long(body.read_long());
+            }),
+            1 => {
+                let entity = ClientboundAddEntityPacket::stream_codec().decode(&mut body);
+                if matches!(entity.type_, leaf_core::core::holder::Holder::Reference(kind) if kind == pig_type)
+                {
+                    let chunk = (
+                        (entity.x.floor() as i32) >> 4,
+                        (entity.z.floor() as i32) >> 4,
+                    );
+                    assert!(
+                        loaded.contains(&chunk),
+                        "spawned entity in a chunk still waiting to load"
+                    );
+                    assert_ne!(chunk, (33, 0), "sent a pig outside the view radius");
+                    if chunk == (32, 0) {
+                        outer_id = Some(entity.id);
+                    } else {
+                        assert!(inner.insert(entity.id), "resent an already visible pig");
+                    }
+                }
+            }
+            _ => {}
+        }
+        if outer_id.is_some() && inner.len() == 220 {
+            break;
+        }
+    }
+    let outer_id = outer_id.expect("the pig in chunk 32 must reach the client");
+    assert_eq!(inner.len(), 220);
+    assert!(!loaded.contains(&(33, 0)));
+
+    client_information(&mut client, 13, 2);
+    let mut removed = false;
+    for _ in 0..15_000 {
+        let (id, mut body) = receive(&mut client);
+        match id {
+            43 => send(&mut client, 27, |buf| {
+                buf.write_long(body.read_long());
+            }),
+            75 => {
+                let packet = ClientboundRemoveEntitiesPacket::stream_codec().decode(&mut body);
+                assert!(packet.entity_ids.iter().all(|id| !inner.contains(id)));
+                if packet.entity_ids.contains(&outer_id) {
+                    removed = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(removed, "unloading chunk 32 must remove its pig");
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}

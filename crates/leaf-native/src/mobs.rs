@@ -1,5 +1,10 @@
+#[path = "mob_tracking.rs"]
+mod tracking;
+
+pub use tracking::MobTracker;
+use tracking::SentMob;
+
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -10,16 +15,9 @@ use leaf_core::core::{
 };
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
 use leaf_core::network::protocol::game::{
-    clientbound_add_entity_packet::ClientboundAddEntityPacket,
-    clientbound_entity_event_packet::ClientboundEntityEventPacket,
-    clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket,
     clientbound_explode_packet::ClientboundExplodePacket,
-    clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket,
-    clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket,
-    clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
     clientbound_sound_packet::ClientboundSoundPacket,
 };
-use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::random::{LegacyRandomSource, RandomSource};
 use leaf_core::resources::Identifier;
 use leaf_core::sounds::{sound_event::SoundEvent, sound_source::SoundSource};
@@ -31,7 +29,6 @@ use crate::gameplay::PlayContext;
 use crate::items::{named_id, stack};
 use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, MobTarget, Peers};
-use crate::wire::Wire;
 use crate::world::{chunk, FlatWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
@@ -39,8 +36,8 @@ pub const FUSE: Duration = Duration::from_secs(4);
 const WORLD_LIMIT: usize = 60_000;
 const TNT_LIMIT: usize = 256;
 const SPAWNS_PER_TICK: usize = 256;
-const DISPLAYED_MOBS: usize = 192;
-const TRACKING_RADIUS: f64 = 48.0;
+const SIMULATED_MOBS_PER_PLAYER: usize = 192;
+const TRACKED_ADDITIONS_PER_TICK: usize = 512;
 const NATURAL_LIMIT: usize = 32;
 const TICK: Duration = Duration::from_millis(50);
 
@@ -61,6 +58,7 @@ impl Default for Mobs {
         Self(Mutex::new(Scene {
             entities: HashMap::new(),
             chunks: HashMap::new(),
+            chunk_revision: 0,
             batches: VecDeque::new(),
             explosives: HashSet::new(),
             queued: 0,
@@ -76,7 +74,8 @@ impl Default for Mobs {
 
 struct Scene {
     entities: HashMap<i32, Mob>,
-    chunks: HashMap<Chunk, HashSet<i32>>,
+    chunks: HashMap<Chunk, MobChunk>,
+    chunk_revision: u64,
     batches: VecDeque<Batch>,
     explosives: HashSet<i32>,
     queued: usize,
@@ -86,6 +85,12 @@ struct Scene {
     next_natural: Instant,
     tick: u32,
     random: LegacyRandomSource,
+}
+
+#[derive(Default)]
+struct MobChunk {
+    revision: u64,
+    ids: HashSet<i32>,
 }
 
 struct Batch {
@@ -207,7 +212,9 @@ impl Mobs {
             .normalize()
             .scale(0.28)
             .add(0.0, 0.24, 0.0);
-        mob.damage(damage, push, Instant::now(), ctx);
+        if mob.damage(damage, push, Instant::now(), ctx) {
+            scene.mark_changed(at_chunk(target));
+        }
     }
 
     pub fn tick(&self, now: Instant, ctx: &PlayContext<'_>, peers: &Peers) {
@@ -230,7 +237,7 @@ impl Mobs {
         for player in &players {
             active.extend(
                 scene
-                    .nearby(player.position, 32.0, DISPLAYED_MOBS, |_| true)
+                    .nearby(player.position, 32.0, SIMULATED_MOBS_PER_PLAYER)
                     .into_iter()
                     .map(|(id, _)| id),
             );
@@ -254,12 +261,15 @@ impl Mobs {
                 removed.push(id);
                 continue;
             }
-            let old_chunk = at_chunk(mob.motion.position);
+            let previous = SentMob::from(*mob);
+            let old_chunk = at_chunk(previous.motion.position);
             mob.step(id, tick, now, &players, peers, ctx.world);
             let new_chunk = at_chunk(mob.motion.position);
             if old_chunk != new_chunk {
                 scene.unindex(id, old_chunk);
-                scene.chunks.entry(new_chunk).or_default().insert(id);
+                scene.index(id, new_chunk);
+            } else if previous != SentMob::from(*mob) {
+                scene.mark_changed(new_chunk);
             }
         }
         for id in removed {
@@ -302,10 +312,7 @@ impl Scene {
             fuse,
         };
         self.entities.insert(id, mob);
-        self.chunks
-            .entry(at_chunk(position))
-            .or_default()
-            .insert(id);
+        self.index(id, at_chunk(position));
         if fuse.is_some() {
             self.explosives.insert(id);
         }
@@ -347,12 +354,24 @@ impl Scene {
         );
     }
 
+    fn index(&mut self, id: i32, coord: Chunk) {
+        self.chunks.entry(coord).or_default().ids.insert(id);
+        self.mark_changed(coord);
+    }
+
     fn unindex(&mut self, id: i32, coord: Chunk) {
-        let ids = self.chunks.get_mut(&coord).unwrap();
-        ids.remove(&id);
-        if ids.is_empty() {
+        let chunk = self.chunks.get_mut(&coord).unwrap();
+        chunk.ids.remove(&id);
+        if chunk.ids.is_empty() {
             self.chunks.remove(&coord);
+        } else {
+            self.mark_changed(coord);
         }
+    }
+
+    fn mark_changed(&mut self, coord: Chunk) {
+        self.chunk_revision += 1;
+        self.chunks.get_mut(&coord).unwrap().revision = self.chunk_revision;
     }
 
     fn remove(&mut self, id: i32) {
@@ -364,27 +383,19 @@ impl Scene {
         }
     }
 
-    fn nearby(
-        &self,
-        center: Vec3,
-        radius: f64,
-        limit: usize,
-        include: impl Fn(Chunk) -> bool,
-    ) -> Vec<(i32, Mob)> {
+    fn nearby(&self, center: Vec3, radius: f64, limit: usize) -> Vec<(i32, Mob)> {
         let min = at_chunk(center.subtract(radius, 0.0, radius));
         let max = at_chunk(center.add(radius, 0.0, radius));
         let mut result = Vec::new();
         for x in min.0..=max.0 {
             for z in min.1..=max.1 {
                 let coord = (x, z);
-                if include(coord) {
-                    if let Some(ids) = self.chunks.get(&coord) {
-                        result.extend(ids.iter().filter_map(|&id| {
-                            let mob = self.entities[&id];
-                            (center.distance_to_sqr(&mob.motion.position) <= radius * radius)
-                                .then_some((id, mob))
-                        }));
-                    }
+                if let Some(chunk) = self.chunks.get(&coord) {
+                    result.extend(chunk.ids.iter().filter_map(|&id| {
+                        let mob = self.entities[&id];
+                        (center.distance_to_sqr(&mob.motion.position) <= radius * radius)
+                            .then_some((id, mob))
+                    }));
                 }
             }
         }
@@ -522,14 +533,18 @@ impl Scene {
                 peers.hurt(target.id, damage, velocity, "explosion".into(), now);
             }
         }
-        for (id, mob) in self.nearby(center, 8.0, usize::MAX, |_| true) {
+        for (id, mob) in self.nearby(center, 8.0, usize::MAX) {
             if mob.fuse.is_none() {
                 if let Some((damage, velocity)) = blast_hit(center, mob.motion.position, ctx.world)
                 {
-                    self.entities
+                    if self
+                        .entities
                         .get_mut(&id)
                         .unwrap()
-                        .damage(damage, velocity, now, ctx);
+                        .damage(damage, velocity, now, ctx)
+                    {
+                        self.mark_changed(at_chunk(mob.motion.position));
+                    }
                 }
             }
         }
@@ -577,13 +592,13 @@ impl Scene {
 }
 
 impl Mob {
-    fn damage(&mut self, amount: f32, velocity: Vec3, now: Instant, ctx: &PlayContext<'_>) {
+    fn damage(&mut self, amount: f32, velocity: Vec3, now: Instant, ctx: &PlayContext<'_>) -> bool {
         if self.dying.is_some()
             || self.last_hurt.is_some_and(|last| {
                 now.saturating_duration_since(last) < Duration::from_millis(500)
             })
         {
-            return;
+            return false;
         }
         self.last_hurt = Some(now);
         self.health = (self.health - amount).max(0.0);
@@ -606,6 +621,7 @@ impl Mob {
                 }
             }
         }
+        true
     }
 
     fn step(
@@ -700,105 +716,6 @@ impl Mob {
     }
 }
 
-#[derive(Default)]
-pub struct MobTracker(HashMap<i32, (PositionMoveRotation, u32)>);
-
-impl MobTracker {
-    pub fn sees(&self, id: i32) -> bool {
-        self.0.contains_key(&id)
-    }
-
-    pub fn reset(&mut self) {
-        self.0.clear();
-    }
-
-    pub fn sync(
-        &mut self,
-        position: Vec3,
-        loaded: &HashSet<Chunk>,
-        ctx: &PlayContext<'_>,
-        wire: &mut Wire,
-    ) -> io::Result<()> {
-        let visible =
-            ctx.mobs
-                .0
-                .lock()
-                .unwrap()
-                .nearby(position, TRACKING_RADIUS, DISPLAYED_MOBS, |c| {
-                    loaded.contains(&c)
-                });
-        let now = Instant::now();
-        let mut previous = std::mem::take(&mut self.0);
-        let mut additions = 0;
-        for (id, mob) in visible {
-            match previous.remove(&id) {
-                Some((motion, hurt)) => {
-                    if motion != mob.motion {
-                        wire.send(
-                            ctx.ids,
-                            &ClientboundEntityPositionSyncPacket::new(
-                                id,
-                                mob.motion,
-                                mob.on_ground,
-                            ),
-                        )?;
-                    }
-                    if hurt != mob.hurt {
-                        if mob.dying.is_some() {
-                            wire.send(ctx.ids, &ClientboundEntityEventPacket::new(id, 3))?;
-                        } else {
-                            wire.send(ctx.ids, &ClientboundHurtAnimationPacket::new(id, 0.0))?;
-                        }
-                    }
-                }
-                None if additions < 32 && mob.dying.is_none() => {
-                    additions += 1;
-                    let p = mob.motion.position;
-                    wire.send(
-                        ctx.ids,
-                        &ClientboundAddEntityPacket::new(
-                            id,
-                            mob.uuid,
-                            Holder::Reference(mob.kind.id),
-                            p.x,
-                            p.y,
-                            p.z,
-                            mob.motion.delta_movement,
-                            mob.motion.x_rot,
-                            mob.motion.y_rot,
-                            f64::from(mob.motion.y_rot),
-                            0,
-                        ),
-                    )?;
-                    if let Some(fuse) = mob.fuse {
-                        let ticks = (fuse.saturating_duration_since(now).as_millis()
-                            / TICK.as_millis())
-                        .max(1) as i32;
-                        let value = DataValue {
-                            id: 8,
-                            serializer: 1,
-                            value: Box::new(ticks),
-                        };
-                        wire.send(
-                            ctx.ids,
-                            &ClientboundSetEntityDataPacket::new(id, vec![value]),
-                        )?;
-                    }
-                }
-                None => continue,
-            }
-            self.0.insert(id, (mob.motion, mob.hurt));
-        }
-        if !previous.is_empty() {
-            wire.send(
-                ctx.ids,
-                &ClientboundRemoveEntitiesPacket::new(previous.into_keys().collect()),
-            )?;
-        }
-        Ok(())
-    }
-}
-
 fn spawn_item(ctx: &PlayContext<'_>, item: i32, position: Vec3) {
     ctx.drops.spawn(
         ctx.entity_ids.fetch_add(1, Ordering::Relaxed),
@@ -859,7 +776,7 @@ mod tests {
     use crate::wire::PacketIds;
 
     #[test]
-    fn queues_spawns_in_groups_and_tracks_a_bounded_view_of_50k_pigs() {
+    fn queues_spawns_in_groups_and_tracks_all_50k_pigs() {
         let directory = TestWorld::new();
         std::fs::create_dir_all(&directory.0).unwrap();
         let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap());
@@ -898,8 +815,23 @@ mod tests {
             .map(|mob| BlockPos::containing_vec3(&mob.motion.position))
             .collect::<HashSet<_>>();
         assert_eq!(positions.len(), 50_000);
-        let visible = scene.nearby(origin, TRACKING_RADIUS, DISPLAYED_MOBS, |_| true);
-        assert_eq!(visible.len(), DISPLAYED_MOBS);
-        assert_eq!(visible[0].1.motion.position, origin);
+        let loaded = (-32..=32)
+            .flat_map(|x| (-32..=32).map(move |z| (x, z)))
+            .collect();
+        let mut tracker = MobTracker::default();
+        let mut observed = HashSet::new();
+        loop {
+            let changes = tracker.collect(&scene, &loaded, (0, 0));
+            assert!(changes.added.len() <= TRACKED_ADDITIONS_PER_TICK);
+            assert!(changes.removed.is_empty());
+            if changes.added.is_empty() {
+                break;
+            }
+            for (id, _) in changes.added {
+                assert!(observed.insert(id));
+            }
+        }
+        assert_eq!(observed.len(), 50_000);
+        assert!(observed.into_iter().all(|id| tracker.sees(id)));
     }
 }

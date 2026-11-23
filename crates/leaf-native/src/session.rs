@@ -704,7 +704,7 @@ impl Server {
                         )?;
                         permission = None;
                         tracker.reset_entities(wire, ids)?;
-                        mob_tracker.reset();
+                        mob_tracker.reset(wire, ids)?;
                         chunks.restart(game.player.chunk(), wire, ids)?;
                     }
                 }
