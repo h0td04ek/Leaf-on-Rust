@@ -7,6 +7,8 @@ mod drops;
 mod gameplay;
 mod items;
 mod maps;
+mod mob_types;
+mod mobs;
 mod operators;
 mod peers;
 mod player_data;

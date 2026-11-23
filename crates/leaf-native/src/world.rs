@@ -1,7 +1,11 @@
+#[path = "blast.rs"]
+mod blast;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use leaf_core::core::block_pos::BlockPos;
+use leaf_core::core::{block_pos::BlockPos, direction::Direction};
+use leaf_core::world::phys::vec3::Vec3;
 use std::io;
 
 use leaf_core::util::uuid::Uuid;
@@ -205,6 +209,96 @@ impl FlatWorld {
         true
     }
 
+    pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
+        let floor = BlockPos::containing_vec3(&position);
+        let roof = BlockPos::containing_vec3(&position.add(0.0, height - 0.01, 0.0));
+        let edits = self.edits.lock().unwrap();
+        FlatWorld::editable(floor)
+            && (floor.y..=roof.y).all(|y| {
+                let state = state_at(&edits, BlockPos::new(floor.x, y, floor.z));
+                let block = Blocks::vanilla().get(state);
+                if aquatic {
+                    block.name == "water"
+                } else {
+                    block.replaceable && block.name != "water" && block.name != "lava"
+                }
+            })
+    }
+
+    pub fn open_surface(&self, x: i32, z: i32) -> Option<Vec3> {
+        let edits = self.edits.lock().unwrap();
+        let column = edits.get(&(x >> 4, z >> 4));
+        let top_edit = column
+            .into_iter()
+            .flat_map(|changes| changes.iter())
+            .filter(|(pos, state)| {
+                pos.x == x && pos.z == z && !Blocks::vanilla().get(**state).replaceable
+            })
+            .map(|(pos, _)| pos.y)
+            .max();
+        let top = top_edit.unwrap_or(SPAWN_Y - 1).max(SPAWN_Y - 1);
+        for y in (MIN_Y..=top).rev() {
+            let pos = BlockPos::new(x, y, z);
+            if !Blocks::vanilla().get(state_at(&edits, pos)).replaceable {
+                return FlatWorld::editable(pos.offset(0, 1, 0))
+                    .then(|| Vec3::new(f64::from(x) + 0.5, f64::from(y + 1), f64::from(z) + 0.5));
+            }
+        }
+        None
+    }
+
+    pub fn toggle_lever(&self, pos: BlockPos, audience: &Audience) -> bool {
+        let mut edits = self.edits.lock().unwrap();
+        let state = state_at(&edits, pos);
+        let block = Blocks::vanilla().get(state);
+        if block.name != "lever" {
+            return false;
+        }
+        let powered = if block.property(state, "powered") == Some("true") {
+            "false"
+        } else {
+            "true"
+        };
+        update(
+            &mut edits,
+            pos,
+            block.state(state, &[("powered", powered)]),
+            audience,
+        );
+        true
+    }
+
+    pub fn powered_tnt_near(&self, changed: BlockPos) -> Vec<BlockPos> {
+        let edits = self.edits.lock().unwrap();
+        let blocks = Blocks::vanilla();
+        let power = |pos| {
+            let state = state_at(&edits, pos);
+            let block = blocks.get(state);
+            matches!(
+                block.name,
+                "redstone_block" | "redstone_torch" | "redstone_wall_torch"
+            ) || block.name == "lever" && block.property(state, "powered") == Some("true")
+        };
+        let is_tnt = |pos| blocks.get(state_at(&edits, pos)).name == "tnt";
+        let mut powered = Vec::new();
+        if is_tnt(changed)
+            && Direction::VALUES
+                .into_iter()
+                .any(|side| power(changed.relative(side)))
+        {
+            powered.push(changed);
+        }
+        if power(changed) {
+            powered.extend(
+                Direction::VALUES
+                    .into_iter()
+                    .map(|side| changed.relative(side))
+                    .filter(|&p| is_tnt(p)),
+            );
+        }
+        powered
+    }
+
     pub fn map_colors(&self, x: i32, z: i32, step: i32) -> Vec<u8> {
         let side = MAP_SIZE as usize;
         let mut pixels = vec![46; side * side]; // stone, normal brightness
@@ -335,6 +429,14 @@ fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
 }
 
 fn update(edits: &mut WorldEdits, pos: BlockPos, state: i32, audience: &Audience) {
+    set_state(edits, pos, state);
+    audience.broadcast(
+        ClientboundBlockUpdatePacket::new(pos, state),
+        Some(chunk(pos)),
+    );
+}
+
+fn set_state(edits: &mut WorldEdits, pos: BlockPos, state: i32) {
     let coord = chunk(pos);
     let changes = edits.entry(coord).or_default();
     if state == base(pos) {
@@ -345,7 +447,6 @@ fn update(edits: &mut WorldEdits, pos: BlockPos, state: i32, audience: &Audience
     if changes.is_empty() {
         edits.remove(&coord);
     }
-    audience.broadcast(ClientboundBlockUpdatePacket::new(pos, state), Some(coord));
 }
 
 fn matching_half(block: &Block, state: i32, property: &str, value: &str) -> bool {

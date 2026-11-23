@@ -43,6 +43,8 @@ use crate::crafting::Crafting;
 use crate::drops::{DropTracker, Drops};
 use crate::items::{item_id, named_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY};
 use crate::maps::{map_id, set_map_id, Maps};
+use crate::mob_types;
+use crate::mobs::Mobs;
 use crate::peers::{gliding_packet, View};
 use crate::player_data::PlayerData;
 use crate::recipes::Recipes;
@@ -57,6 +59,7 @@ pub struct PlayContext<'a> {
     pub world: &'a FlatWorld,
     pub drops: &'a Drops,
     pub maps: &'a Maps,
+    pub mobs: &'a Mobs,
     pub name: &'a str,
     pub player: Uuid,
     pub ids: &'a PacketIds,
@@ -469,6 +472,37 @@ impl Gameplay {
         }
         let inventory_slot = self.hand_slot(hand);
         let held = item_id(&self.player.inventory[inventory_slot]);
+        if let Some(id) = held {
+            let kind = Blocks::vanilla().get(ctx.world.block(pos));
+            let flint = id == named_id("flint_and_steel");
+            let charge = id == named_id("fire_charge");
+            if kind.name == "tnt" && (flint || charge) {
+                if ctx.mobs.ignite(pos, ctx) && !self.player.mode.is_creative() {
+                    let stack = &mut self.player.inventory[inventory_slot];
+                    let damage = stack.get_damage_value() + 1;
+                    if charge || damage >= stack.get_max_damage() {
+                        stack.shrink(1);
+                    } else {
+                        stack.set_damage_value(damage);
+                    }
+                    self.sync_slot(inventory_slot, wire, ctx.ids)?;
+                }
+                return Ok(());
+            }
+            if let Some(mob) = mob_types::from_egg(id) {
+                let target = if kind.replaceable { pos } else { adjacent };
+                let position = Vec3::new(
+                    f64::from(target.x) + 0.5,
+                    f64::from(target.y),
+                    f64::from(target.z) + 0.5,
+                );
+                if ctx.mobs.egg(mob, position, ctx) && !self.player.mode.is_creative() {
+                    self.player.inventory[inventory_slot].shrink(1);
+                    self.sync_slot(inventory_slot, wire, ctx.ids)?;
+                }
+                return Ok(());
+            }
+        }
         if !(self.sneaking && held.is_some()) {
             if Blocks::vanilla().get(ctx.world.block(pos)).name == "crafting_table" && hand == 0 {
                 self.close_crafting(wire, ctx, true)?;
@@ -483,6 +517,10 @@ impl Gameplay {
                     ),
                 )?;
                 return self.sync_menu(wire, ctx);
+            }
+            if ctx.world.toggle_lever(pos, ctx.audience) {
+                ctx.mobs.power_changed(pos, ctx);
+                return Ok(());
             }
             if ctx.world.toggle_door(pos, ctx.audience) {
                 return Ok(());
@@ -512,6 +550,7 @@ impl Gameplay {
             .world
             .place_block(pos, placed, state, intersects_player, ctx.audience)
         {
+            ctx.mobs.power_changed(placed, ctx);
             if !self.player.mode.is_creative() {
                 self.player.inventory[inventory_slot].shrink(1);
                 self.sync_slot(inventory_slot, wire, ctx.ids)?;

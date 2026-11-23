@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use leaf_core::command::brigadier::{CommandDispatcher, CommandExecutionError, CommandNode};
+use leaf_core::command::arguments::vanilla::Coordinates;
+use leaf_core::command::brigadier::{
+    CommandContext, CommandDispatcher, CommandExecutionError, CommandNode, CommandSuggestion,
+};
 use leaf_core::command::brigadier_argument::{ArgumentType, ArgumentValue, StringMode};
 use leaf_core::commands::gamerule::{register_game_rule_command, GameRuleCommandSource};
 use leaf_core::commands::world::{
@@ -17,14 +20,20 @@ use leaf_core::network::protocol::game::{
     clientbound_set_time_packet::ClientboundSetTimePacket,
 };
 use leaf_core::random::{LegacyRandomSource, RandomSource};
+use leaf_core::resources::Identifier;
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::flag::feature_flag_set::FeatureFlagSet;
 use leaf_core::world::level::game_type::GameType;
-use leaf_core::world::level::gamerules::game_rules::{advance_time, advance_weather, block_drops};
+use leaf_core::world::level::gamerules::game_rules::{
+    advance_time, advance_weather, block_drops, mob_drops, spawn_mobs, tnt_explodes,
+    tnt_explosion_drop_decay,
+};
 use leaf_core::world::level::gamerules::GameRules;
 
 use crate::audience::Audience;
+use crate::mob_types::{self, MobType};
+use crate::mobs::{self, COMMAND_LIMIT};
 use crate::operators::{Operators, ALL, GAMEMASTERS, OWNERS};
 use crate::wire::{PacketIds, Wire};
 
@@ -33,6 +42,11 @@ const SEED: i64 = 0;
 pub enum PlayerCommand {
     Kit,
     SetMode(GameType, Option<String>),
+    Summon {
+        kind: &'static MobType,
+        position: Option<Coordinates>,
+        count: usize,
+    },
 }
 
 pub struct Commands {
@@ -52,7 +66,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /kit. Operators: /gamemode, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
+                            "/help, /kit. Operators: /gamemode, /summon, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
                         ),
                         false,
                     );
@@ -108,6 +122,7 @@ impl Commands {
                 ),
             )
             .expect("register gamemode target");
+        register_summon(&mut dispatcher);
         for (command, grant) in [("op", true), ("deop", false)] {
             let root = dispatcher
                 .add_node(
@@ -186,6 +201,79 @@ impl Commands {
     }
 }
 
+fn register_summon(dispatcher: &mut CommandDispatcher<CommandWorld>) {
+    let suggestions = Identifier::minecraft("ask_server");
+    dispatcher.register_suggestion_provider(suggestions.clone(), |_, _, prefix, entries| {
+        let path = prefix.strip_prefix("minecraft:").unwrap_or(prefix);
+        entries.extend(
+            mob_types::names()
+                .filter(|name| name.starts_with(path))
+                .map(|name| CommandSuggestion {
+                    text: format!("minecraft:{name}"),
+                    tooltip: None,
+                }),
+        );
+    });
+    let summon = dispatcher
+        .add_node(
+            dispatcher.root(),
+            CommandNode::literal("summon")
+                .requires(|source: &CommandWorld| source.has_permission(GAMEMASTERS)),
+        )
+        .unwrap();
+    let entity = dispatcher
+        .add_node(
+            summon,
+            CommandNode::argument("entity", ArgumentType::Identifier)
+                .with_suggestion_provider(suggestions)
+                .executes(resolve_summon),
+        )
+        .unwrap();
+    let pos = dispatcher
+        .add_node(
+            entity,
+            CommandNode::argument("position", ArgumentType::Vec3).executes(resolve_summon),
+        )
+        .unwrap();
+    dispatcher
+        .add_node(
+            pos,
+            CommandNode::argument(
+                "count",
+                ArgumentType::Integer {
+                    min: 1,
+                    max: COMMAND_LIMIT,
+                },
+            )
+            .executes(resolve_summon),
+        )
+        .unwrap();
+}
+
+fn resolve_summon(world: &mut CommandWorld, context: &CommandContext) -> i32 {
+    let Some(ArgumentValue::Identifier(id)) = context.argument("entity") else {
+        unreachable!("registered entity argument");
+    };
+    let Some(kind) = mob_types::get(id) else {
+        world.send_success(Component::literal(format!("Cannot summon {id}")), false);
+        return 0;
+    };
+    let position = match context.argument("position") {
+        Some(ArgumentValue::Coordinates(position)) => Some(*position),
+        _ => None,
+    };
+    let count = match context.argument("count") {
+        Some(ArgumentValue::Integer(count)) => *count as usize,
+        _ => 1,
+    };
+    world.action = Some(PlayerCommand::Summon {
+        kind,
+        position,
+        count,
+    });
+    1
+}
+
 pub struct CommandWorld {
     started: Instant,
     operators: Operators,
@@ -226,6 +314,21 @@ impl CommandWorld {
 
     pub fn permission(&self) -> u8 {
         self.permission
+    }
+
+    pub fn mob_rules(&self) -> mobs::Rules {
+        mobs::Rules {
+            natural_spawns: self.rules.get_or_default(&spawn_mobs()),
+            hostile_spawns: self.difficulty != Difficulty::Peaceful
+                && (13_000..23_000).contains(&self.day_time().rem_euclid(24_000)),
+            tnt: self.rules.get_or_default(&tnt_explodes()),
+            block_drops: self.drops_enabled(),
+            decay: self.rules.get_or_default(&tnt_explosion_drop_decay()),
+        }
+    }
+
+    pub fn mob_drops(&self) -> bool {
+        self.rules.get_or_default(&mob_drops())
     }
 
     pub fn drops_enabled(&self) -> bool {

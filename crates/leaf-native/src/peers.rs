@@ -66,10 +66,52 @@ pub struct Peers(Mutex<HashMap<i32, OnlinePlayer>>);
 pub struct Hit {
     pub health: f32,
     pub velocity: Vec3,
-    pub killer: String,
+    pub death_message: String,
+}
+
+#[derive(Clone, Copy)]
+pub struct MobTarget {
+    pub id: i32,
+    pub position: Vec3,
+    pub vulnerable: bool,
 }
 
 impl Peers {
+    pub fn mob_targets(&self) -> Vec<MobTarget> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(&id, online)| {
+                let player = &online.player;
+                (player.health > 0.0 && player.view.mode != GameType::Spectator).then(|| {
+                    MobTarget {
+                        id,
+                        position: player.view.motion.position,
+                        vulnerable: player.view.mode.is_survival(),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    pub fn hurt(&self, id: i32, damage: f32, velocity: Vec3, source: String, now: Instant) {
+        let mut players = self.0.lock().unwrap();
+        let Some(target) = players.get_mut(&id) else {
+            return;
+        };
+        if !can_hurt(target, now) {
+            return;
+        }
+        let name = &target.player.profile.name;
+        let message = if source == "explosion" {
+            format!("{name} blew up")
+        } else {
+            format!("{name} was slain by {source}")
+        };
+        apply_hit(target, damage, velocity, message, now);
+    }
+
     pub fn join(&self, id: i32, profile: GameProfile, view: View, health: f32) -> Presence<'_> {
         let player = Player {
             profile,
@@ -203,12 +245,7 @@ impl Presence<'_> {
             return;
         };
         let destination = &target.player;
-        if destination.health == 0.0
-            || !destination.view.mode.is_survival()
-            || target
-                .last_hurt
-                .is_some_and(|last| now.duration_since(last) < HURT_COOLDOWN)
-        {
+        if !can_hurt(target, now) {
             return;
         }
         let from = source.view.motion.position;
@@ -228,30 +265,21 @@ impl Presence<'_> {
             .equipment
             .iter()
             .find(|(slot, _)| *slot == EquipmentSlot::Mainhand)
-            .and_then(|(_, item)| item.item_identifier())
-            .map_or(1.0, |id| match id.get_path() {
-                "wooden_sword" | "golden_sword" => 4.0,
-                "stone_sword" => 5.0,
-                "iron_sword" => 6.0,
-                "diamond_sword" => 7.0,
-                "netherite_sword" => 8.0,
-                _ => 1.0,
-            });
-        let health = (destination.health - damage).max(0.0);
+            .map_or(1.0, |(_, item)| attack_damage(item));
         let direction = Vec3::new(to.x - from.x, 0.0, to.z - from.z).normalize();
         let velocity = direction.scale(0.4).add(0.0, 0.36, 0.0);
-        let killer = source.profile.name.clone();
-
+        let message = format!(
+            "{} was slain by {}",
+            destination.profile.name, source.profile.name
+        );
         players.get_mut(&self.id).unwrap().last_attack = Some(now);
-        let target = players.get_mut(&target_id).unwrap();
-        target.last_hurt = Some(now);
-        target.player.health = health;
-        target.player.hurt = target.player.hurt.wrapping_add(1);
-        target.pending_hit = Some(Hit {
-            health,
+        apply_hit(
+            players.get_mut(&target_id).unwrap(),
+            damage,
             velocity,
-            killer,
-        });
+            message,
+            now,
+        );
     }
 }
 
@@ -261,7 +289,45 @@ impl Drop for Presence<'_> {
     }
 }
 
-fn clear_sight(world: &FlatWorld, from: Vec3, to: Vec3) -> bool {
+fn can_hurt(target: &OnlinePlayer, now: Instant) -> bool {
+    target.player.health > 0.0
+        && target.player.view.mode.is_survival()
+        && target
+            .last_hurt
+            .is_none_or(|last| now.saturating_duration_since(last) >= HURT_COOLDOWN)
+}
+
+fn apply_hit(
+    target: &mut OnlinePlayer,
+    damage: f32,
+    velocity: Vec3,
+    death_message: String,
+    now: Instant,
+) {
+    target.last_hurt = Some(now);
+    let health = (target.player.health - damage).max(0.0);
+    target.player.health = health;
+    target.player.hurt = target.player.hurt.wrapping_add(1);
+    target.pending_hit = Some(Hit {
+        health,
+        velocity,
+        death_message,
+    });
+}
+
+pub fn attack_damage(item: &ItemStack) -> f32 {
+    item.item_identifier()
+        .map_or(1.0, |id| match id.get_path() {
+            "wooden_sword" | "golden_sword" => 4.0,
+            "stone_sword" => 5.0,
+            "iron_sword" => 6.0,
+            "diamond_sword" => 7.0,
+            "netherite_sword" => 8.0,
+            _ => 1.0,
+        })
+}
+
+pub fn clear_sight(world: &FlatWorld, from: Vec3, to: Vec3) -> bool {
     let direction = Vec3::new(to.x - from.x, to.y - from.y, to.z - from.z);
     let steps = (from.distance_to_sqr(&to).sqrt() * 4.0).ceil() as i32;
     (1..steps).all(|step| {

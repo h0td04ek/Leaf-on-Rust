@@ -12,8 +12,11 @@ use leaf_core::network::protocol::game::clientbound_level_chunk_with_light_packe
 use leaf_core::core::block_pos::BlockPos;
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
 use leaf_core::network::protocol::game::{
+    clientbound_add_entity_packet::ClientboundAddEntityPacket,
     clientbound_container_set_content_packet::ClientboundContainerSetContentPacket,
+    clientbound_explode_packet::ClientboundExplodePacket,
     clientbound_open_screen_packet::ClientboundOpenScreenPacket,
+    clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket,
 };
 use leaf_core::resources::Identifier;
 use leaf_core::util::uuid::Uuid;
@@ -26,10 +29,10 @@ use crate::player_data::PlayerStore;
 use crate::recipes::Recipes;
 use crate::session::Server;
 
-struct TestWorld(PathBuf);
+pub(crate) struct TestWorld(pub(crate) PathBuf);
 
 impl TestWorld {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(std::env::temp_dir().join(format!("leaf-native-test-{}", Uuid::random())))
     }
 }
@@ -370,11 +373,15 @@ fn client_information(stream: &mut TcpStream, id: i32, distance: i32) {
 }
 
 fn spawned(stream: &mut TcpStream, kind: i32) -> i32 {
-    let mut body = packet(stream, 1);
-    let id = body.read_var_int();
-    body.read_uuid();
-    assert_eq!(body.read_var_int(), kind);
-    id
+    for _ in 0..128 {
+        let mut body = multiplayer_packet(stream, 1);
+        let id = body.read_var_int();
+        body.read_uuid();
+        if body.read_var_int() == kind {
+            return id;
+        }
+    }
+    panic!("expected entity type {kind}")
 }
 
 fn enter_play(client: &mut TcpStream, name: &str, distance: i32) -> i32 {
@@ -1028,4 +1035,140 @@ fn expands_native_maps_and_saves_firework_components() {
         .unwrap();
     assert_eq!(fireworks.flight_duration, 2);
     assert_eq!(fireworks.explosions, [effect]);
+}
+
+#[test]
+fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
+    let world = TestWorld::new();
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
+    let owner_id = enter_play(&mut owner, "h0td04ek", 4);
+    acknowledge_teleport(&mut owner);
+    let (mut guest, guest_worker) = connect_server(Arc::clone(&server));
+    enter_play(&mut guest, "Witness", 4);
+    acknowledge_teleport(&mut guest);
+    let pig = crate::mob_types::named("pig").unwrap().id;
+    let chicken = crate::mob_types::named("chicken").unwrap().id;
+
+    assert_eq!(peer_entity(&mut guest, "h0td04ek"), owner_id);
+    peer_entity(&mut owner, "Witness");
+    command(&mut owner, "gamerule spawn_mobs false");
+    multiplayer_packet(&mut owner, 119);
+    command(&mut guest, "summon pig");
+    loop {
+        let reply = multiplayer_packet(&mut guest, 119)
+            .read_nbt()
+            .unwrap()
+            .unwrap();
+        if reply
+            .as_string()
+            .is_some_and(|text| text.contains("Unknown"))
+        {
+            break;
+        }
+    }
+
+    command(&mut owner, "summon minecraft:pig ~2 ~ ~ 1");
+    assert_eq!(spawned(&mut owner, pig), spawned(&mut guest, pig));
+    set_creative(&mut owner, 36, "chicken_spawn_egg", 1);
+    use_block(&mut owner, BlockPos::new(1, 15, 1), 1);
+    assert_eq!(spawned(&mut owner, chicken), spawned(&mut guest, chicken));
+
+    command(&mut owner, "gamerule spawn_mobs true");
+    let natural = loop {
+        let entity = ClientboundAddEntityPacket::stream_codec()
+            .decode(&mut multiplayer_packet(&mut guest, 1));
+        if entity.id != owner_id {
+            break entity;
+        }
+    };
+    assert!(
+        Vec3::new(natural.x, natural.y, natural.z).distance_to(&Vec3::new(0.5, 16.0, 0.5)) >= 24.0
+    );
+    drop(owner);
+    drop(guest);
+    assert!(owner_worker.join().unwrap().is_err());
+    assert!(guest_worker.join().unwrap().is_err());
+}
+
+#[test]
+fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
+    let world = TestWorld::new();
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
+    let owner_id = enter_play(&mut owner, "h0td04ek", 2);
+    acknowledge_teleport(&mut owner);
+    let (mut guest, guest_worker) = connect_server(server);
+    enter_play(&mut guest, "Witness", 2);
+    acknowledge_teleport(&mut guest);
+    assert_eq!(peer_entity(&mut guest, "h0td04ek"), owner_id);
+    peer_entity(&mut owner, "Witness");
+    command(&mut owner, "gamerule spawn_mobs false");
+    multiplayer_packet(&mut owner, 119);
+
+    let a = BlockPos::new(1, 16, 0);
+    let b = BlockPos::new(2, 16, 0);
+    let tnt = crate::mob_types::named("tnt").unwrap().id;
+    set_creative(&mut owner, 36, "tnt", 2);
+    for (number, target) in [a, b].into_iter().enumerate() {
+        use_block(&mut owner, target.offset(0, -1, 0), number as i32);
+        for stream in [&mut owner, &mut guest] {
+            let state = block_update(stream, target);
+            assert_eq!(Blocks::vanilla().get(state).name, "tnt");
+        }
+    }
+    set_creative(&mut owner, 36, "flint_and_steel", 1);
+    use_block(&mut owner, a, 2);
+    for stream in [&mut owner, &mut guest] {
+        assert_eq!(block_update(stream, a), 0);
+    }
+    let first = spawned(&mut owner, tnt);
+    assert_eq!(spawned(&mut guest, tnt), first);
+
+    let first_chain = observe_explosion_and_chain(&mut owner, tnt, b);
+    assert_ne!(first_chain, first);
+    assert_eq!(observe_explosion_and_chain(&mut guest, tnt, b), first_chain);
+    let next =
+        ClientboundExplodePacket::stream_codec().decode(&mut multiplayer_packet(&mut guest, 36));
+    assert!(next.center.distance_to(&Vec3::new(2.5, 16.0, 0.5)) < 1.0);
+    drop(owner);
+    drop(guest);
+    assert!(owner_worker.join().unwrap().is_err());
+    assert!(guest_worker.join().unwrap().is_err());
+}
+
+fn observe_explosion_and_chain(client: &mut TcpStream, tnt: i32, block: BlockPos) -> i32 {
+    let mut chain = None;
+    let mut exploded = false;
+    let mut cleared = false;
+    for _ in 0..400 {
+        let (id, mut body) = receive(client);
+        match id {
+            1 => {
+                let entity = body.read_var_int();
+                body.read_uuid();
+                if body.read_var_int() == tnt && chain.is_none() {
+                    chain = Some(entity);
+                }
+            }
+            36 => {
+                let event = ClientboundExplodePacket::stream_codec().decode(&mut body);
+                assert_eq!(event.radius, 4.0);
+                assert!(event.block_count > 0);
+                assert!(event.center.distance_to(&Vec3::new(1.5, 16.0, 0.5)) < 1.0);
+                exploded = true;
+            }
+            82 => {
+                let packet = ClientboundSectionBlocksUpdatePacket::stream_codec().decode(&mut body);
+                packet.run_updates(|pos, state| cleared |= pos == block && state == 0);
+            }
+            _ => {}
+        }
+        if exploded && cleared {
+            if let Some(chain) = chain {
+                return chain;
+            }
+        }
+    }
+    panic!("expected the first explosion, block update and chained TNT");
 }

@@ -1,0 +1,905 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use leaf_core::core::{
+    block_pos::BlockPos, holder::Holder, particles::particle_options::ParticleOptions,
+    particles::particle_types::particle_type_by_identifier,
+};
+use leaf_core::entity::position_move_rotation::PositionMoveRotation;
+use leaf_core::network::protocol::game::{
+    clientbound_add_entity_packet::ClientboundAddEntityPacket,
+    clientbound_entity_event_packet::ClientboundEntityEventPacket,
+    clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket,
+    clientbound_explode_packet::ClientboundExplodePacket,
+    clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket,
+    clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket,
+    clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
+    clientbound_sound_packet::ClientboundSoundPacket,
+};
+use leaf_core::network::syncher::synched_entity_data::DataValue;
+use leaf_core::random::{LegacyRandomSource, RandomSource};
+use leaf_core::resources::Identifier;
+use leaf_core::sounds::{sound_event::SoundEvent, sound_source::SoundSource};
+use leaf_core::util::{random::weighted_list::WeightedList, uuid::Uuid};
+use leaf_core::world::{level::game_type::GameType, phys::vec3::Vec3};
+
+use crate::blocks::Blocks;
+use crate::gameplay::PlayContext;
+use crate::items::{named_id, stack};
+use crate::mob_types::{self, MobType};
+use crate::peers::{clear_sight, MobTarget, Peers};
+use crate::wire::Wire;
+use crate::world::{chunk, FlatWorld};
+
+pub const COMMAND_LIMIT: i32 = 50_000;
+pub const FUSE: Duration = Duration::from_secs(4);
+const WORLD_LIMIT: usize = 60_000;
+const TNT_LIMIT: usize = 256;
+const SPAWNS_PER_TICK: usize = 256;
+const DISPLAYED_MOBS: usize = 192;
+const TRACKING_RADIUS: f64 = 48.0;
+const NATURAL_LIMIT: usize = 32;
+const TICK: Duration = Duration::from_millis(50);
+
+type Chunk = (i32, i32);
+
+pub struct Rules {
+    pub natural_spawns: bool,
+    pub hostile_spawns: bool,
+    pub tnt: bool,
+    pub block_drops: bool,
+    pub decay: bool,
+}
+
+pub struct Mobs(Mutex<Scene>);
+
+impl Default for Mobs {
+    fn default() -> Self {
+        Self(Mutex::new(Scene {
+            entities: HashMap::new(),
+            chunks: HashMap::new(),
+            batches: VecDeque::new(),
+            explosives: HashSet::new(),
+            queued: 0,
+            queued_tnt: 0,
+            natural: [0; 2],
+            last_tick: None,
+            next_natural: Instant::now() + Duration::from_secs(3),
+            tick: 0,
+            random: LegacyRandomSource::new(94309),
+        }))
+    }
+}
+
+struct Scene {
+    entities: HashMap<i32, Mob>,
+    chunks: HashMap<Chunk, HashSet<i32>>,
+    batches: VecDeque<Batch>,
+    explosives: HashSet<i32>,
+    queued: usize,
+    queued_tnt: usize,
+    natural: [usize; 2],
+    last_tick: Option<Instant>,
+    next_natural: Instant,
+    tick: u32,
+    random: LegacyRandomSource,
+}
+
+struct Batch {
+    kind: &'static MobType,
+    origin: Vec3,
+    spawned: usize,
+    total: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Mob {
+    kind: &'static MobType,
+    uuid: Uuid,
+    motion: PositionMoveRotation,
+    health: f32,
+    natural: bool,
+    on_ground: bool,
+    hurt: u32,
+    last_hurt: Option<Instant>,
+    next_attack: Option<Instant>,
+    dying: Option<Instant>,
+    fuse: Option<Instant>,
+}
+
+impl Mobs {
+    pub fn summon(
+        &self,
+        kind: &'static MobType,
+        position: Vec3,
+        count: usize,
+        ctx: &PlayContext<'_>,
+    ) -> Result<(), &'static str> {
+        if !valid_position(position) {
+            return Err("The summon position is outside this world");
+        }
+        let mut scene = self.0.lock().unwrap();
+        if count == 0
+            || count > COMMAND_LIMIT as usize
+            || scene.entities.len() + scene.queued + count > WORLD_LIMIT
+        {
+            return Err("Too many entities in the world or in the spawning queue");
+        }
+        if kind.name == "tnt" && scene.explosives.len() + scene.queued_tnt + count > TNT_LIMIT {
+            return Err("Too many primed TNT entities");
+        }
+        if count == 1 {
+            let fuse = (kind.name == "tnt").then(|| Instant::now() + FUSE);
+            scene.add(kind, position, false, fuse, ctx.entity_ids);
+        } else {
+            scene.batches.push_back(Batch {
+                kind,
+                origin: position,
+                spawned: 0,
+                total: count,
+            });
+            scene.queued += count;
+            if kind.name == "tnt" {
+                scene.queued_tnt += count;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn egg(&self, kind: &'static MobType, position: Vec3, ctx: &PlayContext<'_>) -> bool {
+        ctx.world.has_room(position, kind.height, kind.aquatic)
+            && self.summon(kind, position, 1, ctx).is_ok()
+    }
+
+    pub fn ignite(&self, position: BlockPos, ctx: &PlayContext<'_>) -> bool {
+        if !ctx.commands.world.lock().unwrap().mob_rules().tnt {
+            return false;
+        }
+        let mut scene = self.0.lock().unwrap();
+        if scene.explosives.len() + scene.queued_tnt >= TNT_LIMIT {
+            return false;
+        }
+        let state = ctx.world.block(position);
+        if Blocks::vanilla().get(state).name == "tnt"
+            && ctx.world.break_block(position, state, ctx.audience)
+        {
+            scene.prime(position, Instant::now() + FUSE, ctx);
+            return true;
+        }
+        false
+    }
+
+    pub fn power_changed(&self, position: BlockPos, ctx: &PlayContext<'_>) {
+        for target in ctx.world.powered_tnt_near(position) {
+            self.ignite(target, ctx);
+        }
+    }
+
+    pub fn attack(&self, id: i32, from: Vec3, mode: GameType, damage: f32, ctx: &PlayContext<'_>) {
+        if mode == GameType::Spectator {
+            return;
+        }
+        let mut scene = self.0.lock().unwrap();
+        let Some(mob) = scene
+            .entities
+            .get_mut(&id)
+            .filter(|m| m.fuse.is_none() && m.dying.is_none())
+        else {
+            return;
+        };
+        let target = mob.motion.position;
+        let reach: f64 = if mode.is_creative() { 5.0 } else { 3.2 };
+        if from.distance_to_sqr(&target) > reach.powi(2)
+            || !clear_sight(
+                ctx.world,
+                from.add(0.0, 1.62, 0.0),
+                target.add(0.0, mob.kind.height * 0.6, 0.0),
+            )
+        {
+            return;
+        }
+        let push = from
+            .vector_to(&target)
+            .multiply(1.0, 0.0, 1.0)
+            .normalize()
+            .scale(0.28)
+            .add(0.0, 0.24, 0.0);
+        mob.damage(damage, push, Instant::now(), ctx);
+    }
+
+    pub fn tick(&self, now: Instant, ctx: &PlayContext<'_>, peers: &Peers) {
+        let rules = ctx.commands.world.lock().unwrap().mob_rules();
+        let mut scene = self.0.lock().unwrap();
+        if scene
+            .last_tick
+            .is_some_and(|last| now.saturating_duration_since(last) < TICK)
+        {
+            return;
+        }
+        scene.last_tick = Some(now);
+        scene.tick = scene.tick.wrapping_add(1);
+        let players = peers.mob_targets();
+        scene.spawn_queued(now, ctx);
+        scene.spawn_naturally(now, &players, &rules, ctx);
+
+        let mut active = scene.explosives.clone();
+        let mut explosions = Vec::new();
+        for player in &players {
+            active.extend(
+                scene
+                    .nearby(player.position, 32.0, DISPLAYED_MOBS, |_| true)
+                    .into_iter()
+                    .map(|(id, _)| id),
+            );
+        }
+        let mut removed = Vec::new();
+        let tick = scene.tick;
+        for id in active {
+            let Some(mob) = scene.entities.get_mut(&id) else {
+                continue;
+            };
+            if mob.fuse.is_some_and(|end| end <= now) {
+                if explosions.len() < 8 {
+                    if rules.tnt {
+                        explosions.push(mob.motion.position.add(0.0, 0.0625, 0.0));
+                    }
+                    removed.push(id);
+                }
+                continue;
+            }
+            if mob.dying.is_some_and(|end| end <= now) || mob.motion.position.y < -64.0 {
+                removed.push(id);
+                continue;
+            }
+            let old_chunk = at_chunk(mob.motion.position);
+            mob.step(id, tick, now, &players, peers, ctx.world);
+            let new_chunk = at_chunk(mob.motion.position);
+            if old_chunk != new_chunk {
+                scene.unindex(id, old_chunk);
+                scene.chunks.entry(new_chunk).or_default().insert(id);
+            }
+        }
+        for id in removed {
+            scene.remove(id);
+        }
+        for center in explosions {
+            scene.explode(center, now, &rules, ctx, peers);
+        }
+    }
+}
+
+impl Scene {
+    fn add(
+        &mut self,
+        kind: &'static MobType,
+        position: Vec3,
+        natural: bool,
+        fuse: Option<Instant>,
+        ids: &AtomicI32,
+    ) -> i32 {
+        let id = ids.fetch_add(1, Ordering::Relaxed);
+        let yaw = (id.rem_euclid(360)) as f32;
+        let velocity = if fuse.is_some() {
+            let angle = f64::from(yaw).to_radians();
+            Vec3::new(angle.sin() * 0.02, 0.2, angle.cos() * 0.02)
+        } else {
+            Vec3::ZERO
+        };
+        let mob = Mob {
+            kind,
+            uuid: Uuid::random(),
+            motion: PositionMoveRotation::new(position, velocity, yaw, 0.0),
+            health: kind.health,
+            natural,
+            on_ground: false,
+            hurt: 0,
+            last_hurt: None,
+            next_attack: None,
+            dying: None,
+            fuse,
+        };
+        self.entities.insert(id, mob);
+        self.chunks
+            .entry(at_chunk(position))
+            .or_default()
+            .insert(id);
+        if fuse.is_some() {
+            self.explosives.insert(id);
+        }
+        if natural {
+            self.natural[usize::from(kind.hostile)] += 1;
+        }
+        id
+    }
+
+    fn prime(&mut self, position: BlockPos, end: Instant, ctx: &PlayContext<'_>) {
+        let center = Vec3::new(
+            f64::from(position.x) + 0.5,
+            f64::from(position.y),
+            f64::from(position.z) + 0.5,
+        );
+        self.add(
+            mob_types::named("tnt").unwrap(),
+            center,
+            false,
+            Some(end),
+            ctx.entity_ids,
+        );
+        let (x, y, z) = ClientboundSoundPacket::pack_position(center.x, center.y, center.z);
+        ctx.audience.broadcast(
+            ClientboundSoundPacket::new(
+                Holder::direct(SoundEvent::new(
+                    Identifier::minecraft("entity.tnt.primed"),
+                    None,
+                )),
+                SoundSource::Blocks,
+                x,
+                y,
+                z,
+                1.0,
+                1.0,
+                self.random.next_long(),
+            ),
+            Some(at_chunk(center)),
+        );
+    }
+
+    fn unindex(&mut self, id: i32, coord: Chunk) {
+        let ids = self.chunks.get_mut(&coord).unwrap();
+        ids.remove(&id);
+        if ids.is_empty() {
+            self.chunks.remove(&coord);
+        }
+    }
+
+    fn remove(&mut self, id: i32) {
+        let mob = self.entities.remove(&id).unwrap();
+        self.unindex(id, at_chunk(mob.motion.position));
+        self.explosives.remove(&id);
+        if mob.natural {
+            self.natural[usize::from(mob.kind.hostile)] -= 1;
+        }
+    }
+
+    fn nearby(
+        &self,
+        center: Vec3,
+        radius: f64,
+        limit: usize,
+        include: impl Fn(Chunk) -> bool,
+    ) -> Vec<(i32, Mob)> {
+        let min = at_chunk(center.subtract(radius, 0.0, radius));
+        let max = at_chunk(center.add(radius, 0.0, radius));
+        let mut result = Vec::new();
+        for x in min.0..=max.0 {
+            for z in min.1..=max.1 {
+                let coord = (x, z);
+                if include(coord) {
+                    if let Some(ids) = self.chunks.get(&coord) {
+                        result.extend(ids.iter().filter_map(|&id| {
+                            let mob = self.entities[&id];
+                            (center.distance_to_sqr(&mob.motion.position) <= radius * radius)
+                                .then_some((id, mob))
+                        }));
+                    }
+                }
+            }
+        }
+        let nearest = |(ai, a): &(i32, Mob), (bi, b): &(i32, Mob)| {
+            b.fuse
+                .is_some()
+                .cmp(&a.fuse.is_some())
+                .then_with(|| {
+                    center
+                        .distance_to_sqr(&a.motion.position)
+                        .total_cmp(&center.distance_to_sqr(&b.motion.position))
+                })
+                .then_with(|| ai.cmp(bi))
+        };
+        if result.len() > limit {
+            result.select_nth_unstable_by(limit, nearest);
+            result.truncate(limit);
+        }
+        result.sort_unstable_by(nearest);
+        result
+    }
+
+    fn spawn_queued(&mut self, now: Instant, ctx: &PlayContext<'_>) {
+        for _ in 0..SPAWNS_PER_TICK {
+            let Some(mut batch) = self.batches.pop_front() else {
+                break;
+            };
+            let (x, z) = spiral(batch.spawned);
+            let radius = (batch.total as f64).sqrt().ceil() * 2.0;
+            let block_bound = 29_999_984.0 - radius;
+            let position = Vec3::new(
+                batch.origin.x.clamp(-block_bound, block_bound) + f64::from(x) * 2.0,
+                batch.origin.y,
+                batch.origin.z.clamp(-block_bound, block_bound) + f64::from(z) * 2.0,
+            );
+            let fuse = (batch.kind.name == "tnt").then(|| now + FUSE);
+            let position = if fuse.is_none()
+                && !batch.kind.aquatic
+                && !ctx.world.has_room(position, batch.kind.height, false)
+            {
+                let block = BlockPos::containing_vec3(&position);
+                ctx.world.open_surface(block.x, block.z).unwrap_or(position)
+            } else {
+                position
+            };
+            self.add(batch.kind, position, false, fuse, ctx.entity_ids);
+            batch.spawned += 1;
+            self.queued -= 1;
+            if fuse.is_some() {
+                self.queued_tnt -= 1;
+            }
+            if batch.spawned < batch.total {
+                self.batches.push_back(batch);
+            }
+        }
+    }
+
+    fn spawn_naturally(
+        &mut self,
+        now: Instant,
+        players: &[MobTarget],
+        rules: &Rules,
+        ctx: &PlayContext<'_>,
+    ) {
+        if now < self.next_natural {
+            return;
+        }
+        self.next_natural = now + Duration::from_secs(3);
+        let discard = self
+            .entities
+            .iter()
+            .filter_map(|(&id, mob)| {
+                (mob.dying.is_some_and(|end| end <= now)
+                    || mob.natural
+                        && players.iter().all(|p| {
+                            p.position.distance_to_sqr(&mob.motion.position) > 128.0 * 128.0
+                        }))
+                .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in discard {
+            self.remove(id);
+        }
+        let nearby = self.natural[usize::from(rules.hostile_spawns)];
+        if !rules.natural_spawns
+            || players.is_empty()
+            || nearby >= NATURAL_LIMIT
+            || self.entities.len() + self.queued >= WORLD_LIMIT
+        {
+            return;
+        }
+        let player = players[self.random.next_int_bound(players.len() as i32) as usize];
+        let angle = f64::from(self.random.next_float()) * std::f64::consts::TAU;
+        let distance = 25.0 + f64::from(self.random.next_float()) * 14.0;
+        let position = player
+            .position
+            .add(angle.sin() * distance, 0.0, angle.cos() * distance);
+        let block = BlockPos::containing_vec3(&position);
+        let species = if rules.hostile_spawns {
+            ["zombie", "skeleton", "spider", "creeper"]
+        } else {
+            ["pig", "cow", "sheep", "chicken"]
+        };
+        let kind = mob_types::named(species[self.random.next_int_bound(4) as usize]).unwrap();
+        let capacity =
+            (NATURAL_LIMIT - nearby).min(WORLD_LIMIT - self.entities.len() - self.queued);
+        for (dx, dz) in [(0, 0), (2, 1), (-1, 2)].into_iter().take(capacity) {
+            if let Some(position) = ctx.world.open_surface(block.x + dx, block.z + dz) {
+                if valid_position(position)
+                    && ctx.world.has_room(position, kind.height, false)
+                    && players
+                        .iter()
+                        .all(|p| p.position.distance_to_sqr(&position) >= 24.0 * 24.0)
+                {
+                    self.add(kind, position, true, None, ctx.entity_ids);
+                }
+            }
+        }
+    }
+
+    fn explode(
+        &mut self,
+        center: Vec3,
+        now: Instant,
+        rules: &Rules,
+        ctx: &PlayContext<'_>,
+        peers: &Peers,
+    ) {
+        for target in peers
+            .mob_targets()
+            .into_iter()
+            .filter(|target| target.vulnerable)
+        {
+            if let Some((damage, velocity)) = blast_hit(center, target.position, ctx.world) {
+                peers.hurt(target.id, damage, velocity, "explosion".into(), now);
+            }
+        }
+        for (id, mob) in self.nearby(center, 8.0, usize::MAX, |_| true) {
+            if mob.fuse.is_none() {
+                if let Some((damage, velocity)) = blast_hit(center, mob.motion.position, ctx.world)
+                {
+                    self.entities
+                        .get_mut(&id)
+                        .unwrap()
+                        .damage(damage, velocity, now, ctx);
+                }
+            }
+        }
+        let removed = ctx.world.blast(center, 4.0, &mut self.random, ctx.audience);
+        let blocks = Blocks::vanilla();
+        for &(pos, state) in &removed {
+            let block = blocks.get(state);
+            if block.name == "tnt" && self.explosives.len() + self.queued_tnt < TNT_LIMIT {
+                let ticks = 10 + self.random.next_int_bound(20);
+                self.prime(pos, now + TICK * ticks as u32, ctx);
+            } else if rules.block_drops
+                && (!rules.decay || self.random.next_int_bound(4) == 0)
+                && block.property(state, "half") != Some("upper")
+                && block.property(state, "part") != Some("head")
+            {
+                if let Some(item) = block.item {
+                    let center = Vec3::new(
+                        f64::from(pos.x) + 0.5,
+                        f64::from(pos.y) + 0.5,
+                        f64::from(pos.z) + 0.5,
+                    );
+                    spawn_item(ctx, item, center);
+                }
+            }
+        }
+        ctx.audience.broadcast(
+            ClientboundExplodePacket::new(
+                center,
+                4.0,
+                removed.len() as i32,
+                None,
+                ParticleOptions::simple(
+                    particle_type_by_identifier(&Identifier::minecraft("explosion_emitter"))
+                        .unwrap(),
+                ),
+                Holder::direct(SoundEvent::new(
+                    Identifier::minecraft("entity.generic.explode"),
+                    None,
+                )),
+                WeightedList::empty(),
+            ),
+            Some(at_chunk(center)),
+        );
+    }
+}
+
+impl Mob {
+    fn damage(&mut self, amount: f32, velocity: Vec3, now: Instant, ctx: &PlayContext<'_>) {
+        if self.dying.is_some()
+            || self.last_hurt.is_some_and(|last| {
+                now.saturating_duration_since(last) < Duration::from_millis(500)
+            })
+        {
+            return;
+        }
+        self.last_hurt = Some(now);
+        self.health = (self.health - amount).max(0.0);
+        self.motion.delta_movement = velocity;
+        self.hurt = self.hurt.wrapping_add(1);
+        if self.health == 0.0 {
+            self.dying = Some(now + Duration::from_secs(1));
+            let item = match self.kind.name {
+                "pig" => Some("porkchop"),
+                "cow" => Some("beef"),
+                "sheep" => Some("mutton"),
+                "chicken" => Some("chicken"),
+                "zombie" | "husk" => Some("rotten_flesh"),
+                "skeleton" => Some("bone"),
+                _ => None,
+            };
+            if let Some(item) = item {
+                if ctx.commands.world.lock().unwrap().mob_drops() {
+                    spawn_item(ctx, named_id(item), self.motion.position);
+                }
+            }
+        }
+    }
+
+    fn step(
+        &mut self,
+        id: i32,
+        tick: u32,
+        now: Instant,
+        players: &[MobTarget],
+        peers: &Peers,
+        world: &FlatWorld,
+    ) {
+        if self.dying.is_some() {
+            return;
+        }
+        let position = self.motion.position;
+        let mut velocity = self.motion.delta_movement;
+        if self.fuse.is_none() && self.kind.name != "armor_stand" {
+            let target = self
+                .kind
+                .hostile
+                .then(|| {
+                    players
+                        .iter()
+                        .filter(|p| {
+                            p.vulnerable && position.distance_to_sqr(&p.position) < 14.0 * 14.0
+                        })
+                        .min_by(|a, b| {
+                            position
+                                .distance_to_sqr(&a.position)
+                                .total_cmp(&position.distance_to_sqr(&b.position))
+                        })
+                })
+                .flatten();
+            let phase = tick.wrapping_add((id as u32).wrapping_mul(17));
+            if let Some(target) = target {
+                let delta = position.vector_to(&target.position);
+                let heading = delta.multiply(1.0, 0.0, 1.0).normalize().scale(0.13);
+                velocity.x = heading.x;
+                velocity.z = heading.z;
+                self.motion.y_rot = (-heading.x.atan2(heading.z).to_degrees()) as f32;
+                if delta.length_squared() <= 2.5 * 2.5
+                    && self.next_attack.is_none_or(|next| now >= next)
+                    && clear_sight(
+                        world,
+                        position.add(0.0, self.kind.height * 0.75, 0.0),
+                        target.position.add(0.0, 1.0, 0.0),
+                    )
+                {
+                    self.next_attack = Some(now + Duration::from_secs(1));
+                    peers.hurt(
+                        target.id,
+                        3.0,
+                        heading.scale(2.0).add(0.0, 0.25, 0.0),
+                        self.kind.name.into(),
+                        now,
+                    );
+                }
+            } else if phase % 120 < 32 && self.on_ground {
+                self.motion.y_rot = ((phase / 120 * 71 + id as u32) % 360) as f32;
+                let walk = Vec3::direction_from_rotation(0.0, self.motion.y_rot).scale(0.065);
+                velocity.x = walk.x;
+                velocity.z = walk.z;
+            }
+        }
+        let next = position.add(velocity.x, 0.0, velocity.z);
+        let swim = self.kind.aquatic && world.has_room(position, self.kind.height, true);
+        let mut next = if world.has_room(next, self.kind.height, swim) {
+            next
+        } else {
+            position
+        };
+        if !self.kind.flying && !swim {
+            velocity.y = (velocity.y - 0.04).max(-0.9);
+        }
+        let vertical = next.add(0.0, velocity.y, 0.0);
+        self.on_ground = false;
+        if world.has_room(vertical, self.kind.height, swim) {
+            next = vertical;
+        } else {
+            if velocity.y <= 0.0 {
+                let block = BlockPos::containing_vec3(&vertical);
+                let floor = Vec3::new(next.x, f64::from(block.y + 1), next.z);
+                if world.has_room(floor, self.kind.height, swim) {
+                    next = floor;
+                }
+                self.on_ground = true;
+            }
+            velocity.y = 0.0;
+        }
+        self.motion.position = next;
+        self.motion.delta_movement = velocity.multiply(0.7, 0.98, 0.7);
+    }
+}
+
+#[derive(Default)]
+pub struct MobTracker(HashMap<i32, (PositionMoveRotation, u32)>);
+
+impl MobTracker {
+    pub fn sees(&self, id: i32) -> bool {
+        self.0.contains_key(&id)
+    }
+
+    pub fn reset(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn sync(
+        &mut self,
+        position: Vec3,
+        loaded: &HashSet<Chunk>,
+        ctx: &PlayContext<'_>,
+        wire: &mut Wire,
+    ) -> io::Result<()> {
+        let visible =
+            ctx.mobs
+                .0
+                .lock()
+                .unwrap()
+                .nearby(position, TRACKING_RADIUS, DISPLAYED_MOBS, |c| {
+                    loaded.contains(&c)
+                });
+        let now = Instant::now();
+        let mut previous = std::mem::take(&mut self.0);
+        let mut additions = 0;
+        for (id, mob) in visible {
+            match previous.remove(&id) {
+                Some((motion, hurt)) => {
+                    if motion != mob.motion {
+                        wire.send(
+                            ctx.ids,
+                            &ClientboundEntityPositionSyncPacket::new(
+                                id,
+                                mob.motion,
+                                mob.on_ground,
+                            ),
+                        )?;
+                    }
+                    if hurt != mob.hurt {
+                        if mob.dying.is_some() {
+                            wire.send(ctx.ids, &ClientboundEntityEventPacket::new(id, 3))?;
+                        } else {
+                            wire.send(ctx.ids, &ClientboundHurtAnimationPacket::new(id, 0.0))?;
+                        }
+                    }
+                }
+                None if additions < 32 && mob.dying.is_none() => {
+                    additions += 1;
+                    let p = mob.motion.position;
+                    wire.send(
+                        ctx.ids,
+                        &ClientboundAddEntityPacket::new(
+                            id,
+                            mob.uuid,
+                            Holder::Reference(mob.kind.id),
+                            p.x,
+                            p.y,
+                            p.z,
+                            mob.motion.delta_movement,
+                            mob.motion.x_rot,
+                            mob.motion.y_rot,
+                            f64::from(mob.motion.y_rot),
+                            0,
+                        ),
+                    )?;
+                    if let Some(fuse) = mob.fuse {
+                        let ticks = (fuse.saturating_duration_since(now).as_millis()
+                            / TICK.as_millis())
+                        .max(1) as i32;
+                        let value = DataValue {
+                            id: 8,
+                            serializer: 1,
+                            value: Box::new(ticks),
+                        };
+                        wire.send(
+                            ctx.ids,
+                            &ClientboundSetEntityDataPacket::new(id, vec![value]),
+                        )?;
+                    }
+                }
+                None => continue,
+            }
+            self.0.insert(id, (mob.motion, mob.hurt));
+        }
+        if !previous.is_empty() {
+            wire.send(
+                ctx.ids,
+                &ClientboundRemoveEntitiesPacket::new(previous.into_keys().collect()),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn spawn_item(ctx: &PlayContext<'_>, item: i32, position: Vec3) {
+    ctx.drops.spawn(
+        ctx.entity_ids.fetch_add(1, Ordering::Relaxed),
+        stack(item, 1),
+        position,
+        Vec3::ZERO,
+    );
+}
+
+fn blast_hit(center: Vec3, pos: Vec3, world: &FlatWorld) -> Option<(f32, Vec3)> {
+    let displacement = center.vector_to(&pos.add(0.0, 0.35, 0.0));
+    let distance = displacement.length();
+    if distance >= 8.0 || !clear_sight(world, center, pos.add(0.0, 0.35, 0.0)) {
+        return None;
+    }
+    let exposure = 1.0 - distance / 8.0;
+    let damage = ((exposure * exposure + exposure) * 28.0 + 1.0) as f32;
+    Some((damage, displacement.normalize().scale(exposure)))
+}
+
+fn at_chunk(position: Vec3) -> Chunk {
+    chunk(BlockPos::containing_vec3(&position))
+}
+
+fn valid_position(position: Vec3) -> bool {
+    position.x.is_finite()
+        && position.y.is_finite()
+        && position.z.is_finite()
+        && position.x.abs() <= 29_999_984.0
+        && position.z.abs() <= 29_999_984.0
+        && FlatWorld::editable(BlockPos::containing_vec3(&position))
+}
+
+fn spiral(index: usize) -> (i32, i32) {
+    if index == 0 {
+        return (0, 0);
+    }
+    let ring = (((index as f64 + 1.0).sqrt() - 1.0) / 2.0).ceil() as i32;
+    let width = ring * 2;
+    let offset = (width + 1).pow(2) - 1 - index as i32;
+    match offset / width {
+        0 => (ring - offset, -ring),
+        1 => (-ring, -ring + offset - width),
+        2 => (-ring + offset - 2 * width, ring),
+        _ => (ring, ring - offset + 3 * width),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audience::Audience;
+    use crate::commands::Commands;
+    use crate::drops::Drops;
+    use crate::maps::Maps;
+    use crate::operators::Operators;
+    use crate::tests::TestWorld;
+    use crate::wire::PacketIds;
+
+    #[test]
+    fn queues_spawns_in_groups_and_tracks_a_bounded_view_of_50k_pigs() {
+        let directory = TestWorld::new();
+        std::fs::create_dir_all(&directory.0).unwrap();
+        let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap());
+        let maps = Maps::open(directory.0.join("maps.txt")).unwrap();
+        let mobs = Mobs::default();
+        let ctx = PlayContext {
+            world: &FlatWorld::new(0),
+            drops: &Drops::default(),
+            maps: &maps,
+            mobs: &mobs,
+            name: "h0td04ek",
+            player: Uuid::random(),
+            ids: &PacketIds::from_protocol(
+                leaf_core::network::protocol::game::game_protocols::clientbound_template().bind(),
+            ),
+            audience: &Audience::default(),
+            commands: &commands,
+            entity_ids: &AtomicI32::new(1),
+        };
+        let origin = Vec3::new(0.5, 16.0, 0.5);
+        let pig = mob_types::named("pig").unwrap();
+        mobs.summon(pig, origin, 50_000, &ctx).unwrap();
+        let mut scene = mobs.0.lock().unwrap();
+        assert_eq!(scene.entities.len(), 0);
+        let now = Instant::now();
+        scene.spawn_queued(now, &ctx);
+        assert_eq!(scene.entities.len(), SPAWNS_PER_TICK);
+        while scene.queued != 0 {
+            scene.spawn_queued(now, &ctx);
+        }
+        assert_eq!(scene.entities.len(), 50_000);
+        assert!(scene.entities.values().all(|mob| mob.kind.id == pig.id));
+        let positions = scene
+            .entities
+            .values()
+            .map(|mob| BlockPos::containing_vec3(&mob.motion.position))
+            .collect::<HashSet<_>>();
+        assert_eq!(positions.len(), 50_000);
+        let visible = scene.nearby(origin, TRACKING_RADIUS, DISPLAYED_MOBS, |_| true);
+        assert_eq!(visible.len(), DISPLAYED_MOBS);
+        assert_eq!(visible[0].1.motion.position, origin);
+    }
+}

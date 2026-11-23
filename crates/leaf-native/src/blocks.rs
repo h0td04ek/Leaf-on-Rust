@@ -20,6 +20,7 @@ pub struct Block {
     wall: &'static str,
     pub hardness: i8,
     pub map_color: u8,
+    pub blast_resistance: f32,
     pub replaceable: bool,
     variants: Vec<(i32, Vec<(&'static str, &'static str)>)>,
 }
@@ -63,12 +64,21 @@ impl Blocks {
                     wall,
                     hardness,
                     map_color,
+                    blast_resistance: 0.0,
                     replaceable,
                     variants: vec![],
                 });
                 if item != 0 {
                     blocks.items.entry(item).or_insert(index);
                 }
+            }
+            for row in include_str!("../data/blast-resistance-774.txt")
+                .lines()
+                .skip(1)
+            {
+                let (name, resistance) = row.split_once(' ').unwrap();
+                let index = blocks.names[name];
+                blocks.kinds[index].blast_resistance = resistance.parse().unwrap();
             }
             // Prefer the standing item variant even if the wall state has a lower ID.
             for block in &blocks.kinds {

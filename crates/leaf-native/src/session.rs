@@ -64,8 +64,9 @@ use crate::drops::Drops;
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
 use crate::maps::Maps;
+use crate::mobs::{MobTracker, Mobs};
 use crate::operators::{valid_name, Operators, PERMISSION_EVENT};
-use crate::peers::{PeerTracker, Peers, Presence};
+use crate::peers::{attack_damage, PeerTracker, Peers, Presence};
 use crate::player_data::PlayerStore;
 use crate::recipes::Recipes;
 use crate::registries::Registries;
@@ -96,6 +97,7 @@ pub struct Server {
     flat_world: FlatWorld,
     drops: Drops,
     maps: Maps,
+    mobs: Mobs,
     sockets: AtomicUsize,
     players: Mutex<HashSet<Uuid>>,
     online: AtomicUsize,
@@ -123,6 +125,7 @@ impl Server {
             flat_world: FlatWorld::new(registries.plains_id),
             drops: Drops::default(),
             maps,
+            mobs: Mobs::default(),
             registries,
             player_data,
             commands: Commands::new(operators),
@@ -434,6 +437,7 @@ impl Server {
             world: &self.flat_world,
             drops: &self.drops,
             maps: &self.maps,
+            mobs: &self.mobs,
             name,
             player: uuid,
             ids: &self.play_out,
@@ -451,6 +455,7 @@ impl Server {
         let mut confirmed = false;
         let mut teleport_id = TELEPORT_ID;
         let mut tracker = PeerTracker::default();
+        let mut mob_tracker = MobTracker::default();
         let mut next_peer_update = Instant::now();
         let mut player_loaded = false;
         let mut permission = None;
@@ -481,7 +486,7 @@ impl Server {
                     &ClientboundHurtAnimationPacket::new(presence.id, 0.0),
                 )?;
                 if hit.health == 0.0 {
-                    let death = Component::literal(format!("{name} was slain by {}", hit.killer));
+                    let death = Component::literal(hit.death_message);
                     wire.send(
                         &self.play_out,
                         &ClientboundPlayerCombatKillPacket::new(presence.id, death.clone()),
@@ -530,13 +535,18 @@ impl Server {
                 self.commands.world.lock().unwrap().refresh(&self.audience);
                 next_world_refresh = Instant::now() + Duration::from_secs(1);
             }
+            let update_peers = now >= next_peer_update;
+            if update_peers {
+                self.mobs.tick(now, &context, &self.peers);
+            }
             subscription.flush(wire, &self.play_out, chunks.loaded())?;
             game.check_crafting(wire, &context)?;
             game.tick(wire, &context, chunks.loaded())?;
             chunks.send_next(&self.flat_world, wire, &self.play_out)?;
-            if now >= next_peer_update {
+            if update_peers {
                 presence.publish(game.view());
                 tracker.sync(presence, chunks.loaded(), wire, &self.play_out)?;
+                mob_tracker.sync(game.player.position, chunks.loaded(), &context, wire)?;
                 next_peer_update = now + Duration::from_millis(50);
             }
             let elapsed = last_ping.elapsed();
@@ -623,6 +633,33 @@ impl Server {
                                     );
                                 }
                             }
+                            Some(PlayerCommand::Summon {
+                                kind,
+                                position,
+                                count,
+                            }) => {
+                                let player = &game.player;
+                                let origin = position.map_or(player.position, |pos| {
+                                    pos.resolve(
+                                        player.position,
+                                        player.position,
+                                        player.yaw,
+                                        player.pitch,
+                                    )
+                                });
+                                let feedback = match self.mobs.summon(kind, origin, count, &context)
+                                {
+                                    Ok(()) if count == 1 => {
+                                        format!("Summoned minecraft:{}", kind.name)
+                                    }
+                                    Ok(()) => format!(
+                                        "Queued {count} minecraft:{} around the summon position",
+                                        kind.name
+                                    ),
+                                    Err(error) => error.to_owned(),
+                                };
+                                self.audience.chat(Component::literal(feedback), Some(uuid));
+                            }
                             None => {}
                         }
                         presence.publish(game.view());
@@ -667,6 +704,7 @@ impl Server {
                         )?;
                         permission = None;
                         tracker.reset_entities(wire, ids)?;
+                        mob_tracker.reset();
                         chunks.restart(game.player.chunk(), wire, ids)?;
                     }
                 }
@@ -677,6 +715,16 @@ impl Server {
                         body.finish()?;
                         if tracker.sees(target) {
                             presence.attack(target, &self.flat_world);
+                        } else if mob_tracker.sees(target) {
+                            let damage =
+                                attack_damage(&game.player.inventory[game.player.selection]);
+                            self.mobs.attack(
+                                target,
+                                game.player.position,
+                                game.player.mode,
+                                damage,
+                                &context,
+                            );
                         }
                     }
                 }
