@@ -2,7 +2,7 @@
 mod blast;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use leaf_core::core::{block_pos::BlockPos, direction::Direction};
 use leaf_core::world::phys::vec3::Vec3;
@@ -31,13 +31,16 @@ const STONE: i32 = 1;
 pub const SPAWN_Y: i32 = 16;
 
 type Changes = HashMap<BlockPos, i32>;
-type WorldEdits = HashMap<(i32, i32), Changes>;
+type WorldEdits = HashMap<(i32, i32), Arc<Changes>>;
+
+#[derive(Clone)]
+pub struct BlockView(Arc<WorldEdits>);
 
 pub struct FlatWorld {
     flat_chunk_body: Vec<u8>,
     light: ClientboundLightUpdatePacketData,
     biome: i32,
-    edits: Mutex<WorldEdits>,
+    edits: Mutex<Arc<WorldEdits>>,
 }
 
 pub fn chunk(pos: BlockPos) -> (i32, i32) {
@@ -90,8 +93,12 @@ impl FlatWorld {
             flat_chunk_body: body.copy_bytes(),
             light,
             biome,
-            edits: Mutex::new(HashMap::new()),
+            edits: Mutex::default(),
         }
+    }
+
+    pub fn snapshot(&self) -> BlockView {
+        BlockView(Arc::clone(&self.edits.lock().unwrap()))
     }
 
     pub fn block(&self, pos: BlockPos) -> i32 {
@@ -210,19 +217,7 @@ impl FlatWorld {
     }
 
     pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
-        let floor = BlockPos::containing_vec3(&position);
-        let roof = BlockPos::containing_vec3(&position.add(0.0, height - 0.01, 0.0));
-        let edits = self.edits.lock().unwrap();
-        FlatWorld::editable(floor)
-            && (floor.y..=roof.y).all(|y| {
-                let state = state_at(&edits, BlockPos::new(floor.x, y, floor.z));
-                let block = Blocks::vanilla().get(state);
-                if aquatic {
-                    block.name == "water"
-                } else {
-                    block.replaceable && block.name != "water" && block.name != "lava"
-                }
-            })
+        has_room(&self.edits.lock().unwrap(), position, height, aquatic)
     }
 
     pub fn open_surface(&self, x: i32, z: i32) -> Option<Vec3> {
@@ -311,7 +306,7 @@ impl FlatWorld {
                 let Some(changes) = world.get(&(chunk_x, chunk_z)) else {
                     continue;
                 };
-                for (pos, &state) in changes {
+                for (pos, &state) in changes.iter() {
                     if !(x..end_x).contains(&pos.x) || !(z..end_z).contains(&pos.z) || state == AIR
                     {
                         continue;
@@ -330,13 +325,9 @@ impl FlatWorld {
     }
 
     pub fn send_chunk(&self, x: i32, z: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
-        let changed = self
-            .edits
-            .lock()
-            .unwrap()
-            .get(&(x, z))
-            .map(|changes| self.changed_chunk(x, z, changes));
-        if let Some(data) = changed {
+        let changed = self.edits.lock().unwrap().get(&(x, z)).cloned();
+        if let Some(changes) = changed {
+            let data = self.changed_chunk(x, z, &changes);
             let packet = ClientboundLevelChunkWithLightPacket::new(x, z, data, self.light.clone());
             wire.send(ids, &packet)
         } else {
@@ -421,6 +412,41 @@ impl FlatWorld {
     }
 }
 
+impl BlockView {
+    pub fn block(&self, pos: BlockPos) -> i32 {
+        state_at(&self.0, pos)
+    }
+
+    pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
+        has_room(&self.0, position, height, aquatic)
+    }
+}
+
+fn has_room(edits: &WorldEdits, position: Vec3, height: f64, aquatic: bool) -> bool {
+    let floor = BlockPos::containing_vec3(&position);
+    if !FlatWorld::editable(floor) {
+        return false;
+    }
+    let roof = BlockPos::containing_vec3(&position.add(0.0, height - 0.01, 0.0));
+    let chunk_edits = edits.get(&chunk(floor));
+    let blocks = Blocks::vanilla();
+    (floor.y..=roof.y).all(|y| {
+        let pos = BlockPos::new(floor.x, y, floor.z);
+        let state = chunk_edits
+            .and_then(|edits| edits.get(&pos).copied())
+            .unwrap_or_else(|| base(pos));
+        if state == AIR {
+            return !aquatic;
+        }
+        let block = blocks.get(state);
+        if aquatic {
+            block.name == "water"
+        } else {
+            block.replaceable && block.name != "water" && block.name != "lava"
+        }
+    })
+}
+
 fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
     edits
         .get(&chunk(pos))
@@ -428,7 +454,7 @@ fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
         .unwrap_or_else(|| base(pos))
 }
 
-fn update(edits: &mut WorldEdits, pos: BlockPos, state: i32, audience: &Audience) {
+fn update(edits: &mut Arc<WorldEdits>, pos: BlockPos, state: i32, audience: &Audience) {
     set_state(edits, pos, state);
     audience.broadcast(
         ClientboundBlockUpdatePacket::new(pos, state),
@@ -436,9 +462,10 @@ fn update(edits: &mut WorldEdits, pos: BlockPos, state: i32, audience: &Audience
     );
 }
 
-fn set_state(edits: &mut WorldEdits, pos: BlockPos, state: i32) {
+fn set_state(edits: &mut Arc<WorldEdits>, pos: BlockPos, state: i32) {
+    let edits = Arc::make_mut(edits);
     let coord = chunk(pos);
-    let changes = edits.entry(coord).or_default();
+    let changes = Arc::make_mut(edits.entry(coord).or_default());
     if state == base(pos) {
         changes.remove(&pos);
     } else {

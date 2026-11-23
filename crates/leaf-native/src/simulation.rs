@@ -8,6 +8,7 @@ use crate::commands::Commands;
 use crate::drops::Drops;
 use crate::mobs::Mobs;
 use crate::peers::Peers;
+use crate::workers::Workers;
 use crate::world::FlatWorld;
 
 pub struct Simulation {
@@ -29,7 +30,11 @@ pub struct SimulationContext<'a> {
 }
 
 impl Simulation {
-    pub fn start(terrain: FlatWorld, commands: Commands) -> io::Result<Arc<Self>> {
+    pub fn start(
+        terrain: FlatWorld,
+        commands: Commands,
+        worker_count: usize,
+    ) -> io::Result<Arc<Self>> {
         let simulation = Arc::new(Self {
             terrain,
             commands,
@@ -39,6 +44,7 @@ impl Simulation {
             drops: Drops::default(),
             next_entity: AtomicI32::new(1),
         });
+        let workers = Workers::new(worker_count)?;
         let weak = Arc::downgrade(&simulation);
         thread::Builder::new()
             .name("leaf-native-world".into())
@@ -46,7 +52,7 @@ impl Simulation {
                 let Some(simulation) = weak.upgrade() else {
                     break;
                 };
-                let wait = simulation.poll();
+                let wait = simulation.poll(&workers);
                 drop(simulation);
                 if wait < Duration::from_millis(1) {
                     thread::yield_now();
@@ -57,7 +63,7 @@ impl Simulation {
         Ok(simulation)
     }
 
-    fn poll(&self) -> Duration {
+    fn poll(&self, workers: &Workers) -> Duration {
         let start = Instant::now();
         let next = self
             .commands
@@ -76,8 +82,8 @@ impl Simulation {
             drops: &self.drops,
             entity_ids: &self.next_entity,
         };
-        self.mobs.tick(tick, &rules, &ctx, &self.peers);
-        self.drops.update(tick, &self.terrain);
+        self.mobs.tick(tick, &rules, &ctx, &self.peers, workers);
+        self.drops.update(tick, &self.terrain, workers);
         let end = Instant::now();
         self.commands.world.lock().unwrap().complete_tick(
             end - start,

@@ -45,7 +45,7 @@ impl Drop for TestWorld {
 
 fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
     let store = PlayerStore::open(&world.0).unwrap();
-    connect_server(Arc::new(Server::new(store).unwrap()))
+    connect_server(Arc::new(Server::new(store, 1).unwrap()))
 }
 
 fn connect_server(server: Arc<Server>) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
@@ -575,7 +575,7 @@ fn send_location(client: &mut TcpStream, position: Vec3, yaw: f32, pitch: f32) {
 #[test]
 fn players_see_each_other_and_can_fight_respawn_and_leave() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
     let (mut alice, alice_worker) = connect_server(Arc::clone(&server));
     let alice_id = enter_play(&mut alice, "h0td04ek", 2);
     acknowledge_teleport(&mut alice);
@@ -756,7 +756,7 @@ fn use_block(client: &mut TcpStream, block: BlockPos, sequence: i32) {
 #[test]
 fn players_share_block_edits_and_survival_drops() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
     let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 2);
     acknowledge_teleport(&mut owner);
@@ -1046,7 +1046,7 @@ fn expands_native_maps_and_saves_firework_components() {
 #[test]
 fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
     let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 4);
     acknowledge_teleport(&mut owner);
@@ -1100,7 +1100,13 @@ fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
 #[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let server = Arc::new(
+        Server::new(
+            PlayerStore::open(&world.0).unwrap(),
+            crate::workers::available_threads(),
+        )
+        .unwrap(),
+    );
     let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 2);
     acknowledge_teleport(&mut owner);

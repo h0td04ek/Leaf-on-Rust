@@ -328,12 +328,16 @@ pub fn attack_damage(item: &ItemStack) -> f32 {
 }
 
 pub fn clear_sight(world: &FlatWorld, from: Vec3, to: Vec3) -> bool {
+    clear_sight_with(from, to, |pos| world.block(pos))
+}
+
+pub fn clear_sight_with(from: Vec3, to: Vec3, block_at: impl Fn(BlockPos) -> i32) -> bool {
     let direction = Vec3::new(to.x - from.x, to.y - from.y, to.z - from.z);
     let steps = (from.distance_to_sqr(&to).sqrt() * 4.0).ceil() as i32;
     (1..steps).all(|step| {
         let offset = direction.scale(f64::from(step) / f64::from(steps));
         let position = from.add(offset.x, offset.y, offset.z);
-        world.block(BlockPos::new(
+        block_at(BlockPos::new(
             position.x.floor() as i32,
             position.y.floor() as i32,
             position.z.floor() as i32,

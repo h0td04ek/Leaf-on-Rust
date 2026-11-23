@@ -16,7 +16,10 @@ use leaf_core::world::{item::item_stack::ItemStack, phys::vec3::Vec3};
 use crate::gameplay::{item_data, PlayContext};
 use crate::items::ITEM_ENTITY;
 use crate::wire::Wire;
-use crate::world::{chunk, FlatWorld, AIR};
+use crate::workers::Workers;
+use crate::world::{chunk, BlockView, FlatWorld, AIR};
+
+const DROP_WORK_BATCH: usize = 256;
 
 #[derive(Default)]
 pub struct Drops(Mutex<Vec<DroppedItem>>);
@@ -43,29 +46,67 @@ impl Drops {
         });
     }
 
-    pub fn update(&self, tick: i64, world: &FlatWorld) {
-        self.0.lock().unwrap().retain_mut(|item| {
-            if tick - item.created >= 6_000 || item.motion.position.y < -72.0 {
-                return false;
-            }
-            let motion = &mut item.motion;
-            let next = motion.position.add(
-                motion.delta_movement.x,
-                motion.delta_movement.y,
-                motion.delta_movement.z,
-            );
-            let block = block_at(next.add(0.0, -0.01, 0.0));
-            item.on_ground = motion.delta_movement.y <= 0.0 && world.block(block) != AIR;
-            if item.on_ground {
-                motion.position = Vec3::new(next.x, f64::from(block.y + 1), next.z);
-                motion.delta_movement = Vec3::ZERO;
-            } else {
-                motion.position = next;
-                motion.delta_movement = motion.delta_movement.add(0.0, -0.04, 0.0).scale(0.98);
-            }
-            true
-        });
+    pub fn update(&self, tick: i64, world: &FlatWorld, workers: &Workers) {
+        let mut items = self.0.lock().unwrap();
+        if items.is_empty() {
+            return;
+        }
+        let world = world.snapshot();
+        if workers.can_split(items.len(), DROP_WORK_BATCH) {
+            let inputs = items
+                .iter()
+                .map(|item| (item.motion, item.created))
+                .collect::<Vec<_>>();
+            let mut updates = workers
+                .map_ranges(inputs.len(), DROP_WORK_BATCH, move |range| {
+                    inputs[range]
+                        .iter()
+                        .map(|&(motion, created)| step_drop(tick, created, motion, &world))
+                        .collect::<Vec<_>>()
+                })
+                .into_iter()
+                .flatten();
+            items.retain_mut(|item| item.apply_motion(updates.next().unwrap()));
+        } else {
+            items.retain_mut(|item| {
+                item.apply_motion(step_drop(tick, item.created, item.motion, &world))
+            });
+        }
     }
+}
+
+impl DroppedItem {
+    fn apply_motion(&mut self, update: Option<(PositionMoveRotation, bool)>) -> bool {
+        if let Some((motion, on_ground)) = update {
+            self.motion = motion;
+            self.on_ground = on_ground;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn step_drop(
+    tick: i64,
+    created: i64,
+    mut motion: PositionMoveRotation,
+    world: &BlockView,
+) -> Option<(PositionMoveRotation, bool)> {
+    if tick - created >= 6_000 || motion.position.y < -72.0 {
+        return None;
+    }
+    let next = motion.position.add_vec(&motion.delta_movement);
+    let block = block_at(next.add(0.0, -0.01, 0.0));
+    let on_ground = motion.delta_movement.y <= 0.0 && world.block(block) != AIR;
+    if on_ground {
+        motion.position = Vec3::new(next.x, f64::from(block.y + 1), next.z);
+        motion.delta_movement = Vec3::ZERO;
+    } else {
+        motion.position = next;
+        motion.delta_movement = motion.delta_movement.add(0.0, -0.04, 0.0).scale(0.98);
+    }
+    Some((motion, on_ground))
 }
 
 #[derive(Default)]

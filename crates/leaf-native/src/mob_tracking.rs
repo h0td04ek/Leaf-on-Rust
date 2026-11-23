@@ -14,6 +14,7 @@ use leaf_core::network::protocol::game::{
 use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::world::phys::vec3::Vec3;
 
+use crate::audience::Subscription;
 use crate::gameplay::PlayContext;
 use crate::wire::{PacketIds, Wire};
 
@@ -75,8 +76,12 @@ impl MobTracker {
         loaded: &HashSet<Chunk>,
         ctx: &PlayContext<'_>,
         wire: &mut Wire,
+        subscription: &Subscription<'_>,
     ) -> io::Result<()> {
-        let changes = self.collect(&ctx.mobs.0.lock().unwrap(), loaded, at_chunk(position));
+        let changes = self.collect(&ctx.mobs.0.read().unwrap(), loaded, at_chunk(position));
+        // A world update can be queued while the tracker waits for the scene lock.
+        // Deliver it before the entity packets from that scene snapshot.
+        subscription.flush(wire, ctx.ids, loaded)?;
         changes.send(wire, ctx.ids, ctx.commands.game_time())
     }
 
@@ -271,7 +276,7 @@ mod tests {
     #[test]
     fn keeps_an_entity_id_when_it_moves_between_visible_chunks() {
         let mobs = Mobs::default();
-        let mut scene = mobs.0.lock().unwrap();
+        let mut scene = mobs.0.write().unwrap();
         let mut tracker = MobTracker::default();
         let origin = (0, 0);
         let edge = (32, 0);

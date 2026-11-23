@@ -6,7 +6,7 @@ use tracking::SentMob;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::time::Instant;
 
 use leaf_core::core::{
@@ -28,9 +28,10 @@ use crate::blocks::Blocks;
 use crate::gameplay::PlayContext;
 use crate::items::{named_id, stack};
 use crate::mob_types::{self, MobType};
-use crate::peers::{clear_sight, MobTarget, Peers};
+use crate::peers::{clear_sight, clear_sight_with, MobTarget, Peers};
 use crate::simulation::SimulationContext;
-use crate::world::{chunk, FlatWorld};
+use crate::workers::Workers;
+use crate::world::{chunk, BlockView, FlatWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
 const FUSE_TICKS: i64 = 80;
@@ -38,6 +39,7 @@ const WORLD_LIMIT: usize = 60_000;
 const TNT_LIMIT: usize = 256;
 const SPAWNS_PER_TICK: usize = 256;
 const SIMULATED_MOBS_PER_PLAYER: usize = 192;
+const MOB_WORK_BATCH: usize = 192;
 const TRACKED_ADDITIONS_PER_TICK: usize = 512;
 const NATURAL_LIMIT: usize = 32;
 
@@ -51,11 +53,11 @@ pub struct Rules {
     pub decay: bool,
 }
 
-pub struct Mobs(Mutex<Scene>);
+pub struct Mobs(RwLock<Scene>);
 
 impl Default for Mobs {
     fn default() -> Self {
-        Self(Mutex::new(Scene {
+        Self(RwLock::new(Scene {
             entities: HashMap::new(),
             chunks: HashMap::new(),
             chunk_revision: 0,
@@ -122,7 +124,7 @@ impl Mobs {
         if !valid_position(position) {
             return Err("The summon position is outside this world");
         }
-        let mut scene = self.0.lock().unwrap();
+        let mut scene = self.0.write().unwrap();
         if count == 0
             || count > COMMAND_LIMIT as usize
             || scene.entities.len() + scene.queued + count > WORLD_LIMIT
@@ -159,7 +161,7 @@ impl Mobs {
         if !ctx.commands.world.lock().unwrap().mob_rules().tnt {
             return false;
         }
-        let mut scene = self.0.lock().unwrap();
+        let mut scene = self.0.write().unwrap();
         if scene.explosives.len() + scene.queued_tnt >= TNT_LIMIT {
             return false;
         }
@@ -187,7 +189,7 @@ impl Mobs {
         if mode == GameType::Spectator {
             return;
         }
-        let mut scene = self.0.lock().unwrap();
+        let mut scene = self.0.write().unwrap();
         let Some(mob) = scene
             .entities
             .get_mut(&id)
@@ -217,28 +219,31 @@ impl Mobs {
         }
     }
 
-    pub fn tick(&self, now: i64, rules: &Rules, ctx: &SimulationContext<'_>, peers: &Peers) {
-        let mut scene = self.0.lock().unwrap();
-        let players = peers.mob_targets();
+    pub fn tick(
+        &self,
+        now: i64,
+        rules: &Rules,
+        ctx: &SimulationContext<'_>,
+        peers: &Peers,
+        workers: &Workers,
+    ) {
+        let mut scene = self.0.write().unwrap();
+        let mut players = peers.mob_targets();
+        players.sort_unstable_by_key(|player| player.id);
         scene.spawn_queued(now, ctx);
         scene.spawn_naturally(now, &players, rules, ctx);
 
         let mut active = scene.explosives.clone();
         let mut explosions = Vec::new();
         for player in &players {
-            active.extend(
-                scene
-                    .nearby(player.position, 32.0, SIMULATED_MOBS_PER_PLAYER)
-                    .into_iter()
-                    .map(|(id, _)| id),
-            );
+            active.extend(scene.nearby(player.position, 32.0, SIMULATED_MOBS_PER_PLAYER));
         }
         let mut removed = Vec::new();
-        let tick = now as u32;
+        let mut jobs = Vec::with_capacity(active.len());
+        let mut active = active.into_iter().collect::<Vec<_>>();
+        active.sort_unstable();
         for id in active {
-            let Some(mob) = scene.entities.get_mut(&id) else {
-                continue;
-            };
+            let mob = scene.entities[&id];
             if mob.fuse.is_some_and(|end| end <= now) {
                 if explosions.len() < 8 {
                     if rules.tnt {
@@ -252,27 +257,72 @@ impl Mobs {
                 removed.push(id);
                 continue;
             }
-            let previous = SentMob::from(*mob);
-            let old_chunk = at_chunk(previous.motion.position);
-            mob.step(id, tick, now, &players, peers, ctx.world);
-            let new_chunk = at_chunk(mob.motion.position);
-            if old_chunk != new_chunk {
-                scene.unindex(id, old_chunk);
-                scene.index(id, new_chunk);
-            } else if previous != SentMob::from(*mob) {
-                scene.mark_changed(new_chunk);
+            if mob.dying.is_none() {
+                jobs.push(id);
+            }
+        }
+
+        let world = ctx.world.snapshot();
+        if workers.can_split(jobs.len(), MOB_WORK_BATCH) {
+            let jobs = jobs
+                .into_iter()
+                .map(|id| (id, scene.entities[&id]))
+                .collect();
+            for (id, updated, attack) in step_mobs(jobs, players, world, now, workers) {
+                let current = scene.entities.get_mut(&id).unwrap();
+                let previous = SentMob::from(*current);
+                *current = updated;
+                scene.finish_step(id, previous, updated, attack, peers);
+            }
+        } else {
+            for id in jobs {
+                let mob = scene.entities.get_mut(&id).unwrap();
+                let previous = SentMob::from(*mob);
+                let attack = mob.step(id, now, &players, &world);
+                let updated = *mob;
+                scene.finish_step(id, previous, updated, attack, peers);
             }
         }
         for id in removed {
             scene.remove(id);
         }
         for center in explosions {
-            scene.explode(center, now, rules, ctx, peers);
+            scene.explode(center, now, rules, ctx, peers, workers);
         }
     }
 }
 
 impl Scene {
+    fn finish_step(
+        &mut self,
+        id: i32,
+        previous: SentMob,
+        updated: Mob,
+        attack: Option<MobAttack>,
+        peers: &Peers,
+    ) {
+        let current = SentMob::from(updated);
+        if previous != current {
+            let old_chunk = at_chunk(previous.motion.position);
+            let new_chunk = at_chunk(current.motion.position);
+            if old_chunk != new_chunk {
+                self.unindex(id, old_chunk);
+                self.index(id, new_chunk);
+            } else {
+                self.mark_changed(new_chunk);
+            }
+        }
+        if let Some(attack) = attack {
+            peers.hurt(
+                attack.target,
+                3.0,
+                attack.velocity,
+                updated.kind.name.into(),
+                Instant::now(),
+            );
+        }
+    }
+
     fn add(
         &mut self,
         kind: &'static MobType,
@@ -374,39 +424,33 @@ impl Scene {
         }
     }
 
-    fn nearby(&self, center: Vec3, radius: f64, limit: usize) -> Vec<(i32, Mob)> {
+    fn nearby(&self, center: Vec3, radius: f64, limit: usize) -> impl Iterator<Item = i32> {
         let min = at_chunk(center.subtract(radius, 0.0, radius));
         let max = at_chunk(center.add(radius, 0.0, radius));
         let mut result = Vec::new();
         for x in min.0..=max.0 {
             for z in min.1..=max.1 {
-                let coord = (x, z);
-                if let Some(chunk) = self.chunks.get(&coord) {
+                if let Some(chunk) = self.chunks.get(&(x, z)) {
                     result.extend(chunk.ids.iter().filter_map(|&id| {
-                        let mob = self.entities[&id];
-                        (center.distance_to_sqr(&mob.motion.position) <= radius * radius)
-                            .then_some((id, mob))
+                        let mob = &self.entities[&id];
+                        let distance = center.distance_to_sqr(&mob.motion.position);
+                        (distance <= radius * radius).then_some((id, mob.fuse.is_some(), distance))
                     }));
                 }
             }
         }
-        let nearest = |(ai, a): &(i32, Mob), (bi, b): &(i32, Mob)| {
-            b.fuse
-                .is_some()
-                .cmp(&a.fuse.is_some())
-                .then_with(|| {
-                    center
-                        .distance_to_sqr(&a.motion.position)
-                        .total_cmp(&center.distance_to_sqr(&b.motion.position))
-                })
+        let nearest = |(ai, a_explosive, a_dist): &(i32, bool, f64),
+                       (bi, b_explosive, b_dist): &(i32, bool, f64)| {
+            b_explosive
+                .cmp(a_explosive)
+                .then_with(|| a_dist.total_cmp(b_dist))
                 .then_with(|| ai.cmp(bi))
         };
         if result.len() > limit {
             result.select_nth_unstable_by(limit, nearest);
             result.truncate(limit);
         }
-        result.sort_unstable_by(nearest);
-        result
+        result.into_iter().map(|(id, _, _)| id)
     }
 
     fn spawn_queued(&mut self, now: i64, ctx: &SimulationContext<'_>) {
@@ -514,6 +558,7 @@ impl Scene {
         rules: &Rules,
         ctx: &SimulationContext<'_>,
         peers: &Peers,
+        workers: &Workers,
     ) {
         for target in peers
             .mob_targets()
@@ -530,7 +575,9 @@ impl Scene {
                 );
             }
         }
-        for (id, mob) in self.nearby(center, 8.0, usize::MAX) {
+        let nearby = self.nearby(center, 8.0, usize::MAX).collect::<Vec<_>>();
+        for id in nearby {
+            let mob = self.entities[&id];
             if mob.fuse.is_none() {
                 if let Some((damage, velocity)) = blast_hit(center, mob.motion.position, ctx.world)
                 {
@@ -545,7 +592,9 @@ impl Scene {
                 }
             }
         }
-        let removed = ctx.world.blast(center, 4.0, &mut self.random, ctx.audience);
+        let removed = ctx
+            .world
+            .blast(center, 4.0, &mut self.random, ctx.audience, workers);
         let blocks = Blocks::vanilla();
         for &(pos, state) in &removed {
             let block = blocks.get(state);
@@ -626,15 +675,11 @@ impl Mob {
     fn step(
         &mut self,
         id: i32,
-        tick: u32,
         now: i64,
         players: &[MobTarget],
-        peers: &Peers,
-        world: &FlatWorld,
-    ) {
-        if self.dying.is_some() {
-            return;
-        }
+        world: &BlockView,
+    ) -> Option<MobAttack> {
+        let mut attack = None;
         let position = self.motion.position;
         let mut velocity = self.motion.delta_movement;
         if self.fuse.is_none() && self.kind.name != "armor_stand" {
@@ -654,7 +699,7 @@ impl Mob {
                         })
                 })
                 .flatten();
-            let phase = tick.wrapping_add((id as u32).wrapping_mul(17));
+            let phase = (now as u32).wrapping_add((id as u32).wrapping_mul(17));
             if let Some(target) = target {
                 let delta = position.vector_to(&target.position);
                 let heading = delta.multiply(1.0, 0.0, 1.0).normalize().scale(0.13);
@@ -663,20 +708,17 @@ impl Mob {
                 self.motion.y_rot = (-heading.x.atan2(heading.z).to_degrees()) as f32;
                 if delta.length_squared() <= 2.5 * 2.5
                     && self.next_attack.is_none_or(|next| now >= next)
-                    && clear_sight(
-                        world,
+                    && clear_sight_with(
                         position.add(0.0, self.kind.height * 0.75, 0.0),
                         target.position.add(0.0, 1.0, 0.0),
+                        |pos| world.block(pos),
                     )
                 {
                     self.next_attack = Some(now + 20);
-                    peers.hurt(
-                        target.id,
-                        3.0,
-                        heading.scale(2.0).add(0.0, 0.25, 0.0),
-                        self.kind.name.into(),
-                        Instant::now(),
-                    );
+                    attack = Some(MobAttack {
+                        target: target.id,
+                        velocity: heading.scale(2.0).add(0.0, 0.25, 0.0),
+                    });
                 }
             } else if phase % 120 < 32 && self.on_ground {
                 self.motion.y_rot = ((phase / 120 * 71 + id as u32) % 360) as f32;
@@ -684,6 +726,15 @@ impl Mob {
                 velocity.x = walk.x;
                 velocity.z = walk.z;
             }
+        }
+        if self.on_ground
+            && velocity == Vec3::ZERO
+            && position.y.fract() == 0.0
+            && !self.kind.aquatic
+            && !self.kind.flying
+            && !world.has_room(position.add(0.0, -0.04, 0.0), self.kind.height, false)
+        {
+            return attack;
         }
         let next = position.add(velocity.x, 0.0, velocity.z);
         let swim = self.kind.aquatic && world.has_room(position, self.kind.height, true);
@@ -712,7 +763,35 @@ impl Mob {
         }
         self.motion.position = next;
         self.motion.delta_movement = velocity.multiply(0.7, 0.98, 0.7);
+        attack
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MobAttack {
+    target: i32,
+    velocity: Vec3,
+}
+
+fn step_mobs(
+    jobs: Vec<(i32, Mob)>,
+    players: Vec<MobTarget>,
+    world: BlockView,
+    now: i64,
+    workers: &Workers,
+) -> impl Iterator<Item = (i32, Mob, Option<MobAttack>)> {
+    workers
+        .map_ranges(jobs.len(), MOB_WORK_BATCH, move |range| {
+            jobs[range]
+                .iter()
+                .map(|&(id, mut mob)| {
+                    let attack = mob.step(id, now, &players, &world);
+                    (id, mob, attack)
+                })
+                .collect::<Vec<_>>()
+        })
+        .into_iter()
+        .flatten()
 }
 
 fn spawn_item(ctx: &SimulationContext<'_>, item: i32, position: Vec3, tick: i64) {
@@ -776,6 +855,48 @@ mod tests {
     use crate::wire::PacketIds;
 
     #[test]
+    fn mob_step_results_are_independent_of_worker_count() {
+        let mobs = Mobs::default();
+        let mut scene = mobs.0.write().unwrap();
+        let ids = AtomicI32::new(1);
+        let world = FlatWorld::new(0);
+        let audience = Audience::default();
+        let obstacle = BlockPos::new(1, 16, 0);
+        assert!(world.place_block(obstacle.offset(0, -1, 0), obstacle, 1, |_| false, &audience));
+        let snapshot = world.snapshot();
+        assert!(world.break_block(obstacle, 1, &audience));
+        assert_eq!(snapshot.block(obstacle), 1);
+        assert_eq!(world.block(obstacle), 0);
+
+        let player = MobTarget {
+            id: 7000,
+            position: Vec3::new(1.0, 16.0, 1.0),
+            vulnerable: true,
+        };
+        let jobs = (0..768)
+            .map(|i| {
+                let kind = if i % 2 == 0 { "pig" } else { "zombie" };
+                let pos = Vec3::new(
+                    0.5 + f64::from(i % 12) * 0.125,
+                    16.0,
+                    0.5 + f64::from(i / 12) * 0.125,
+                );
+                let id = scene.add(mob_types::named(kind).unwrap(), pos, false, None, &ids);
+                (id, scene.entities[&id])
+            })
+            .collect::<Vec<_>>();
+        let run = |threads| {
+            let workers = Workers::new(threads).unwrap();
+            step_mobs(jobs.clone(), vec![player], snapshot.clone(), 20, &workers)
+                .map(|(id, mob, attack)| (id, mob.motion, mob.on_ground, mob.next_attack, attack))
+                .collect::<Vec<_>>()
+        };
+        let serial = run(1);
+        assert!(serial.iter().any(|entry| entry.4.is_some()));
+        assert_eq!(serial, run(4));
+    }
+
+    #[test]
     fn queues_spawns_in_groups_and_tracks_all_50k_pigs() {
         let directory = TestWorld::new();
         std::fs::create_dir_all(&directory.0).unwrap();
@@ -799,7 +920,7 @@ mod tests {
         let origin = Vec3::new(0.5, 16.0, 0.5);
         let pig = mob_types::named("pig").unwrap();
         mobs.summon(pig, origin, 50_000, &ctx).unwrap();
-        let mut scene = mobs.0.lock().unwrap();
+        let mut scene = mobs.0.write().unwrap();
         assert_eq!(scene.entities.len(), 0);
         let now = 0;
         scene.spawn_queued(now, &ctx.simulation());

@@ -98,7 +98,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(player_data: PlayerStore) -> io::Result<Self> {
+    pub fn new(player_data: PlayerStore, workers: usize) -> io::Result<Self> {
         Items::vanilla();
         Blocks::vanilla();
         Recipes::vanilla();
@@ -108,6 +108,7 @@ impl Server {
         let simulation = Simulation::start(
             FlatWorld::new(registries.plains_id),
             Commands::new(operators),
+            workers,
         )?;
         Ok(Self {
             handshake: PacketIds::from_protocol(handshake_protocols::serverbound()),
@@ -530,7 +531,13 @@ impl Server {
             if update_peers {
                 presence.publish(game.view());
                 tracker.sync(presence, chunks.loaded(), wire, &self.play_out)?;
-                mob_tracker.sync(game.player.position, chunks.loaded(), &context, wire)?;
+                mob_tracker.sync(
+                    game.player.position,
+                    chunks.loaded(),
+                    &context,
+                    wire,
+                    subscription,
+                )?;
                 next_peer_update = now + Duration::from_millis(50);
             }
             let elapsed = last_ping.elapsed();
