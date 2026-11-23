@@ -10,6 +10,7 @@ use crate::blocks::Blocks;
 use super::{Chunk, AIR, MIN_Y, SECTIONS, SPAWN_Y, STONE};
 
 pub const SEA_LEVEL: i32 = 63;
+pub const TERRAIN_VERSION: u8 = 2;
 const CACHE_SHARDS: usize = 16;
 const CHUNKS_PER_SHARD: usize = 32;
 const SECTION_VOLUME: usize = 4096;
@@ -42,6 +43,7 @@ impl WorldType {
 pub struct Generation {
     pub world_type: WorldType,
     pub seed: i64,
+    pub version: u8,
 }
 
 impl Generation {
@@ -52,6 +54,7 @@ impl Generation {
     pub const FLAT: Self = Self {
         world_type: WorldType::Flat,
         seed: 0,
+        version: 1,
     };
 }
 
@@ -192,7 +195,7 @@ impl Terrain {
             generation,
             flat,
             overworld: (generation.world_type == WorldType::Normal)
-                .then(|| Overworld::new(generation.seed)),
+                .then(|| Overworld::new(generation.seed, generation.version)),
             cache: std::array::from_fn(|_| Mutex::default()),
         }
     }
@@ -302,6 +305,7 @@ struct Column {
 
 struct Overworld {
     seed: i64,
+    version: u8,
     land: ImprovedNoise,
     hills: ImprovedNoise,
     detail: ImprovedNoise,
@@ -361,10 +365,11 @@ impl Materials {
 }
 
 impl Overworld {
-    fn new(seed: i64) -> Self {
+    fn new(seed: i64, version: u8) -> Self {
         let mut random = LegacyRandomSource::new(hash(seed, 0, 0) as i64);
         Self {
             seed,
+            version,
             land: ImprovedNoise::new(&mut random),
             hills: ImprovedNoise::new(&mut random),
             detail: ImprovedNoise::new(&mut random),
@@ -380,23 +385,56 @@ impl Overworld {
         let sample = |noise: &ImprovedNoise, scale: f64| {
             noise.noise(f64::from(x) / scale, 0.0, f64::from(z) / scale)
         };
-        let land = sample(&self.land, 410.0) + sample(&self.detail, 150.0) * 0.18;
-        let relief = sample(&self.hills, 116.0);
-        let detail = sample(&self.detail, 32.0);
-        let mountain = ((relief - 0.12) * 2.8).clamp(0.0, 1.15);
-        let mut height =
-            (69.0 + land * 51.0 + (9.0 + mountain * 67.0) * relief + 5.0 * detail).round() as i32;
-        // A smooth valley around a contour of the river field.
-        let river = sample(&self.rivers, 210.0).abs();
-        if land > -0.11 && height < 95 && river < 0.08 {
-            let bank = (river / 0.08).clamp(0.0, 1.0);
-            height = lerp(59.0, f64::from(height), bank * bank * (3.0 - 2.0 * bank)).round() as i32;
-            if height < SEA_LEVEL - 1 {
-                return Column {
-                    height,
-                    biome: Biome::River,
-                };
+        let (height, river) = if self.version == 1 {
+            let land = sample(&self.land, 410.0) + sample(&self.detail, 150.0) * 0.18;
+            let relief = sample(&self.hills, 116.0);
+            let detail = sample(&self.detail, 32.0);
+            let mountain = ((relief - 0.12) * 2.8).clamp(0.0, 1.15);
+            let mut height = (69.0 + land * 51.0 + (9.0 + mountain * 67.0) * relief + 5.0 * detail)
+                .round() as i32;
+            // A smooth valley around a contour of the river field.
+            let river = sample(&self.rivers, 210.0).abs();
+            if land > -0.11 && height < 95 && river < 0.08 {
+                let bank = (river / 0.08).clamp(0.0, 1.0);
+                height =
+                    lerp(59.0, f64::from(height), bank * bank * (3.0 - 2.0 * bank)).round() as i32;
+                if height < SEA_LEVEL - 1 {
+                    return Column {
+                        height,
+                        biome: Biome::River,
+                    };
+                }
             }
+            (height, false)
+        } else {
+            let warp = sample(&self.detail, 150.0);
+            let continents = self.land.noise(
+                (f64::from(x) + warp * 55.0) / 465.0,
+                0.0,
+                (f64::from(z) - warp * 55.0) / 465.0,
+            );
+            let relief = sample(&self.hills, 125.0);
+            let detail = sample(&self.detail, 35.0);
+            let ocean_depth = 42.0 * smooth((-continents - 0.08) / 0.47);
+            let uplands = 21.0 * smooth((continents + 0.02) / 0.45);
+            let mountain = smooth((relief - 0.08) / 0.52) * smooth((continents + 0.24) / 0.36);
+            let surface =
+                66.0 + uplands - ocean_depth + 12.0 * relief + 41.0 * mountain + 5.0 * detail;
+            let river = sample(&self.rivers, 210.0).abs();
+            let bank = 1.0 - smooth(river / 0.083);
+            let slope = 1.0 - smooth((surface - 76.0) / 30.0);
+            let inland = smooth((continents + 0.16) / 0.16);
+            let bed = lerp(surface, surface.min(58.0), bank * slope * inland);
+            (
+                bed.round() as i32,
+                bed < 62.0 && surface >= 62.0 && bank > 0.2,
+            )
+        };
+        if river {
+            return Column {
+                height,
+                biome: Biome::River,
+            };
         }
         let climate = sample(&self.climate, 247.0);
         let moisture = sample(&self.moisture, 190.0);
@@ -611,6 +649,14 @@ impl Overworld {
                 let pz = gz * TREE_GRID + ((random >> 8) % TREE_GRID as u64) as i32;
                 let Column { height, biome } = self.column(px, pz);
                 let roll = (random >> 16) % 12;
+                if self.version >= 2
+                    && self
+                        .detail
+                        .noise(f64::from(px) / 49.0, 0.0, f64::from(pz) / 49.0)
+                        < -0.21
+                {
+                    continue;
+                }
                 let species = match biome {
                     Biome::Forest if roll < 10 => 0,
                     Biome::BirchForest if roll < 9 => 1,
@@ -651,6 +697,11 @@ impl Overworld {
     }
 }
 
+fn smooth(value: f64) -> f64 {
+    let fraction = value.clamp(0.0, 1.0);
+    fraction * fraction * (3.0 - 2.0 * fraction)
+}
+
 fn lerp(a: f64, b: f64, fraction: f64) -> f64 {
     a + (b - a) * fraction
 }
@@ -671,9 +722,9 @@ mod tests {
 
     #[test]
     fn seeded_overworld_has_varied_land_water_biomes_caves_and_ores() {
-        let generator = Overworld::new(322);
-        let same = Overworld::new(322);
-        let other = Overworld::new(323);
+        let generator = Overworld::new(322, TERRAIN_VERSION);
+        let same = Overworld::new(322, TERRAIN_VERSION);
+        let other = Overworld::new(323, TERRAIN_VERSION);
         let mut biomes = HashSet::new();
         let mut heights = HashSet::new();
         let mut differs = false;

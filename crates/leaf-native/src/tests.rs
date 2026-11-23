@@ -834,6 +834,95 @@ fn use_block(client: &mut TcpStream, block: BlockPos, sequence: i32) {
 }
 
 #[test]
+fn mines_grass_and_stone_and_picks_up_the_vanilla_loot() {
+    use leaf_core::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    let player = enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    command(&mut client, "gamerule spawn_mobs false");
+    multiplayer_packet(&mut client, 119);
+    for command_line in [
+        "fill 1 16 0 1 16 0 grass_block",
+        "fill 0 16 1 0 16 1 stone",
+        "fill 1 16 1 1 16 1 short_grass",
+    ] {
+        command(&mut client, command_line);
+        multiplayer_packet(&mut client, 119);
+    }
+    set_creative(&mut client, 36, "diamond_shovel", 1);
+    set_creative(&mut client, 37, "iron_pickaxe", 1);
+    command(&mut client, "gamemode survival");
+    multiplayer_packet(&mut client, 38);
+
+    for (slot, pos, loot) in [
+        (0, BlockPos::new(1, 16, 0), "dirt"),
+        (1, BlockPos::new(0, 16, 1), "cobblestone"),
+    ] {
+        send(&mut client, 52, |buf| {
+            buf.write_short(slot);
+        });
+        mine(&mut client, pos, 0, slot * 2 + 1);
+        mine(&mut client, pos, 2, slot * 2 + 2);
+        assert_eq!(block_update(&mut client, pos), 0);
+        let started = std::time::Instant::now();
+        let item = spawned(&mut client, crate::items::ITEM_ENTITY);
+        let data = ClientboundSetEntityDataPacket::stream_codec()
+            .decode(&mut multiplayer_packet(&mut client, 97));
+        assert_eq!(data.id, item);
+        let stack = data.packed_items[0]
+            .value
+            .downcast_ref::<ItemStack>()
+            .unwrap();
+        assert_eq!(item_id(stack), Some(named_id(loot)));
+        let mut pickup = multiplayer_packet(&mut client, 122);
+        assert_eq!(pickup.read_var_int(), item);
+        assert_eq!(pickup.read_var_int(), player);
+        assert_eq!(pickup.read_var_int(), 1);
+        assert!(started.elapsed() < Duration::from_millis(1700));
+    }
+    let pos = BlockPos::new(1, 16, 1);
+    mine(&mut client, pos, 0, 5);
+    assert_eq!(block_update(&mut client, pos), 0);
+
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
+fn switching_to_spectator_updates_the_own_profile_and_flight_abilities() {
+    use leaf_core::network::protocol::game::{
+        clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket,
+        clientbound_player_info_update_packet::{
+            ClientboundPlayerInfoUpdatePacket, PlayerInfoUpdateAction,
+        },
+    };
+    use leaf_core::world::level::game_type::GameType;
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    command(&mut client, "gamemode spectator");
+    multiplayer_packet(&mut client, 38);
+    let abilities = ClientboundPlayerAbilitiesPacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 62));
+    assert!(abilities.is_flying && abilities.can_fly);
+    assert_eq!(abilities.flying_speed, 0.1);
+    let mode = ClientboundPlayerInfoUpdatePacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 68));
+    assert!(mode
+        .actions
+        .contains(&PlayerInfoUpdateAction::UpdateGameMode));
+    assert_eq!(
+        mode.entries[0].profile_id,
+        Uuid::create_offline_player_uuid("h0td04ek")
+    );
+    assert_eq!(mode.entries[0].game_mode, GameType::Spectator);
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
 fn players_share_block_edits_and_survival_drops() {
     let world = TestWorld::new();
     let server =

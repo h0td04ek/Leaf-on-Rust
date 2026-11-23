@@ -585,6 +585,7 @@ impl CommandWorld {
     pub fn mob_rules(&self) -> mobs::Rules {
         mobs::Rules {
             natural_spawns: self.rules.get_or_default(&spawn_mobs()),
+            sunlight: !self.weather.raining && self.day_time().rem_euclid(24_000) < 12_000,
             hostile_spawns: self.difficulty != Difficulty::Peaceful
                 && (13_000..23_000).contains(&self.day_time().rem_euclid(24_000)),
             tnt: self.rules.get_or_default(&tnt_explodes()),

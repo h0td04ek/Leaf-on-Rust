@@ -7,6 +7,7 @@ mod drops;
 mod gameplay;
 mod items;
 mod maps;
+mod mining;
 mod mob_types;
 mod mobs;
 mod operators;

@@ -101,6 +101,22 @@ impl Wire {
             .set_read_timeout(Some(Duration::from_millis(50)))
     }
 
+    pub fn input_pending(&self) -> io::Result<bool> {
+        if !self.stream.buffer().is_empty() {
+            return Ok(true);
+        }
+        let socket = self.stream.get_ref();
+        socket.set_nonblocking(true)?;
+        let result = socket.peek(&mut [0]);
+        socket.set_nonblocking(false)?;
+        match result {
+            Ok(0) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn ready(&mut self) -> io::Result<bool> {
         match self.stream.fill_buf() {
             Ok([]) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),

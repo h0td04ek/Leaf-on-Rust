@@ -11,7 +11,9 @@ use crate::world::item::component::{
     writable_book_content::WritableBookContent,
     written_book_content::WrittenBookContent,
 };
-use crate::world::item::{dye_color::DyeColor, item};
+use crate::world::item::{
+    dye_color::DyeColor, enchantment::item_enchantments::ItemEnchantments, item,
+};
 use crate::world::level::block::entity::{
     banner_pattern_layers::{BannerPatternLayer, BannerPatternLayers},
     pot_decorations::PotDecorations,
@@ -28,6 +30,40 @@ fn registry(registry: &str) -> impl Iterator<Item = &'static str> + '_ {
 
 pub(super) fn registry_len(name: &str) -> usize {
     registry(name).count()
+}
+
+pub(super) fn enchantment_id(key: &Identifier) -> Option<i32> {
+    let name = key.to_string();
+    registry("enchantment")
+        .position(|key| key == name)
+        .map(|id| id as i32)
+}
+
+pub(super) fn enchantments(ty: DataComponentType) -> DataComponentType {
+    with_nbt(
+        ty,
+        |value: &ItemEnchantments| {
+            let mut stored = CompoundTag::new();
+            for (holder, level) in &value.enchantments {
+                stored.put_int(&key_for("enchantment", holder)?, *level);
+            }
+            Ok(Tag::Compound(stored))
+        },
+        |tag| {
+            let compound = tag.as_compound().ok_or("expected enchantment levels")?;
+            compound
+                .iter()
+                .map(|(name, level)| {
+                    let level = level
+                        .as_int()
+                        .filter(|level| (1..=32767).contains(level))
+                        .ok_or("invalid enchantment level")?;
+                    Ok((holder_for("enchantment", name)?, level))
+                })
+                .collect::<Result<Vec<_>, String>>()
+                .map(ItemEnchantments::new)
+        },
+    )
 }
 
 fn key_for<T>(name: &str, holder: &Holder<T>) -> Result<String, String> {

@@ -26,7 +26,9 @@ use leaf_core::network::protocol::game::{
     clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket,
     clientbound_login_packet::ClientboundLoginPacket,
     clientbound_player_combat_kill_packet::ClientboundPlayerCombatKillPacket,
-    clientbound_player_info_update_packet::{ClientboundPlayerInfoUpdatePacket, PlayerInfoEntry},
+    clientbound_player_info_update_packet::{
+        ClientboundPlayerInfoUpdatePacket, PlayerInfoEntry, PlayerInfoUpdateAction,
+    },
     clientbound_player_position_packet::ClientboundPlayerPositionPacket,
     clientbound_respawn_packet::{ClientboundRespawnPacket, KEEP_ALL_DATA},
     clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket,
@@ -61,6 +63,7 @@ use crate::commands::{Commands, PlayerCommand};
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
 use crate::maps::Maps;
+use crate::mining::Mining;
 use crate::mobs::MobTracker;
 use crate::operators::{valid_name, Operators, PERMISSION_EVENT};
 use crate::peers::{attack_damage, PeerTracker, Presence};
@@ -106,6 +109,7 @@ impl Server {
     ) -> io::Result<Self> {
         Items::vanilla();
         Blocks::vanilla();
+        Mining::vanilla();
         Recipes::vanilla();
         let registries = Registries::load();
         let operators = Operators::open(player_data.ops_path())?;
@@ -478,6 +482,17 @@ impl Server {
             if let Some(mode) = presence.take_mode() {
                 game.close_crafting(wire, &context, true)?;
                 game.set_mode(mode, wire, &self.play_out)?;
+                let mut entry = PlayerInfoEntry::new_minimal(uuid, true);
+                entry.game_mode = mode;
+                wire.send(
+                    &self.play_out,
+                    &ClientboundPlayerInfoUpdatePacket::new(
+                        [PlayerInfoUpdateAction::UpdateGameMode]
+                            .into_iter()
+                            .collect(),
+                        vec![entry],
+                    ),
+                )?;
                 presence.publish(game.view());
                 self.simulation.audience.chat(
                     Component::literal(format!("Game mode set to {}", mode.get_name())),
@@ -546,7 +561,7 @@ impl Server {
             let update_peers = now >= next_peer_update;
             subscription.flush(wire, &self.play_out, chunks.loaded())?;
             game.check_crafting(wire, &context)?;
-            game.tick(wire, &context, chunks.loaded())?;
+            game.tick(wire, &context, chunks.loaded(), subscription)?;
             chunks.send_next(&self.simulation.terrain, wire, &self.play_out)?;
             if update_peers {
                 presence.publish(game.view());

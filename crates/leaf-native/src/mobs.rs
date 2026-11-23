@@ -25,6 +25,7 @@ use leaf_core::util::{random::weighted_list::WeightedList, uuid::Uuid};
 use leaf_core::world::{level::game_type::GameType, phys::vec3::Vec3};
 
 use crate::blocks::Blocks;
+use crate::drops::PickupDelay;
 use crate::gameplay::PlayContext;
 use crate::items::{named_id, stack};
 use crate::mob_types::{self, MobType};
@@ -47,6 +48,7 @@ type Chunk = (i32, i32);
 
 pub struct Rules {
     pub natural_spawns: bool,
+    pub sunlight: bool,
     pub hostile_spawns: bool,
     pub tnt: bool,
     pub block_drops: bool,
@@ -94,6 +96,8 @@ struct MobChunk {
 struct Batch {
     kind: &'static MobType,
     origin: Vec3,
+    frontier: VecDeque<(i32, i32)>,
+    seen: HashSet<(i32, i32)>,
     spawned: usize,
     total: usize,
 }
@@ -111,6 +115,8 @@ struct Mob {
     next_attack: Option<i64>,
     dying: Option<i64>,
     fuse: Option<i64>,
+    fire_until: i64,
+    burning: bool,
 }
 
 impl Mobs {
@@ -123,6 +129,9 @@ impl Mobs {
     ) -> Result<(), &'static str> {
         if !valid_position(position) {
             return Err("The summon position is outside this world");
+        }
+        if !spawn_room(&ctx.world.snapshot(), kind, position) {
+            return Err("The summon position has no room for this entity");
         }
         let mut scene = self.0.write().unwrap();
         if count == 0
@@ -141,6 +150,8 @@ impl Mobs {
             scene.batches.push_back(Batch {
                 kind,
                 origin: position,
+                frontier: VecDeque::from([(0, 0)]),
+                seen: HashSet::from([(0, 0)]),
                 spawned: 0,
                 total: count,
             });
@@ -153,8 +164,7 @@ impl Mobs {
     }
 
     pub fn egg(&self, kind: &'static MobType, position: Vec3, ctx: &PlayContext<'_>) -> bool {
-        ctx.world.has_room(position, kind.height, kind.aquatic)
-            && self.summon(kind, position, 1, ctx).is_ok()
+        self.summon(kind, position, 1, ctx).is_ok()
     }
 
     pub fn ignite(&self, position: BlockPos, ctx: &PlayContext<'_>) -> bool {
@@ -263,6 +273,18 @@ impl Mobs {
         }
 
         let world = ctx.world.snapshot();
+        jobs.retain(|id| {
+            let mob = scene.entities.get_mut(id).unwrap();
+            let previous = SentMob::from(*mob);
+            mob.tick_fire(now, rules.sunlight, &world, ctx);
+            let changed = previous != SentMob::from(*mob);
+            let alive = mob.dying.is_none();
+            let coord = at_chunk(mob.motion.position);
+            if changed {
+                scene.mark_changed(coord);
+            }
+            alive
+        });
         if workers.can_split(jobs.len(), MOB_WORK_BATCH) {
             let jobs = jobs
                 .into_iter()
@@ -351,6 +373,8 @@ impl Scene {
             next_attack: None,
             dying: None,
             fuse,
+            fire_until: 0,
+            burning: false,
         };
         self.entities.insert(id, mob);
         self.index(id, at_chunk(position));
@@ -454,29 +478,19 @@ impl Scene {
     }
 
     fn spawn_queued(&mut self, now: i64, ctx: &SimulationContext<'_>) {
+        if self.batches.is_empty() {
+            return;
+        }
+        let world = ctx.world.snapshot();
         for _ in 0..SPAWNS_PER_TICK {
             let Some(mut batch) = self.batches.pop_front() else {
                 break;
             };
-            let (x, z) = spiral(batch.spawned);
-            let radius = (batch.total as f64).sqrt().ceil() * 2.0;
-            let block_bound = 29_999_984.0 - radius;
-            let position = Vec3::new(
-                batch.origin.x.clamp(-block_bound, block_bound) + f64::from(x) * 2.0,
-                batch.origin.y,
-                batch.origin.z.clamp(-block_bound, block_bound) + f64::from(z) * 2.0,
-            );
+            let position = batch.next_position(&world);
             let fuse = (batch.kind.name == "tnt").then(|| now + FUSE_TICKS);
-            let position = if fuse.is_none()
-                && !batch.kind.aquatic
-                && !ctx.world.has_room(position, batch.kind.height, false)
-            {
-                let block = BlockPos::containing_vec3(&position);
-                ctx.world.open_surface(block.x, block.z).unwrap_or(position)
-            } else {
-                position
-            };
-            self.add(batch.kind, position, false, fuse, ctx.entity_ids);
+            if let Some(position) = position {
+                self.add(batch.kind, position, false, fuse, ctx.entity_ids);
+            }
             batch.spawned += 1;
             self.queued -= 1;
             if fuse.is_some() {
@@ -638,6 +652,45 @@ impl Scene {
 }
 
 impl Mob {
+    fn tick_fire(
+        &mut self,
+        now: i64,
+        sunlight: bool,
+        world: &BlockView,
+        ctx: &SimulationContext<'_>,
+    ) {
+        if !matches!(
+            self.kind.name,
+            "zombie"
+                | "zombie_villager"
+                | "drowned"
+                | "skeleton"
+                | "stray"
+                | "bogged"
+                | "parched"
+                | "phantom"
+        ) {
+            return;
+        }
+        let feet = BlockPos::containing_vec3(&self.motion.position);
+        if Blocks::vanilla().get(world.block(feet)).name == "water" {
+            self.fire_until = now;
+        } else if sunlight {
+            let head = BlockPos::containing_vec3(&self.motion.position.add(
+                0.0,
+                self.kind.height * 0.8,
+                0.0,
+            ));
+            if world.sees_sky(head) {
+                self.fire_until = now + 160;
+            }
+        }
+        self.burning = now < self.fire_until;
+        if self.burning && now % 20 == 0 {
+            self.damage(1.0, self.motion.delta_movement, now, ctx);
+        }
+    }
+
     fn damage(
         &mut self,
         amount: f32,
@@ -801,6 +854,7 @@ fn spawn_item(ctx: &SimulationContext<'_>, item: i32, position: Vec3, tick: i64)
         position,
         Vec3::ZERO,
         tick,
+        PickupDelay::Loot,
     );
 }
 
@@ -828,19 +882,50 @@ fn valid_position(position: Vec3) -> bool {
         && NativeWorld::editable(BlockPos::containing_vec3(&position))
 }
 
-fn spiral(index: usize) -> (i32, i32) {
-    if index == 0 {
-        return (0, 0);
+impl Batch {
+    fn next_position(&mut self, world: &BlockView) -> Option<Vec3> {
+        let ((x, z), expand) = self
+            .frontier
+            .pop_front()
+            .map_or(((0, 0), false), |pos| (pos, true));
+        let position = self.origin.add(f64::from(x), 0.0, f64::from(z));
+        if !valid_position(position) || !spawn_room(world, self.kind, position) {
+            return spawn_room(world, self.kind, self.origin).then_some(self.origin);
+        }
+        if expand {
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let coord = (x + dx * 2, z + dz * 2);
+                if self.seen.contains(&coord) {
+                    continue;
+                }
+                let middle = position.add(f64::from(dx), 0.0, f64::from(dz));
+                let next = middle.add(f64::from(dx), 0.0, f64::from(dz));
+                if valid_position(next)
+                    && spawn_room(world, self.kind, middle)
+                    && spawn_room(world, self.kind, next)
+                {
+                    self.seen.insert(coord);
+                    self.frontier.push_back(coord);
+                }
+            }
+        }
+        Some(position)
     }
-    let ring = (((index as f64 + 1.0).sqrt() - 1.0) / 2.0).ceil() as i32;
-    let width = ring * 2;
-    let offset = (width + 1).pow(2) - 1 - index as i32;
-    match offset / width {
-        0 => (ring - offset, -ring),
-        1 => (-ring, -ring + offset - width),
-        2 => (-ring + offset - 2 * width, ring),
-        _ => (ring, ring - offset + 3 * width),
-    }
+}
+
+fn spawn_room(world: &BlockView, kind: &MobType, position: Vec3) -> bool {
+    let half = kind.width / 2.0;
+    let x_range = (position.x - half).floor() as i32..(position.x + half).ceil() as i32;
+    let z_range = (position.z - half).floor() as i32..(position.z + half).ceil() as i32;
+    x_range.into_iter().all(|x| {
+        z_range.clone().all(|z| {
+            world.has_room(
+                Vec3::new(f64::from(x) + 0.5, position.y, f64::from(z) + 0.5),
+                kind.height,
+                kind.aquatic,
+            )
+        })
+    })
 }
 
 #[cfg(test)]
@@ -894,6 +979,71 @@ mod tests {
         let serial = run(1);
         assert!(serial.iter().any(|entry| entry.4.is_some()));
         assert_eq!(serial, run(4));
+    }
+
+    #[test]
+    fn sunlight_burns_exposed_zombies_and_spawn_search_stays_inside_walls() {
+        let directory = TestWorld::new();
+        std::fs::create_dir_all(&directory.0).unwrap();
+        let world = NativeWorld::new(0);
+        let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap(), 0);
+        let audience = Audience::default();
+        let drops = Drops::default();
+        let ids = AtomicI32::new(1);
+        let ctx = SimulationContext {
+            world: &world,
+            commands: &commands,
+            audience: &audience,
+            drops: &drops,
+            entity_ids: &ids,
+        };
+        use crate::world::FillMode;
+        let fill = |a, b| {
+            world
+                .fill(a, b, 1, FillMode::Replace(None), 128, &audience)
+                .unwrap()
+        };
+        fill(BlockPos::new(-1, 16, -1), BlockPos::new(1, 18, 1));
+        world
+            .fill(
+                BlockPos::new(0, 16, 0),
+                BlockPos::new(0, 17, 0),
+                0,
+                FillMode::Replace(None),
+                2,
+                &audience,
+            )
+            .unwrap();
+
+        let mobs = Mobs::default();
+        let mut scene = mobs.0.write().unwrap();
+        let zombie = mob_types::named("zombie").unwrap();
+        let origin = Vec3::new(0.5, 16.0, 0.5);
+        let covered = scene.add(zombie, origin, false, None, &ids);
+        let outside = scene.add(zombie, Vec3::new(4.5, 16.0, 0.5), false, None, &ids);
+        let snapshot = world.snapshot();
+        for (id, burns) in [(covered, false), (outside, true)] {
+            let mob = scene.entities.get_mut(&id).unwrap();
+            mob.tick_fire(20, true, &snapshot, &ctx);
+            assert_eq!(mob.burning, burns);
+            assert_eq!(mob.health, zombie.health - if burns { 1.0 } else { 0.0 });
+            mob.tick_fire(180, false, &snapshot, &ctx);
+            assert!(!mob.burning);
+        }
+        let pig = mob_types::named("pig").unwrap();
+        assert!(spawn_room(&snapshot, pig, origin));
+        assert!(!spawn_room(&snapshot, pig, origin.add(0.3, 0.0, 0.0)));
+        let mut batch = Batch {
+            kind: pig,
+            origin,
+            frontier: VecDeque::from([(0, 0)]),
+            seen: HashSet::from([(0, 0)]),
+            spawned: 0,
+            total: 20,
+        };
+        for _ in 0..20 {
+            assert_eq!(batch.next_position(&snapshot), Some(origin));
+        }
     }
 
     #[test]

@@ -76,6 +76,9 @@ mod item_crafting_nbt;
 pub fn crafting_registry_len(name: &str) -> usize {
     item_crafting_nbt::registry_len(name)
 }
+pub fn enchantment_id(key: &Identifier) -> Option<i32> {
+    item_crafting_nbt::enchantment_id(key)
+}
 mod item_properties_nbt;
 
 fn mk(
@@ -431,7 +434,7 @@ fn register_builtin_types() {
     // 13.
     register_data_component_type(with_nbt(mk("rarity", false, false, rarity()), |value: &Rarity| Ok(Tag::String(value.get_serialized_name().to_owned())), |tag| Rarity::by_name(tag.as_string().ok_or("expected a rarity name")?).ok_or_else(|| "unknown rarity".into())));
     // 14-19.
-    register_data_component_type(mk("enchantments", false, false, payload_codec!(ItemEnchantments, ItemEnchantments::stream_codec())));
+    register_data_component_type(item_crafting_nbt::enchantments(mk("enchantments", false, false, payload_codec!(ItemEnchantments, ItemEnchantments::stream_codec()))));
     register_data_component_type(mk("can_place_on", false, false, payload_codec!(AdventureModePredicate, AdventureModePredicate::stream_codec()))); // AdventureModePredicate
     register_data_component_type(mk("can_break", false, false, payload_codec!(AdventureModePredicate, AdventureModePredicate::stream_codec()))); // AdventureModePredicate
     register_data_component_type(mk("attribute_modifiers", false, false, payload_codec!(ItemAttributeModifiers, ItemAttributeModifiers::stream_codec())));

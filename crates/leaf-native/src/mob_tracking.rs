@@ -37,6 +37,7 @@ pub(super) struct SentMob {
     pub motion: PositionMoveRotation,
     hurt: u32,
     on_ground: bool,
+    burning: bool,
 }
 
 impl From<Mob> for SentMob {
@@ -45,6 +46,7 @@ impl From<Mob> for SentMob {
             motion: mob.motion,
             hurt: mob.hurt,
             on_ground: mob.on_ground,
+            burning: mob.burning,
         }
     }
 }
@@ -54,6 +56,7 @@ pub(super) struct Changes {
     pub added: Vec<(i32, Mob)>,
     pub moved: Vec<(i32, SentMob)>,
     pub hurt: Vec<(i32, bool)>,
+    pub fire: Vec<(i32, bool)>,
     pub removed: Vec<i32>,
 }
 
@@ -194,6 +197,9 @@ impl MobTracker {
                 if sent.hurt != next.hurt {
                     changes.hurt.push((id, mob.dying.is_some()));
                 }
+                if sent.burning != next.burning {
+                    changes.fire.push((id, next.burning));
+                }
                 *sent = next;
                 return Some(coord);
             }
@@ -231,6 +237,9 @@ impl Changes {
                     0,
                 ),
             )?;
+            if mob.burning {
+                send_fire_state(wire, ids, id, true)?;
+            }
             if let Some(fuse) = mob.fuse {
                 let ticks = (fuse - now).max(1) as i32;
                 let value = DataValue {
@@ -247,6 +256,9 @@ impl Changes {
                 &ClientboundEntityPositionSyncPacket::new(id, state.motion, state.on_ground),
             )?;
         }
+        for (id, burning) in self.fire {
+            send_fire_state(wire, ids, id, burning)?;
+        }
         for (id, dying) in self.hurt {
             if dying {
                 wire.send(ids, &ClientboundEntityEventPacket::new(id, 3))?;
@@ -256,6 +268,20 @@ impl Changes {
         }
         Ok(())
     }
+}
+
+fn send_fire_state(wire: &mut Wire, ids: &PacketIds, entity: i32, burning: bool) -> io::Result<()> {
+    wire.send(
+        ids,
+        &ClientboundSetEntityDataPacket::new(
+            entity,
+            vec![DataValue {
+                id: 0,
+                serializer: 0,
+                value: Box::new(i8::from(burning)),
+            }],
+        ),
+    )
 }
 
 fn send_removals(removed: &[i32], wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {

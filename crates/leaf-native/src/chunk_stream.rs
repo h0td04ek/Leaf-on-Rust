@@ -12,7 +12,7 @@ use leaf_core::network::protocol::game::{
 use leaf_core::world::level::chunk_pos::ChunkPos;
 
 use crate::wire::{Cursor, PacketIds, Wire};
-use crate::world::NativeWorld;
+use crate::world::{NativeWorld, WorldType};
 
 pub const MAX_VIEW_DISTANCE: i32 = 32;
 pub const SIMULATION_DISTANCE: i32 = 2;
@@ -135,14 +135,25 @@ impl ChunkStream {
         if self.batch_in_flight || self.pending.is_empty() || Instant::now() < self.next_batch {
             return Ok(());
         }
+        let generated = world.generation().world_type == WorldType::Normal;
+        if generated && wire.input_pending()? {
+            return Ok(());
+        }
         wire.send(ids, &ClientboundChunkBatchStartPacket::instance())?;
         let count = self.batch_size.min(self.pending.len());
+        let mut sent = 0;
         for _ in 0..count {
             let (x, z) = self.pending.pop_front().unwrap();
             world.send_chunk(x, z, wire, ids)?;
             self.loaded.insert((x, z));
+            sent += 1;
+            // Keep the advertised batch count accurate while giving inbound play
+            // packets a chance to run between expensive terrain chunks.
+            if generated && wire.input_pending()? {
+                break;
+            }
         }
-        wire.send(ids, &ClientboundChunkBatchFinishedPacket::new(count as i32))?;
+        wire.send(ids, &ClientboundChunkBatchFinishedPacket::new(sent))?;
         self.batch_in_flight = true;
         self.next_batch = Instant::now() + TICK;
         Ok(())

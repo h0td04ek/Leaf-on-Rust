@@ -13,13 +13,30 @@ use leaf_core::network::protocol::game::{
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::{item::item_stack::ItemStack, phys::vec3::Vec3};
 
+use crate::audience::Subscription;
+use crate::blocks::Blocks;
 use crate::gameplay::{item_data, PlayContext};
 use crate::items::ITEM_ENTITY;
 use crate::wire::Wire;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, NativeWorld, AIR};
+use crate::world::{chunk, BlockView, NativeWorld};
 
 const DROP_WORK_BATCH: usize = 256;
+
+#[derive(Clone, Copy)]
+pub enum PickupDelay {
+    Loot,
+    Thrown,
+}
+
+impl PickupDelay {
+    fn ticks(self) -> i64 {
+        match self {
+            Self::Loot => 10,
+            Self::Thrown => 40,
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Drops(Mutex<Vec<DroppedItem>>);
@@ -32,10 +49,19 @@ struct DroppedItem {
     on_ground: bool,
     stack: ItemStack,
     created: i64,
+    pickup_at: i64,
 }
 
 impl Drops {
-    pub fn spawn(&self, id: i32, stack: ItemStack, pos: Vec3, velocity: Vec3, created: i64) {
+    pub fn spawn(
+        &self,
+        id: i32,
+        stack: ItemStack,
+        pos: Vec3,
+        velocity: Vec3,
+        created: i64,
+        delay: PickupDelay,
+    ) {
         self.0.lock().unwrap().push(DroppedItem {
             id,
             uuid: Uuid::random(),
@@ -43,6 +69,7 @@ impl Drops {
             on_ground: false,
             stack,
             created,
+            pickup_at: created + delay.ticks(),
         });
     }
 
@@ -98,7 +125,8 @@ fn step_drop(
     }
     let next = motion.position.add_vec(&motion.delta_movement);
     let block = block_at(next.add(0.0, -0.01, 0.0));
-    let on_ground = motion.delta_movement.y <= 0.0 && world.block(block) != AIR;
+    let on_ground =
+        motion.delta_movement.y <= 0.0 && !Blocks::vanilla().get(world.block(block)).replaceable;
     if on_ground {
         motion.position = Vec3::new(next.x, f64::from(block.y + 1), next.z);
         motion.delta_movement = Vec3::ZERO;
@@ -122,15 +150,19 @@ impl DropTracker {
         tick: i64,
         mut insert: impl FnMut(&mut ItemStack),
         wire: &mut Wire,
+        subscription: &Subscription<'_>,
     ) -> io::Result<()> {
         let mut picked_up = Vec::new();
         let visible = {
             let mut items = ctx.drops.0.lock().unwrap();
             items.retain_mut(|item| {
                 let position = item.motion.position;
+                let relative = player.vector_to(&position);
                 if collector != 0
-                    && tick - item.created >= 40
-                    && position.distance_to_sqr(&player.add(0.0, 0.5, 0.0)) < 1.44
+                    && tick >= item.pickup_at
+                    && relative.x.abs() < 1.425
+                    && relative.z.abs() < 1.425
+                    && (-0.75..2.3).contains(&relative.y)
                 {
                     let before = item.stack.get_count();
                     insert(&mut item.stack);
@@ -152,6 +184,9 @@ impl DropTracker {
                 .collect::<Vec<_>>()
         };
 
+        // A block update may have arrived while we were collecting drops.
+        // Send it before the corresponding item spawn or pickup.
+        subscription.flush(wire, ctx.ids, loaded)?;
         for (id, count) in picked_up {
             wire.send(
                 ctx.ids,

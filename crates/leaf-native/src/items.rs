@@ -15,6 +15,7 @@ use leaf_core::world::item::component::{
     potion_contents::PotionContents,
 };
 use leaf_core::world::item::dye_color::DyeColor;
+use leaf_core::world::item::enchantment::item_enchantments::ItemEnchantments;
 use leaf_core::world::item::{item, item_stack::ItemStack};
 use leaf_core::world::level::{
     block::entity::banner_pattern_layers::{BannerPatternLayer, BannerPatternLayers},
@@ -28,6 +29,7 @@ pub const FIREWORK: i32 = 1242;
 pub const ITEM_ENTITY: i32 = 71;
 pub const FIREWORK_ENTITY: i32 = 53;
 const DAMAGE: i32 = 3;
+const ENCHANTMENTS: i32 = 13;
 const DYED_COLOR: i32 = 42;
 const MAP_ID: i32 = 44;
 const POTION_CONTENTS: i32 = 49;
@@ -137,6 +139,25 @@ impl Items {
                         &data_component_type_by_identifier(&Identifier::minecraft("damage"))
                             .unwrap(),
                         damage,
+                    );
+                }
+                ENCHANTMENTS => {
+                    let max = crafting_registry_len("enchantment");
+                    let mut enchantments = Vec::new();
+                    let mut ids = HashSet::new();
+                    for _ in 0..data.count(max)? {
+                        let id = data.count(max - 1)? as i32;
+                        let level = data.count(32767)? as i32;
+                        if level == 0 || !ids.insert(id) {
+                            return Err(invalid("invalid item enchantments"));
+                        }
+                        enchantments.push((Holder::Reference(id), level));
+                    }
+                    data.finish()?;
+                    patch.set(
+                        &data_component_type_by_identifier(&Identifier::minecraft("enchantments"))
+                            .unwrap(),
+                        ItemEnchantments::new(enchantments),
                     );
                 }
                 FIREWORK_EXPLOSION if id == named_id("firework_star") => {

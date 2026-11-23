@@ -24,6 +24,7 @@ use leaf_core::network::protocol::game::{
     clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket,
 };
 use leaf_core::network::syncher::synched_entity_data::DataValue;
+use leaf_core::random::{LegacyRandomSource, RandomSource};
 use leaf_core::resources::Identifier;
 use leaf_core::server::network::filterable::Filterable;
 use leaf_core::util::uuid::Uuid;
@@ -36,16 +37,17 @@ use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::level::saveddata::maps::MapId;
 use leaf_core::world::phys::vec3::Vec3;
 
-use crate::audience::Audience;
+use crate::audience::{Audience, Subscription};
 use crate::blocks::{placement_state, Blocks};
 use crate::commands::Commands;
 use crate::crafting::Crafting;
-use crate::drops::{DropTracker, Drops};
+use crate::drops::{DropTracker, Drops, PickupDelay};
 use crate::items::{item_id, named_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY};
 use crate::maps::{map_id, set_map_id, Maps};
+use crate::mining::{enchantment_level, Miner, Mining};
 use crate::mob_types;
 use crate::mobs::Mobs;
-use crate::peers::{gliding_packet, View};
+use crate::peers::{clear_sight_with, gliding_packet, View};
 use crate::player_data::PlayerData;
 use crate::recipes::Recipes;
 use crate::simulation::SimulationContext;
@@ -81,6 +83,20 @@ impl PlayContext<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Digging {
+    pos: BlockPos,
+    state: i32,
+    start: i64,
+    released: bool,
+}
+
+impl Digging {
+    fn progress(self, step: f32, now: i64) -> f32 {
+        step * (now.saturating_sub(self.start) + 1) as f32
+    }
+}
+
 pub struct Gameplay {
     pub player: PlayerData,
     pub crafting: Crafting,
@@ -89,7 +105,8 @@ pub struct Gameplay {
     creative_flying: bool,
     gliding: bool,
     drops: DropTracker,
-    mining: Option<(BlockPos, i32)>,
+    mining: Option<Digging>,
+    loot_random: LegacyRandomSource,
     sneaking: bool,
     rockets: Vec<(i32, i64)>,
     last_game_tick: i64,
@@ -109,6 +126,7 @@ impl Gameplay {
             gliding: false,
             drops: DropTracker::default(),
             mining: None,
+            loot_random: LegacyRandomSource::new(i64::from(entity_id) << 32 ^ game_tick),
             sneaking: false,
             rockets: vec![],
             last_game_tick: game_tick,
@@ -148,6 +166,9 @@ impl Gameplay {
         self.player.mode.update_player_abilities(&mut abilities);
         if self.player.mode.is_creative() {
             abilities.flying = self.creative_flying;
+        }
+        if self.player.mode == GameType::Spectator {
+            abilities.flying_speed *= 2.0;
         }
         ClientboundPlayerAbilitiesPacket::from_abilities(&abilities)
     }
@@ -214,7 +235,7 @@ impl Gameplay {
         self.player.position = position;
         self.player.yaw = yaw;
         self.player.pitch = pitch;
-        self.on_ground = on_ground;
+        self.on_ground = on_ground && self.player.mode != GameType::Spectator;
         if self.on_ground && self.gliding {
             self.set_gliding(false, wire, ids)?;
         }
@@ -350,7 +371,7 @@ impl Gameplay {
                 body.finish()?;
                 match action {
                     0..=2 => {
-                        self.mine(action, block, ctx);
+                        self.mine(action, block, wire, ctx)?;
                         ctx.audience
                             .send(ctx.player, ClientboundBlockChangedAckPacket::new(sequence));
                     }
@@ -434,36 +455,150 @@ impl Gameplay {
         Ok(())
     }
 
-    fn mine(&mut self, action: i32, pos: BlockPos, ctx: &PlayContext<'_>) {
+    fn mine(
+        &mut self,
+        action: i32,
+        pos: BlockPos,
+        wire: &mut Wire,
+        ctx: &PlayContext<'_>,
+    ) -> io::Result<()> {
         if action == 1 || self.player.mode.is_block_placing_restricted() || !self.in_reach(pos) {
             self.mining = None;
             ctx.world.refresh_block(pos, ctx.audience, ctx.player);
-            return;
+            return Ok(());
         }
-        let current = ctx.world.block(pos);
-        let kind = Blocks::vanilla().get(current);
+        let state = ctx.world.block(pos);
+        let block = Blocks::vanilla().get(state);
+        let held = &self.player.inventory[self.player.selection];
+        let miner = Miner::new(held, block);
         let creative = self.player.mode.is_creative();
-        if !creative && kind.hardness < 0 {
+        if state == AIR
+            || (creative && !miner.can_break_in_creative)
+            || (!creative && Mining::vanilla().hardness(block) < 0.0)
+        {
             self.mining = None;
             ctx.world.refresh_block(pos, ctx.audience, ctx.player);
-            return;
+            return Ok(());
         }
-        if action == 0 && !creative && current != AIR && kind.hardness > 0 {
-            self.mining = Some((pos, current));
-            return;
-        }
-        let mining = self.mining.take();
-        if (action == 0 || !creative && mining == Some((pos, current)))
-            && ctx.world.break_block(pos, current, ctx.audience)
-        {
-            if !creative && ctx.commands.world.lock().unwrap().drops_enabled() {
-                if let Some(item) = kind.item {
-                    self.drop_block(pos, item, ctx);
-                }
+        let now = ctx.commands.game_time();
+        if action == 0 {
+            self.mining = None;
+            if creative || self.destroy_progress(&miner, block, ctx) >= 1.0 {
+                return self.finish_mining(pos, state, &miner, wire, ctx);
             }
+            self.mining = Some(Digging {
+                pos,
+                state,
+                start: now,
+                released: false,
+            });
+        } else if let Some(mut past) = self
+            .mining
+            .take()
+            .filter(|past| past.pos == pos && past.state == state)
+        {
+            if past.progress(self.destroy_progress(&miner, block, ctx), now) >= 0.7 {
+                return self.finish_mining(pos, state, &miner, wire, ctx);
+            }
+            // The client may finish slightly ahead of the server. Keep the
+            // confirmed attempt running to full progress without a second packet.
+            past.released = true;
+            self.mining = Some(past);
         } else {
             ctx.world.refresh_block(pos, ctx.audience, ctx.player);
         }
+        Ok(())
+    }
+
+    fn destroy_progress(
+        &self,
+        miner: &Miner,
+        block: &crate::blocks::Block,
+        ctx: &PlayContext<'_>,
+    ) -> f32 {
+        let eye = BlockPos::containing_vec3(&self.player.position.add(0.0, 1.62, 0.0));
+        let underwater = Blocks::vanilla().get(ctx.world.block(eye)).name == "water"
+            && enchantment_level(&self.player.inventory[39], "aqua_affinity") == 0;
+        miner.progress(block, self.on_ground, underwater)
+    }
+
+    fn tick_mining(&mut self, now: i64, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
+        let Some(past) = self.mining.filter(|past| past.released) else {
+            return Ok(());
+        };
+        if self.player.health <= 0.0
+            || !self.in_reach(past.pos)
+            || ctx.world.block(past.pos) != past.state
+        {
+            self.mining = None;
+            ctx.world.refresh_block(past.pos, ctx.audience, ctx.player);
+            return Ok(());
+        }
+        let block = Blocks::vanilla().get(past.state);
+        let miner = Miner::new(&self.player.inventory[self.player.selection], block);
+        if past.progress(self.destroy_progress(&miner, block, ctx), now) >= 1.0 {
+            self.mining = None;
+            self.finish_mining(past.pos, past.state, &miner, wire, ctx)?;
+        }
+        Ok(())
+    }
+
+    fn finish_mining(
+        &mut self,
+        pos: BlockPos,
+        state: i32,
+        miner: &Miner,
+        wire: &mut Wire,
+        ctx: &PlayContext<'_>,
+    ) -> io::Result<()> {
+        if !ctx.world.break_block(pos, state, ctx.audience) {
+            ctx.world.refresh_block(pos, ctx.audience, ctx.player);
+            return Ok(());
+        }
+        if self.player.mode.is_creative() {
+            return Ok(());
+        }
+        let block = Blocks::vanilla().get(state);
+        if ctx.commands.world.lock().unwrap().drops_enabled() {
+            for (item, mut count) in miner.drops(block, state, &mut self.loot_random) {
+                let center = pos.get_bottom_center().add(0.0, 0.35, 0.0);
+                let mut loot = stack(item, count);
+                let limit = loot.get_max_stack_size();
+                while count > limit {
+                    self.spawn_drop(
+                        stack(item, limit),
+                        center,
+                        Vec3::ZERO,
+                        PickupDelay::Loot,
+                        ctx,
+                    );
+                    count -= limit;
+                }
+                loot.set_count(count);
+                self.spawn_drop(loot, center, Vec3::ZERO, PickupDelay::Loot, ctx);
+            }
+        }
+        let slot = self.player.selection;
+        let tool = &mut self.player.inventory[slot];
+        if Mining::vanilla().hardness(block) != 0.0
+            && miner.damage != 0
+            && tool.is_damageable_item()
+        {
+            let unbreaking = enchantment_level(tool, "unbreaking");
+            let damage = (0..miner.damage)
+                .filter(|_| self.loot_random.next_int_bound(unbreaking + 1) == 0)
+                .count() as i32;
+            if damage > 0 {
+                let next = tool.get_damage_value().saturating_add(damage);
+                if next >= tool.get_max_damage() {
+                    tool.shrink(1);
+                } else {
+                    tool.set_damage_value(next);
+                }
+                self.sync_slot(slot, wire, ctx.ids)?;
+            }
+        }
+        Ok(())
     }
 
     fn use_block(
@@ -506,7 +641,22 @@ impl Gameplay {
                     f64::from(target.y),
                     f64::from(target.z) + 0.5,
                 );
-                if ctx.mobs.egg(mob, position, ctx) && !self.player.mode.is_creative() {
+                let eye = self.player.position.add(0.0, 1.62, 0.0);
+                let face = pos.get_center().add(
+                    f64::from(direction.get_step_x()) * 0.501,
+                    f64::from(direction.get_step_y()) * 0.501,
+                    f64::from(direction.get_step_z()) * 0.501,
+                );
+                let world = ctx.world.snapshot();
+                let visible = clear_sight_with(eye, face, |block| {
+                    let state = world.block(block);
+                    if Blocks::vanilla().get(state).replaceable {
+                        AIR
+                    } else {
+                        state
+                    }
+                });
+                if visible && ctx.mobs.egg(mob, position, ctx) && !self.player.mode.is_creative() {
                     self.player.inventory[inventory_slot].shrink(1);
                     self.sync_slot(inventory_slot, wire, ctx.ids)?;
                 }
@@ -638,6 +788,7 @@ impl Gameplay {
             item,
             self.player.position.add(0.0, 0.3, 0.0),
             Vec3::ZERO,
+            PickupDelay::Loot,
             ctx,
         );
     }
@@ -786,18 +937,25 @@ impl Gameplay {
     fn throw_stack(&self, item: ItemStack, ctx: &PlayContext<'_>) {
         let direction = Vec3::direction_from_rotation(self.player.pitch, self.player.yaw);
         let pos = self.player.position.add(0.0, 1.32, 0.0);
-        self.spawn_drop(item, pos, direction.scale(0.3), ctx);
+        self.spawn_drop(item, pos, direction.scale(0.3), PickupDelay::Thrown, ctx);
     }
 
     pub fn drop_block(&self, pos: BlockPos, item: i32, ctx: &PlayContext<'_>) {
         let center = pos.get_bottom_center().add(0.0, 0.35, 0.0);
-        self.spawn_drop(stack(item, 1), center, Vec3::ZERO, ctx);
+        self.spawn_drop(stack(item, 1), center, Vec3::ZERO, PickupDelay::Loot, ctx);
     }
 
-    fn spawn_drop(&self, item: ItemStack, pos: Vec3, velocity: Vec3, ctx: &PlayContext<'_>) {
+    fn spawn_drop(
+        &self,
+        item: ItemStack,
+        pos: Vec3,
+        velocity: Vec3,
+        delay: PickupDelay,
+        ctx: &PlayContext<'_>,
+    ) {
         let id = ctx.entity_ids.fetch_add(1, Ordering::Relaxed);
         ctx.drops
-            .spawn(id, item, pos, velocity, ctx.commands.game_time());
+            .spawn(id, item, pos, velocity, ctx.commands.game_time(), delay);
     }
 
     pub fn tick(
@@ -805,6 +963,7 @@ impl Gameplay {
         wire: &mut Wire,
         ctx: &PlayContext<'_>,
         loaded: &HashSet<(i32, i32)>,
+        subscription: &Subscription<'_>,
     ) -> io::Result<()> {
         if self.last_tick.elapsed() < TICK {
             return Ok(());
@@ -813,6 +972,9 @@ impl Gameplay {
         let now = ctx.commands.game_time();
         let advanced = self.last_game_tick != now;
         self.last_game_tick = now;
+        if advanced {
+            self.tick_mining(now, wire, ctx)?;
+        }
         for slot in [self.player.selection, OFFHAND] {
             if let Some(id) = map_id(&self.player.inventory[slot]) {
                 if self.shown_maps.insert(id) {
@@ -853,6 +1015,7 @@ impl Gameplay {
                 insert_inventory(&mut self.player.inventory[..36], item, &mut changed);
             },
             wire,
+            subscription,
         )?;
         changed.sort_unstable();
         changed.dedup();

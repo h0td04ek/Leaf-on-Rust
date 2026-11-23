@@ -8,6 +8,7 @@ pub struct MobType {
     pub name: &'static str,
     pub health: f32,
     pub height: f64,
+    pub width: f64,
     pub hostile: bool,
     pub flying: bool,
     pub aquatic: bool,
@@ -32,6 +33,7 @@ fn registry() -> &'static Registry {
             let egg: i32 = fields.next().unwrap().parse().unwrap();
             let health = fields.next().unwrap().parse().unwrap();
             let height = fields.next().unwrap().parse().unwrap();
+            let width = fields.next().unwrap().parse().unwrap();
             let category = fields.next().unwrap();
             let flying = matches!(
                 name,
@@ -57,6 +59,7 @@ fn registry() -> &'static Registry {
                     name,
                     health,
                     height,
+                    width,
                     hostile: category == "monster",
                     flying,
                     aquatic,

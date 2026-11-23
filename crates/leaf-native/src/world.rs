@@ -7,7 +7,7 @@ mod storage;
 #[path = "terrain.rs"]
 mod terrain;
 
-pub use terrain::{Biome, Generation, WorldType};
+pub use terrain::{Biome, Generation, WorldType, TERRAIN_VERSION};
 
 pub use fill::FillMode;
 
@@ -610,6 +610,25 @@ impl BlockView {
             .get(&chunk(pos))
             .and_then(|changes| changes.get(&pos).copied())
             .unwrap_or_else(|| self.1.block(pos))
+    }
+
+    pub fn sees_sky(&self, pos: BlockPos) -> bool {
+        let generated = self.1.chunk(chunk(pos));
+        let changes = self.0.get(&chunk(pos)).map(Arc::as_ref);
+        let last_edit = changes
+            .into_iter()
+            .flat_map(|changes| changes.keys())
+            .filter(|key| key.x == pos.x && key.z == pos.z)
+            .map(|key| key.y)
+            .max()
+            .unwrap_or(pos.y);
+        let top = generated.column_top(pos.x, pos.z).max(last_edit);
+        let blocks = Blocks::vanilla();
+        (pos.y..=top).all(|y| {
+            let state = block_at(changes, &generated, BlockPos::new(pos.x, y, pos.z));
+            let block = blocks.get(state);
+            block.replaceable && block.name != "water" && block.name != "lava"
+        })
     }
 
     pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
