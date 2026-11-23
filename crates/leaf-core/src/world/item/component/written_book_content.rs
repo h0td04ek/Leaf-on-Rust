@@ -38,20 +38,33 @@ impl WrittenBookContent {
         pages: Vec<Filterable<crate::network::chat::component::Component>>,
         resolved: bool,
     ) -> Self {
-        Self { title, author, generation, pages, resolved }
+        Self {
+            title,
+            author,
+            generation,
+            pages,
+            resolved,
+        }
     }
 
     /// `STREAM_CODEC` — порядок полей Java.
-    pub fn stream_codec() -> impl StreamCodec<FriendlyByteBuf, WrittenBookContent> + Send + Sync + 'static {
-        let title_enc = byte_buf_codecs::optional(Filterable::stream_codec(std::sync::Arc::new(byte_buf_codecs::string_utf8(32))));
-        let title_dec = byte_buf_codecs::optional(Filterable::stream_codec(std::sync::Arc::new(byte_buf_codecs::string_utf8(32))));
+    pub fn stream_codec(
+    ) -> impl StreamCodec<FriendlyByteBuf, WrittenBookContent> + Send + Sync + 'static {
+        let title_enc =
+            Filterable::stream_codec(std::sync::Arc::new(byte_buf_codecs::string_utf8(32)));
+        let title_dec =
+            Filterable::stream_codec(std::sync::Arc::new(byte_buf_codecs::string_utf8(32)));
         let page = Filterable::stream_codec(std::sync::Arc::new(component_stream_codec()));
         let pages_enc = byte_buf_codecs::list_limited(Self::MAX_PAGES, page);
         let page2 = Filterable::stream_codec(std::sync::Arc::new(component_stream_codec()));
         let pages_dec = byte_buf_codecs::list_limited(Self::MAX_PAGES, page2);
         sync_fn(
             move |buf: &mut FriendlyByteBuf, v: &WrittenBookContent| {
-                title_enc.encode(buf, &v.title);
+                let empty_title = Filterable {
+                    raw: String::new(),
+                    filtered: None,
+                };
+                title_enc.encode(buf, v.title.as_ref().unwrap_or(&empty_title));
                 buf.write_utf(&v.author).expect("author");
                 buf.write_var_int(v.generation);
                 pages_enc.encode(buf, &v.pages);
@@ -63,7 +76,7 @@ impl WrittenBookContent {
                 let generation = buf.read_var_int();
                 let pages = pages_dec.decode(buf);
                 let resolved = buf.read_bool();
-                WrittenBookContent::new(title, author, generation, pages, resolved)
+                WrittenBookContent::new(Some(title), author, generation, pages, resolved)
             },
         )
     }

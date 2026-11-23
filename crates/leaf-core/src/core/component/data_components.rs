@@ -70,6 +70,12 @@ use crate::world::item::item_stack::ItemStack;
 use crate::world::level::saveddata::maps::MapId;
 use std::sync::Once;
 
+mod item_crafting_nbt;
+
+/// Size of the Java 1.21.11 registry used by crafting component codecs.
+pub fn crafting_registry_len(name: &str) -> usize {
+    item_crafting_nbt::registry_len(name)
+}
 mod item_properties_nbt;
 
 fn mk(
@@ -503,11 +509,11 @@ fn register_builtin_types() {
         |tag| BundleContents::from_persistent_items(decode_item_list(tag, 256)?),
     ));
     // 50-55.
-    register_data_component_type(mk("potion_contents", false, false, payload_codec!(PotionContents, PotionContents::stream_codec())));
+    register_data_component_type(item_crafting_nbt::potion(mk("potion_contents", false, false, payload_codec!(PotionContents, PotionContents::stream_codec()))));
     register_data_component_type(float_component("potion_duration_scale", 0.0, f32::MAX));
-    register_data_component_type(mk("suspicious_stew_effects", false, false, payload_codec!(SuspiciousStewEffects, SuspiciousStewEffects::stream_codec()))); // SuspiciousStewEffects
-    register_data_component_type(mk("writable_book_content", false, false, payload_codec!(WritableBookContent, WritableBookContent::stream_codec())));
-    register_data_component_type(mk("written_book_content", false, false, payload_codec!(WrittenBookContent, WrittenBookContent::stream_codec())));
+    register_data_component_type(item_crafting_nbt::stew(mk("suspicious_stew_effects", false, false, payload_codec!(SuspiciousStewEffects, SuspiciousStewEffects::stream_codec())))); // SuspiciousStewEffects
+    register_data_component_type(item_crafting_nbt::writable_book(mk("writable_book_content", false, false, payload_codec!(WritableBookContent, WritableBookContent::stream_codec()))));
+    register_data_component_type(item_crafting_nbt::written_book(mk("written_book_content", false, false, payload_codec!(WrittenBookContent, WrittenBookContent::stream_codec()))));
     register_data_component_type(mk("trim", false, false, payload_codec!(ArmorTrim, ArmorTrim::stream_codec())));
     // 56-65.
     register_data_component_type(persistent_compound("debug_stick_state"));
@@ -538,9 +544,9 @@ fn register_builtin_types() {
     ));
     register_data_component_type(mk("profile", false, false, payload_codec!(ResolvableProfile, ResolvableProfile::stream_codec()))); // ResolvableProfile
     register_data_component_type(identifier_component("note_block_sound"));
-    register_data_component_type(mk("banner_patterns", false, false, payload_codec!(BannerPatternLayers, BannerPatternLayers::stream_codec())));
+    register_data_component_type(item_crafting_nbt::banner(mk("banner_patterns", false, false, payload_codec!(BannerPatternLayers, BannerPatternLayers::stream_codec()))));
     register_data_component_type(dye_component("base_color"));
-    register_data_component_type(mk("pot_decorations", false, false, payload_codec!(PotDecorations, PotDecorations::stream_codec())));
+    register_data_component_type(item_crafting_nbt::pot(mk("pot_decorations", false, false, payload_codec!(PotDecorations, PotDecorations::stream_codec()))));
     register_data_component_type(container_component());
     register_data_component_type(mk("block_state", false, false, payload_codec!(BlockItemStateProperties, BlockItemStateProperties::stream_codec())));
     register_data_component_type(mk("bees", false, false, payload_codec!(Bees, Bees::stream_codec())));

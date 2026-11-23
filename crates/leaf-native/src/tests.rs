@@ -9,13 +9,21 @@ use leaf_core::network::codec::stream_codec::StreamCodec;
 use leaf_core::network::friendly_byte_buf::FriendlyByteBuf;
 use leaf_core::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 
+use leaf_core::core::block_pos::BlockPos;
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
+use leaf_core::network::protocol::game::{
+    clientbound_container_set_content_packet::ClientboundContainerSetContentPacket,
+    clientbound_open_screen_packet::ClientboundOpenScreenPacket,
+};
 use leaf_core::resources::Identifier;
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::item::{component::fireworks::Fireworks, item_stack::ItemStack};
 use leaf_core::world::phys::vec3::Vec3;
 
+use crate::blocks::Blocks;
+use crate::items::{item_id, named_id};
 use crate::player_data::PlayerStore;
+use crate::recipes::Recipes;
 use crate::session::Server;
 
 struct TestWorld(PathBuf);
@@ -34,7 +42,7 @@ impl Drop for TestWorld {
 
 fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
     let store = PlayerStore::open(&world.0).unwrap();
-    connect_server(Arc::new(Server::new(store)))
+    connect_server(Arc::new(Server::new(store).unwrap()))
 }
 
 fn connect_server(server: Arc<Server>) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
@@ -109,7 +117,7 @@ fn replies_to_status_and_ping() {
 fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
     let world = TestWorld::new();
     let (mut client, worker) = connect(&world);
-    let entity = enter_play(&mut client, "NativeSmoke", 32);
+    let entity = enter_play(&mut client, "h0td04ek", 32);
 
     let mut rendered = Vec::new();
     let mut advertised_commands = false;
@@ -207,7 +215,7 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
     let mut chat = packet(&mut client, 119);
     assert_eq!(
         chat.read_nbt().unwrap().unwrap().as_string(),
-        Some("<NativeSmoke> привет")
+        Some("<h0td04ek> привет")
     );
     assert!(!chat.read_bool());
 
@@ -311,14 +319,10 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
             .write_byte(1)
             .write_var_int(2);
     });
-    let mined_id = spawned(&mut client, 71);
-    let mut mined = packet(&mut client, 97);
-    assert_eq!(mined.read_var_int(), mined_id);
-    assert_eq!(mined.read_bytes_vec(2), [8, 7]);
-    assert_eq!((mined.read_var_int(), mined.read_var_int()), (1, 1));
     let mut change = packet(&mut client, 8);
     assert_eq!(change.read_block_pos(), block);
     assert_eq!(change.read_var_int(), 0);
+    assert_eq!(packet(&mut client, 4).read_var_int(), 2);
 
     // Take a stack from the creative inventory and place a block next to the player.
     send(&mut client, 55, |buf| {
@@ -338,10 +342,12 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
     assert_eq!(placed.read_block_pos(), base.offset(0, 1, 0));
     assert_eq!(placed.read_var_int(), 1);
     drop(client);
-    assert_eq!(
+    assert!(matches!(
         worker.join().unwrap().unwrap_err().kind(),
         io::ErrorKind::UnexpectedEof
-    );
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+    ));
 }
 
 fn packet(stream: &mut TcpStream, expected: i32) -> FriendlyByteBuf {
@@ -556,16 +562,24 @@ fn send_location(client: &mut TcpStream, position: Vec3, yaw: f32, pitch: f32) {
 #[test]
 fn players_see_each_other_and_can_fight_respawn_and_leave() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()));
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
     let (mut alice, alice_worker) = connect_server(Arc::clone(&server));
-    let alice_id = enter_play(&mut alice, "Alice", 2);
+    let alice_id = enter_play(&mut alice, "h0td04ek", 2);
     acknowledge_teleport(&mut alice);
 
     let (mut bob, bob_worker) = connect_server(Arc::clone(&server));
     let bob_id = enter_play(&mut bob, "Bob", 2);
     acknowledge_teleport(&mut bob);
     assert_eq!(peer_entity(&mut alice, "Bob"), bob_id);
-    assert_eq!(peer_entity(&mut bob, "Alice"), alice_id);
+    assert_eq!(peer_entity(&mut bob, "h0td04ek"), alice_id);
+
+    // A regular player cannot run /gamemode before being made an operator.
+    command(&mut bob, "gamemode survival");
+    let denial = multiplayer_packet(&mut bob, 119)
+        .read_nbt()
+        .unwrap()
+        .unwrap();
+    assert!(denial.as_string().unwrap().contains("Unknown"));
 
     // Keep both players close but at different positions.
     send_location(&mut bob, Vec3::new(0.5, 16.0, 2.5), 180.0, 0.0);
@@ -575,6 +589,12 @@ fn players_see_each_other_and_can_fight_respawn_and_leave() {
         PositionMoveRotation::read(&mut movement).position,
         Vec3::new(0.5, 16.0, 2.5)
     );
+
+    command(&mut alice, "op Bob");
+    multiplayer_packet(&mut alice, 119);
+    let mut permission = multiplayer_packet(&mut bob, 34);
+    assert_eq!(permission.read_int(), bob_id);
+    assert_eq!(permission.read_unsigned_byte(), 28);
 
     // The defender opts into PvP. Creative is the normal starting mode.
     send(&mut bob, 6, |buf| {
@@ -672,4 +692,340 @@ fn multiplayer_packet(stream: &mut TcpStream, expected: i32) -> FriendlyByteBuf 
         }
     }
     panic!("expected multiplayer packet {expected}");
+}
+
+fn command(client: &mut TcpStream, command: &str) {
+    send(client, 6, |buf| {
+        buf.write_utf(command).unwrap();
+    });
+}
+
+fn mine(client: &mut TcpStream, pos: BlockPos, action: i32, sequence: i32) {
+    send(client, 40, |buf| {
+        buf.write_var_int(action)
+            .write_block_pos(&pos)
+            .write_byte(1)
+            .write_var_int(sequence);
+    });
+}
+
+fn block_update(client: &mut TcpStream, block: BlockPos) -> i32 {
+    let mut update = multiplayer_packet(client, 8);
+    assert_eq!(update.read_block_pos(), block);
+    update.read_var_int()
+}
+
+fn set_creative(client: &mut TcpStream, slot: i32, item: &str, count: i32) {
+    send(client, 55, |buf| {
+        buf.write_short(slot).write_var_int(count);
+        if count > 0 {
+            buf.write_var_int(named_id(item))
+                .write_var_int(0)
+                .write_var_int(0);
+        }
+    });
+}
+
+fn use_block(client: &mut TcpStream, block: BlockPos, sequence: i32) {
+    send(client, 63, |buf| {
+        buf.write_var_int(0)
+            .write_block_pos(&block)
+            .write_var_int(1)
+            .write_float(0.5)
+            .write_float(1.0)
+            .write_float(0.5)
+            .write_bool(false)
+            .write_bool(false)
+            .write_var_int(sequence);
+    });
+}
+
+#[test]
+fn players_share_block_edits_and_survival_drops() {
+    let world = TestWorld::new();
+    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap()).unwrap());
+    let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
+    let owner_id = enter_play(&mut owner, "h0td04ek", 2);
+    acknowledge_teleport(&mut owner);
+    let (mut guest, guest_worker) = connect_server(Arc::clone(&server));
+    enter_play(&mut guest, "Witness", 2);
+    acknowledge_teleport(&mut guest);
+    multiplayer_packet(&mut guest, 11);
+    multiplayer_packet(&mut owner, 11);
+    assert_eq!(peer_entity(&mut guest, "h0td04ek"), owner_id);
+    peer_entity(&mut owner, "Witness");
+
+    let base = BlockPos::new(1, 15, 0);
+    let lower = base.offset(0, 1, 0);
+    let upper = lower.offset(0, 1, 0);
+    set_creative(&mut owner, 36, "oak_door", 4);
+    use_block(&mut owner, base, 1);
+    for stream in [&mut owner, &mut guest] {
+        let state = block_update(stream, lower);
+        assert_eq!(
+            Blocks::vanilla().get(state).property(state, "half"),
+            Some("lower")
+        );
+        let state = block_update(stream, upper);
+        assert_eq!(
+            Blocks::vanilla().get(state).property(state, "half"),
+            Some("upper")
+        );
+    }
+    use_block(&mut owner, lower, 2);
+    for stream in [&mut owner, &mut guest] {
+        for pos in [upper, lower] {
+            let state = block_update(stream, pos);
+            assert_eq!(
+                Blocks::vanilla().get(state).property(state, "open"),
+                Some("true")
+            );
+        }
+    }
+    mine(&mut owner, upper, 0, 3);
+    for stream in [&mut owner, &mut guest] {
+        assert_eq!(block_update(stream, lower), 0);
+        assert_eq!(block_update(stream, upper), 0);
+    }
+    for stream in [&mut owner, &mut guest] {
+        // A chat marker confirms the scene continues to tick for both clients.
+        send(stream, 8, |buf| {
+            buf.write_utf("creative break").unwrap();
+            buf.write_long(0)
+                .write_long(0)
+                .write_bool(false)
+                .write_var_int(0)
+                .write_bytes(&[0; 4]);
+        });
+        loop {
+            let (id, _) = receive(stream);
+            assert_ne!(id, 1, "creative break spawned an item");
+            if id == 119 {
+                break;
+            }
+        }
+    }
+
+    command(&mut owner, "gamemode survival");
+    let mut event = multiplayer_packet(&mut owner, 38);
+    assert_eq!(event.read_unsigned_byte(), 3);
+    assert_eq!(event.read_float(), 0.0);
+    let anvil_base = BlockPos::new(2, 15, 0);
+    // The operator stays in survival. Use inventory received while in creative.
+    use_block(&mut owner, base, 4);
+    block_update(&mut owner, lower);
+    block_update(&mut owner, upper);
+    block_update(&mut guest, lower);
+    block_update(&mut guest, upper);
+    mine(&mut owner, lower, 0, 5);
+    mine(&mut owner, lower, 2, 6);
+    for stream in [&mut owner, &mut guest] {
+        assert_eq!(block_update(stream, upper), 0);
+        assert_eq!(block_update(stream, lower), 0);
+    }
+    let drop_id = spawned(&mut owner, 71);
+    assert_eq!(spawned(&mut guest, 71), drop_id);
+    let mut dropped = multiplayer_packet(&mut guest, 97);
+    assert_eq!(dropped.read_var_int(), drop_id);
+    assert_eq!(dropped.read_bytes_vec(2), [8, 7]);
+    assert_eq!(
+        (dropped.read_var_int(), dropped.read_var_int()),
+        (1, named_id("oak_door"))
+    );
+
+    command(&mut owner, "gamemode creative");
+    multiplayer_packet(&mut owner, 38);
+    set_creative(&mut owner, 36, "anvil", 1);
+    use_block(&mut owner, anvil_base, 7);
+    for stream in [&mut owner, &mut guest] {
+        let state = block_update(stream, anvil_base.offset(0, 1, 0));
+        assert_eq!(Blocks::vanilla().get(state).name, "anvil");
+    }
+    drop(owner);
+    drop(guest);
+    assert!(owner_worker.join().unwrap().is_err());
+    assert!(guest_worker.join().unwrap().is_err());
+}
+
+fn click(
+    client: &mut TcpStream,
+    menu: i32,
+    slot: i32,
+    button: i32,
+    kind: i32,
+) -> ClientboundContainerSetContentPacket {
+    send(client, 17, |buf| {
+        buf.write_var_int(menu)
+            .write_var_int(0)
+            .write_short(slot)
+            .write_byte(button)
+            .write_var_int(kind)
+            .write_var_int(0)
+            .write_bool(false);
+    });
+    contents(client)
+}
+
+fn contents(client: &mut TcpStream) -> ClientboundContainerSetContentPacket {
+    ClientboundContainerSetContentPacket::stream_codec().decode(&mut multiplayer_packet(client, 18))
+}
+
+#[test]
+fn crafts_in_both_menus_and_restores_leftovers() {
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    set_creative(&mut client, 36, "oak_planks", 12);
+    command(&mut client, "gamemode survival");
+    multiplayer_packet(&mut client, 38);
+    click(&mut client, 0, 36, 0, 0);
+    for i in 1..=4 {
+        let result = click(&mut client, 0, i, 1, 0);
+        assert_eq!(result.carried_item.count, 12 - i);
+        if i == 4 {
+            assert_eq!(item_id(&result.items[0]), Some(named_id("crafting_table")));
+        }
+    }
+    let shift = click(&mut client, 0, 0, 0, 1);
+    assert!(shift.items[1..5].iter().all(ItemStack::is_empty));
+    assert_eq!(item_id(&shift.items[36]), Some(named_id("crafting_table")));
+    send(&mut client, 18, |buf| {
+        buf.write_var_int(0);
+    });
+    let closed = contents(&mut client);
+    assert_eq!(closed.items[37].count, 8);
+    assert!(closed.carried_item.is_empty());
+
+    let base = BlockPos::new(1, 15, 0);
+    use_block(&mut client, base, 1);
+    assert_eq!(
+        Blocks::vanilla()
+            .get(block_update(&mut client, base.offset(0, 1, 0)))
+            .name,
+        "crafting_table"
+    );
+    use_block(&mut client, base.offset(0, 1, 0), 2);
+    let open = ClientboundOpenScreenPacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 57));
+    assert_eq!(open.menu_type, 12);
+    let menu = open.container_id;
+    assert_eq!(contents(&mut client).container_id, menu);
+
+    let book = &Recipes::vanilla().book;
+    let recipe = book
+        .entries
+        .iter()
+        .find(|entry| {
+            use leaf_core::world::item::crafting::display::slot_display::SlotDisplay;
+            matches!(entry.contents.display.result(), SlotDisplay::ItemStack(item)
+            if item_id(item) == Some(named_id("oak_door")))
+        })
+        .unwrap()
+        .contents
+        .id
+        .index;
+    send(&mut client, 38, |buf| {
+        buf.write_var_int(menu)
+            .write_var_int(recipe)
+            .write_bool(false);
+    });
+    let filled = contents(&mut client);
+    assert_eq!(
+        (item_id(&filled.items[0]), filled.items[0].count),
+        (Some(named_id("oak_door")), 3)
+    );
+    let crafted = click(&mut client, menu, 0, 0, 0);
+    assert_eq!(
+        (item_id(&crafted.carried_item), crafted.carried_item.count),
+        (Some(named_id("oak_door")), 3)
+    );
+    assert!(crafted.items[1..10].iter().all(ItemStack::is_empty));
+    click(&mut client, menu, 2, 0, 0); // leave the three doors in the grid
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "h0td04ek", 2);
+    let mut items = vec![];
+    loop {
+        let (id, mut body) = receive(&mut client);
+        if id == 106 {
+            body.read_var_int();
+            items.push(ItemStack::optional_stream_codec().decode(&mut body));
+        }
+        if id == 70 {
+            break;
+        }
+    }
+    assert!(items
+        .iter()
+        .any(|item| item_id(item) == Some(named_id("oak_door")) && item.count == 3));
+    assert!(items
+        .iter()
+        .any(|item| item_id(item) == Some(named_id("oak_planks")) && item.count == 2));
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
+fn expands_native_maps_and_saves_firework_components() {
+    use crate::items::{stack, Items};
+    use crate::maps::{map_id, set_map_id, Maps};
+    use leaf_core::world::item::component::firework_explosion::FireworkExplosion;
+    use leaf_core::world::level::saveddata::maps::MapId;
+
+    Items::vanilla();
+    let world = TestWorld::new();
+    let store = PlayerStore::open(&world.0).unwrap();
+    let maps = Maps::open(store.maps_path()).unwrap();
+    let mut map = stack(named_id("filled_map"), 1);
+    let initial = maps.create(-201, 12).unwrap();
+    assert_eq!(initial, MapId(0));
+    set_map_id(&mut map, initial);
+    let mut grid: [ItemStack; 9] = std::array::from_fn(|_| stack(named_id("paper"), 1));
+    grid[4] = map.clone();
+    let recipe = Recipes::vanilla().find(&grid, 3, &maps).unwrap();
+    assert!(recipe.expand_map);
+    assert_eq!(item_id(&recipe.output), Some(named_id("filled_map")));
+
+    let mut latest = initial;
+    for _ in 0..4 {
+        latest = maps.expand(latest).unwrap();
+    }
+    assert!(!maps.can_expand(latest));
+    set_map_id(&mut grid[4], latest);
+    assert!(Recipes::vanilla().find(&grid, 3, &maps).is_none());
+    let saved = grid[4].save(leaf_core::nbt::CompoundTag::new()).unwrap();
+    assert_eq!(
+        map_id(&ItemStack::from_nbt(saved.as_compound().unwrap()).unwrap()),
+        Some(latest)
+    );
+
+    let inputs = [
+        stack(named_id("gunpowder"), 1),
+        stack(named_id("red_dye"), 1),
+        stack(named_id("diamond"), 1),
+        ItemStack::empty(),
+    ];
+    let star = Recipes::vanilla().find(&inputs, 2, &maps).unwrap().output;
+    let effect = star
+        .get_component::<FireworkExplosion>(&Identifier::minecraft("firework_explosion"))
+        .unwrap();
+    assert!(effect.has_trail);
+    assert_eq!(effect.colors, [11743532]);
+    let rockets = [
+        star,
+        stack(named_id("gunpowder"), 1),
+        stack(named_id("paper"), 1),
+        stack(named_id("gunpowder"), 1),
+    ];
+    let output = Recipes::vanilla().find(&rockets, 2, &maps).unwrap().output;
+    let encoded = output.save(leaf_core::nbt::CompoundTag::new()).unwrap();
+    let restored = ItemStack::from_nbt(encoded.as_compound().unwrap()).unwrap();
+    let fireworks = restored
+        .get_component::<Fireworks>(&Identifier::minecraft("fireworks"))
+        .unwrap();
+    assert_eq!(fireworks.flight_duration, 2);
+    assert_eq!(fireworks.explosions, [effect]);
 }

@@ -93,14 +93,13 @@ impl DyeColor {
 
     /// `byFireworkColor` — `fireworkColor` = 0xFF000000 | (rgb & 0xFFFFFF)?
     /// В Java: fireworkColor = 0xFF000000 | (rgb <<? ) — см. конструктор:
-    /// `fireworkColor` вычисляется как `0xFF000000 | (firework_rgb & 0xFFFFFF)`?
-    /// Точные значения: last arg конструктора — fireworkColor.
+    /// `byFireworkColor`.
     pub fn by_firework_color(color: i32) -> Option<DyeColor> {
         Self::VALUES.iter().copied().find(|d| d.firework_color() == color)
     }
 
-    /// `fireworkColor` — последние аргументы из таблицы выше.
-    pub fn firework_color(&self) -> i32 {
+    /// `textColor`.
+    pub fn text_color(&self) -> i32 {
         match self {
             DyeColor::WHITE => 16777215,
             DyeColor::ORANGE => 16738335,
@@ -121,8 +120,8 @@ impl DyeColor {
         }
     }
 
-    /// `textColor` — 4-й аргумент таблицы (MapColor-производный).
-    pub fn text_color(&self) -> i32 {
+    /// `fireworkColor`.
+    pub fn firework_color(&self) -> i32 {
         match self {
             DyeColor::WHITE => 15790320,
             DyeColor::ORANGE => 15435844,

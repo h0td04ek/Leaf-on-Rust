@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use leaf_core::command::brigadier::{CommandDispatcher, CommandExecutionError, CommandNode};
-use leaf_core::command::brigadier_argument::{ArgumentType, ArgumentValue};
+use leaf_core::command::brigadier_argument::{ArgumentType, ArgumentValue, StringMode};
 use leaf_core::commands::gamerule::{register_game_rule_command, GameRuleCommandSource};
 use leaf_core::commands::world::{
     register_world_commands, TimeChange, WeatherParameters, WorldCommandSource,
@@ -25,13 +25,14 @@ use leaf_core::world::level::gamerules::game_rules::{advance_time, advance_weath
 use leaf_core::world::level::gamerules::GameRules;
 
 use crate::audience::Audience;
+use crate::operators::{Operators, ALL, GAMEMASTERS, OWNERS};
 use crate::wire::{PacketIds, Wire};
 
 const SEED: i64 = 0;
 
 pub enum PlayerCommand {
     Kit,
-    SetMode(GameType),
+    SetMode(GameType, Option<String>),
 }
 
 pub struct Commands {
@@ -40,7 +41,7 @@ pub struct Commands {
 }
 
 impl Commands {
-    pub fn new() -> Self {
+    pub fn new(operators: Operators) -> Self {
         let features = FeatureFlagSet::empty();
         let mut dispatcher = CommandDispatcher::<CommandWorld>::new();
         register_world_commands(&mut dispatcher, true).expect("register world commands");
@@ -51,7 +52,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /time, /weather, /difficulty, /seed, /gamerule, /gamemode, /kit",
+                            "/help, /kit. Operators: /gamemode, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
                         ),
                         false,
                     );
@@ -69,9 +70,13 @@ impl Commands {
             )
             .expect("register kit");
         let mode = dispatcher
-            .add_node(dispatcher.root(), CommandNode::literal("gamemode"))
+            .add_node(
+                dispatcher.root(),
+                CommandNode::literal("gamemode")
+                    .requires(|s: &CommandWorld| s.has_permission(GAMEMASTERS)),
+            )
             .expect("register gamemode");
-        dispatcher
+        let mode_argument = dispatcher
             .add_node(
                 mode,
                 CommandNode::argument("mode", ArgumentType::GameMode).executes(
@@ -79,16 +84,75 @@ impl Commands {
                         let Some(ArgumentValue::GameMode(mode)) = context.argument("mode") else {
                             unreachable!("registered GameMode argument");
                         };
-                        source.action = Some(PlayerCommand::SetMode(*mode));
+                        source.action = Some(PlayerCommand::SetMode(*mode, None));
                         1
                     },
                 ),
             )
             .expect("register gamemode argument");
+        dispatcher
+            .add_node(
+                mode_argument,
+                CommandNode::argument("player", ArgumentType::String(StringMode::Word)).executes(
+                    |source: &mut CommandWorld, context| {
+                        let (
+                            Some(ArgumentValue::GameMode(mode)),
+                            Some(ArgumentValue::String(player)),
+                        ) = (context.argument("mode"), context.argument("player"))
+                        else {
+                            unreachable!("registered game mode and player arguments")
+                        };
+                        source.action = Some(PlayerCommand::SetMode(*mode, Some(player.clone())));
+                        1
+                    },
+                ),
+            )
+            .expect("register gamemode target");
+        for (command, grant) in [("op", true), ("deop", false)] {
+            let root = dispatcher
+                .add_node(
+                    dispatcher.root(),
+                    CommandNode::literal(command)
+                        .requires(|s: &CommandWorld| s.has_permission(OWNERS)),
+                )
+                .expect("register operator command");
+            dispatcher
+                .add_node(
+                    root,
+                    CommandNode::argument("player", ArgumentType::String(StringMode::Word))
+                        .executes(move |source: &mut CommandWorld, context| {
+                            let Some(ArgumentValue::String(player)) = context.argument("player")
+                            else {
+                                unreachable!("registered player name argument");
+                            };
+                            let (message, success) = match source.operators.change(player, grant) {
+                                Ok(true) if grant => {
+                                    (format!("Made {player} a server operator"), 1)
+                                }
+                                Ok(true) => (format!("Removed operator rights from {player}"), 1),
+                                Ok(false) => {
+                                    (format!("Operator rights for {player} are already set"), 0)
+                                }
+                                Err(error) => (error.to_string(), 0),
+                            };
+                            source.send_success(Component::literal(message), false);
+                            success
+                        }),
+                )
+                .expect("register player name argument");
+        }
         Self {
             dispatcher,
-            world: std::sync::Mutex::new(CommandWorld::new(features)),
+            world: std::sync::Mutex::new(CommandWorld::new(features, operators)),
         }
+    }
+
+    pub fn for_player<T>(&self, name: &str, run: impl FnOnce(&CommandWorld) -> T) -> T {
+        let mut world = self.world.lock().unwrap();
+        world.permission = world.operators.level(name);
+        let result = run(&world);
+        world.permission = ALL;
+        result
     }
 
     pub fn execute(
@@ -96,9 +160,11 @@ impl Commands {
         command: &str,
         audience: &Audience,
         player: Uuid,
+        name: &str,
     ) -> Option<PlayerCommand> {
         let mut world = self.world.lock().unwrap();
         world.refresh(audience);
+        world.permission = world.operators.level(name);
         let before = world.snapshot();
         if let Err(error) = self.dispatcher.execute_with_feedback(command, &mut world) {
             let message = match error {
@@ -115,12 +181,15 @@ impl Commands {
         for (message, broadcast) in world.feedback.drain(..) {
             audience.chat(message, (!broadcast).then_some(player));
         }
+        world.permission = ALL;
         world.action.take()
     }
 }
 
 pub struct CommandWorld {
     started: Instant,
+    operators: Operators,
+    permission: u8,
     day_start: i64,
     day_value: i64,
     rules: GameRules,
@@ -133,9 +202,11 @@ pub struct CommandWorld {
 }
 
 impl CommandWorld {
-    fn new(features: FeatureFlagSet) -> Self {
+    fn new(features: FeatureFlagSet, operators: Operators) -> Self {
         Self {
             started: Instant::now(),
+            operators,
+            permission: ALL,
             day_start: 0,
             day_value: 6000,
             rules: GameRules::new(features),
@@ -151,6 +222,10 @@ impl CommandWorld {
             feedback: vec![],
             action: None,
         }
+    }
+
+    pub fn permission(&self) -> u8 {
+        self.permission
     }
 
     pub fn drops_enabled(&self) -> bool {
@@ -186,7 +261,7 @@ impl CommandWorld {
 
 impl CommandSource for CommandWorld {
     fn has_permission(&self, level: u8) -> bool {
-        level <= 2
+        level <= self.permission
     }
     fn send_success(&mut self, message: Component, broadcast: bool) {
         self.feedback.push((message, broadcast));

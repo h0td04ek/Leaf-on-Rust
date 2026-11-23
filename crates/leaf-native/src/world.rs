@@ -4,6 +4,10 @@ use std::sync::Mutex;
 use leaf_core::core::block_pos::BlockPos;
 use std::io;
 
+use leaf_core::util::uuid::Uuid;
+
+use crate::blocks::{Block, Blocks, GLOBAL_BITS};
+
 use leaf_core::network::friendly_byte_buf::FriendlyByteBuf;
 use leaf_core::network::protocol::game::{
     clientbound_block_update_packet::ClientboundBlockUpdatePacket,
@@ -13,6 +17,7 @@ use leaf_core::network::protocol::game::{
 };
 
 use crate::audience::Audience;
+use crate::maps::MAP_SIZE;
 use crate::wire::{PacketIds, Wire};
 
 const MIN_Y: i32 = -64;
@@ -22,12 +27,13 @@ const STONE: i32 = 1;
 pub const SPAWN_Y: i32 = 16;
 
 type Changes = HashMap<BlockPos, i32>;
+type WorldEdits = HashMap<(i32, i32), Changes>;
 
 pub struct FlatWorld {
     flat_chunk_body: Vec<u8>,
     light: ClientboundLightUpdatePacketData,
     biome: i32,
-    edits: Mutex<HashMap<(i32, i32), Changes>>,
+    edits: Mutex<WorldEdits>,
 }
 
 pub fn chunk(pos: BlockPos) -> (i32, i32) {
@@ -85,44 +91,148 @@ impl FlatWorld {
     }
 
     pub fn block(&self, pos: BlockPos) -> i32 {
-        self.edits
-            .lock()
-            .unwrap()
-            .get(&chunk(pos))
-            .and_then(|edits| edits.get(&pos).copied())
-            .unwrap_or_else(|| base(pos))
+        state_at(&self.edits.lock().unwrap(), pos)
     }
 
     pub fn editable(pos: BlockPos) -> bool {
         (MIN_Y..MIN_Y + SECTIONS as i32 * 16).contains(&pos.y)
     }
 
-    pub fn change(&self, pos: BlockPos, state: i32, audience: &Audience) -> Option<i32> {
-        let coord = chunk(pos);
-        let mut world = self.edits.lock().unwrap();
-        let original = base(pos);
-        let previous = world
-            .get(&coord)
-            .and_then(|edits| edits.get(&pos).copied())
-            .unwrap_or(original);
-        let changed = Self::editable(pos) && (previous == AIR) != (state == AIR);
-        if changed {
-            let changes = world.entry(coord).or_default();
-            if state == original {
-                changes.remove(&pos);
-            } else {
-                changes.insert(pos, state);
-            }
-            if changes.is_empty() {
-                world.remove(&coord);
+    pub fn refresh_block(&self, pos: BlockPos, audience: &Audience, player: Uuid) {
+        let edits = self.edits.lock().unwrap();
+        audience.send(
+            player,
+            ClientboundBlockUpdatePacket::new(pos, state_at(&edits, pos)),
+        );
+    }
+
+    pub fn break_block(&self, pos: BlockPos, expected: i32, audience: &Audience) -> bool {
+        let mut edits = self.edits.lock().unwrap();
+        if expected == AIR || state_at(&edits, pos) != expected {
+            return false;
+        }
+        let block = Blocks::vanilla().get(expected);
+        if let Some((other, property, value)) = block.paired(pos, expected) {
+            let second = state_at(&edits, other);
+            if matching_half(block, second, property, value) {
+                update(&mut edits, other, AIR, audience);
             }
         }
-        let current = world
-            .get(&coord)
-            .and_then(|edits| edits.get(&pos).copied())
-            .unwrap_or(original);
-        audience.broadcast(ClientboundBlockUpdatePacket::new(pos, current), Some(coord));
-        changed.then_some(previous)
+        update(&mut edits, pos, AIR, audience);
+        true
+    }
+
+    pub fn place_block(
+        &self,
+        clicked: BlockPos,
+        pos: BlockPos,
+        state: i32,
+        intersects_player: impl Fn(BlockPos) -> bool,
+        audience: &Audience,
+    ) -> bool {
+        let mut edits = self.edits.lock().unwrap();
+        let blocks = Blocks::vanilla();
+        let vacant = |p| {
+            let previous = blocks.get(state_at(&edits, p));
+            Self::editable(p)
+                && previous.replaceable
+                && previous.default != blocks.get(state).default
+                && !intersects_player(p)
+        };
+        if state_at(&edits, clicked) == AIR || !vacant(pos) {
+            return false;
+        }
+        let block = Blocks::vanilla().get(state);
+        let pair = block.paired(pos, state);
+        if pair.is_some_and(|(other, _, _)| !vacant(other)) {
+            return false;
+        }
+        if block.door() || block.name.ends_with("_bed") {
+            if state_at(&edits, pos.offset(0, -1, 0)) == AIR {
+                return false;
+            }
+            if block.name.ends_with("_bed")
+                && pair.is_some_and(|(other, _, _)| state_at(&edits, other.offset(0, -1, 0)) == AIR)
+            {
+                return false;
+            }
+        }
+        update(&mut edits, pos, state, audience);
+        if let Some((other, property, value)) = pair {
+            update(
+                &mut edits,
+                other,
+                block.state(state, &[(property, value)]),
+                audience,
+            );
+        }
+        true
+    }
+
+    pub fn toggle_door(&self, pos: BlockPos, audience: &Audience) -> bool {
+        let mut edits = self.edits.lock().unwrap();
+        let state = state_at(&edits, pos);
+        let block = Blocks::vanilla().get(state);
+        if !(block.door()
+            || block.name.ends_with("_trapdoor")
+            || block.name.ends_with("_fence_gate"))
+            || matches!(block.name, "iron_door" | "iron_trapdoor")
+        {
+            return false;
+        }
+        let open = if block.property(state, "open") == Some("true") {
+            "false"
+        } else {
+            "true"
+        };
+        if let Some((other, property, value)) = block.paired(pos, state) {
+            let second = state_at(&edits, other);
+            if matching_half(block, second, property, value) {
+                update(
+                    &mut edits,
+                    other,
+                    block.state(second, &[("open", open)]),
+                    audience,
+                );
+            }
+        }
+        update(
+            &mut edits,
+            pos,
+            block.state(state, &[("open", open)]),
+            audience,
+        );
+        true
+    }
+
+    pub fn map_colors(&self, x: i32, z: i32, step: i32) -> Vec<u8> {
+        let side = MAP_SIZE as usize;
+        let mut pixels = vec![46; side * side]; // stone, normal brightness
+        let mut heights = vec![SPAWN_Y - 1; pixels.len()];
+        let world = self.edits.lock().unwrap();
+        let end_x = x + MAP_SIZE * step;
+        let end_z = z + MAP_SIZE * step;
+        for chunk_x in (x >> 4)..=((end_x - 1) >> 4) {
+            for chunk_z in (z >> 4)..=((end_z - 1) >> 4) {
+                let Some(changes) = world.get(&(chunk_x, chunk_z)) else {
+                    continue;
+                };
+                for (pos, &state) in changes {
+                    if !(x..end_x).contains(&pos.x) || !(z..end_z).contains(&pos.z) || state == AIR
+                    {
+                        continue;
+                    }
+                    let pixel =
+                        ((pos.z - z) / step) as usize * side + ((pos.x - x) / step) as usize;
+                    let color = Blocks::vanilla().get(state).map_color;
+                    if color != 0 && pos.y >= heights[pixel] {
+                        heights[pixel] = pos.y;
+                        pixels[pixel] = color * 4 + 2;
+                    }
+                }
+            }
+        }
+        pixels
     }
 
     pub fn send_chunk(&self, x: i32, z: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
@@ -150,6 +260,7 @@ impl FlatWorld {
         let mut heights = vec![0_i64; 256usize.div_ceil(7)];
         for section in 0..SECTIONS {
             let mut palette = vec![AIR];
+            let mut lookup = HashMap::from([(AIR, 0)]);
             let mut indices = [0usize; 4096];
             let mut solid = 0;
             for (index, palette_index) in indices.iter_mut().enumerate() {
@@ -169,13 +280,10 @@ impl FlatWorld {
                     let packed = &mut heights[column / 7];
                     *packed = (*packed & !(511 << shift)) | ((local_y as i64 + 1) << shift);
                 }
-                *palette_index = match palette.iter().position(|&id| id == state) {
-                    Some(index) => index,
-                    None => {
-                        palette.push(state);
-                        palette.len() - 1
-                    }
-                };
+                *palette_index = *lookup.entry(state).or_insert_with(|| {
+                    palette.push(state);
+                    palette.len() - 1
+                });
             }
             sections.write_short(solid);
             if solid == 0 || (solid == 4096 && palette.len() == 2) {
@@ -183,17 +291,26 @@ impl FlatWorld {
                     .write_byte(0)
                     .write_var_int(palette[usize::from(solid != 0)]);
             } else {
-                let bits = (usize::BITS - (palette.len() - 1).leading_zeros()).max(4);
-                sections
-                    .write_byte(bits as i32)
-                    .write_var_int(palette.len() as i32);
-                for id in palette {
-                    sections.write_var_int(id);
+                let local_bits =
+                    (usize::BITS - (palette.len() - 1).leading_zeros()).max(4) as usize;
+                let global = local_bits > 8;
+                let bits = if global { GLOBAL_BITS } else { local_bits };
+                sections.write_byte(bits as i32);
+                if !global {
+                    sections.write_var_int(palette.len() as i32);
+                    for &id in &palette {
+                        sections.write_var_int(id);
+                    }
                 }
-                for group in indices.chunks(64 / bits as usize) {
+                for group in indices.chunks(64 / bits) {
                     let mut word = 0_i64;
                     for (position, &index) in group.iter().enumerate() {
-                        word |= (index as i64) << (position as u32 * bits);
+                        let index = if global {
+                            palette[index] as usize
+                        } else {
+                            index
+                        };
+                        word |= (index as i64) << (position * bits);
                     }
                     sections.write_long(word);
                 }
@@ -208,6 +325,32 @@ impl FlatWorld {
             Vec::new(),
         )
     }
+}
+
+fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
+    edits
+        .get(&chunk(pos))
+        .and_then(|changes| changes.get(&pos).copied())
+        .unwrap_or_else(|| base(pos))
+}
+
+fn update(edits: &mut WorldEdits, pos: BlockPos, state: i32, audience: &Audience) {
+    let coord = chunk(pos);
+    let changes = edits.entry(coord).or_default();
+    if state == base(pos) {
+        changes.remove(&pos);
+    } else {
+        changes.insert(pos, state);
+    }
+    if changes.is_empty() {
+        edits.remove(&coord);
+    }
+    audience.broadcast(ClientboundBlockUpdatePacket::new(pos, state), Some(coord));
+}
+
+fn matching_half(block: &Block, state: i32, property: &str, value: &str) -> bool {
+    let actual = Blocks::vanilla().get(state);
+    block.name == actual.name && actual.property(state, property) == Some(value)
 }
 
 fn heightmap() -> Vec<i64> {

@@ -10,21 +10,15 @@ use crate::world::item::crafting::recipe_book_category::RecipeBookCategory;
 pub enum RecipeDisplay {
     /// `ShapelessCraftingRecipeDisplay`.
     ShapelessCrafting {
-        /// `group`.
-        group: Option<String>,
         /// `ingredients`.
         ingredients: Vec<SlotDisplay>,
         /// `result`.
         result: SlotDisplay,
         /// `craftingStation`.
         crafting_station: SlotDisplay,
-        /// `category`.
-        category: Option<RecipeBookCategory>,
     },
     /// `ShapedCraftingRecipeDisplay`.
     ShapedCrafting {
-        /// `group`.
-        group: Option<String>,
         /// `width`.
         width: i32,
         /// `height`.
@@ -35,8 +29,6 @@ pub enum RecipeDisplay {
         result: SlotDisplay,
         /// `craftingStation`.
         crafting_station: SlotDisplay,
-        /// `category`.
-        category: Option<RecipeBookCategory>,
     },
     /// `FurnaceRecipeDisplay`.
     Furnace {
@@ -99,8 +91,12 @@ impl RecipeDisplay {
     /// `craftingStation()` — SlotDisplay станции крафта.
     pub fn crafting_station(&self) -> Option<&SlotDisplay> {
         match self {
-            RecipeDisplay::ShapelessCrafting { crafting_station, .. } => Some(crafting_station),
-            RecipeDisplay::ShapedCrafting { crafting_station, .. } => Some(crafting_station),
+            RecipeDisplay::ShapelessCrafting {
+                crafting_station, ..
+            } => Some(crafting_station),
+            RecipeDisplay::ShapedCrafting {
+                crafting_station, ..
+            } => Some(crafting_station),
             RecipeDisplay::Furnace { .. } => None,
             RecipeDisplay::Stonecutter { .. } => None,
             RecipeDisplay::Smithing { .. } => None,
@@ -111,23 +107,36 @@ impl RecipeDisplay {
     pub fn encode(&self, buf: &mut FriendlyByteBuf) {
         buf.write_var_int(self.type_id());
         match self {
-            RecipeDisplay::ShapelessCrafting { group, ingredients, result, crafting_station, category } => {
-                Self::write_optional_string(buf, group);
+            RecipeDisplay::ShapelessCrafting {
+                ingredients,
+                result,
+                crafting_station,
+            } => {
                 buf.write_collection(ingredients, |b, i| i.encode(b));
                 result.encode(buf);
                 crafting_station.encode(buf);
-                Self::write_optional_category(buf, category);
             }
-            RecipeDisplay::ShapedCrafting { group, width, height, ingredients, result, crafting_station, category } => {
-                Self::write_optional_string(buf, group);
+            RecipeDisplay::ShapedCrafting {
+                width,
+                height,
+                ingredients,
+                result,
+                crafting_station,
+            } => {
                 buf.write_var_int(*width);
                 buf.write_var_int(*height);
                 buf.write_collection(ingredients, |b, i| i.encode(b));
                 result.encode(buf);
                 crafting_station.encode(buf);
-                Self::write_optional_category(buf, category);
             }
-            RecipeDisplay::Furnace { recipe_category, ingredient, fuel, result, cooking_time, experience } => {
+            RecipeDisplay::Furnace {
+                recipe_category,
+                ingredient,
+                fuel,
+                result,
+                cooking_time,
+                experience,
+            } => {
                 Self::write_optional_category(buf, recipe_category);
                 ingredient.encode(buf);
                 fuel.encode(buf);
@@ -139,7 +148,12 @@ impl RecipeDisplay {
                 ingredient.encode(buf);
                 result.encode(buf);
             }
-            RecipeDisplay::Smithing { template, base, addition, result } => {
+            RecipeDisplay::Smithing {
+                template,
+                base,
+                addition,
+                result,
+            } => {
                 template.encode(buf);
                 base.encode(buf);
                 addition.encode(buf);
@@ -153,22 +167,30 @@ impl RecipeDisplay {
         let type_id = buf.read_var_int();
         match type_id {
             0 => {
-                let group = Self::read_optional_string(buf);
-                let ingredients = buf.read_collection(|n| Vec::with_capacity(n), |b| SlotDisplay::decode(b));
+                let ingredients =
+                    buf.read_collection(|n| Vec::with_capacity(n), |b| SlotDisplay::decode(b));
                 let result = SlotDisplay::decode(buf);
                 let crafting_station = SlotDisplay::decode(buf);
-                let category = Self::read_optional_category(buf);
-                RecipeDisplay::ShapelessCrafting { group, ingredients, result, crafting_station, category }
+                RecipeDisplay::ShapelessCrafting {
+                    ingredients,
+                    result,
+                    crafting_station,
+                }
             }
             1 => {
-                let group = Self::read_optional_string(buf);
                 let width = buf.read_var_int();
                 let height = buf.read_var_int();
-                let ingredients = buf.read_collection(|n| Vec::with_capacity(n), |b| SlotDisplay::decode(b));
+                let ingredients =
+                    buf.read_collection(|n| Vec::with_capacity(n), |b| SlotDisplay::decode(b));
                 let result = SlotDisplay::decode(buf);
                 let crafting_station = SlotDisplay::decode(buf);
-                let category = Self::read_optional_category(buf);
-                RecipeDisplay::ShapedCrafting { group, width, height, ingredients, result, crafting_station, category }
+                RecipeDisplay::ShapedCrafting {
+                    width,
+                    height,
+                    ingredients,
+                    result,
+                    crafting_station,
+                }
             }
             2 => {
                 let recipe_category = Self::read_optional_category(buf);
@@ -177,7 +199,14 @@ impl RecipeDisplay {
                 let result = SlotDisplay::decode(buf);
                 let cooking_time = buf.read_var_int();
                 let experience = buf.read_float();
-                RecipeDisplay::Furnace { recipe_category, ingredient, fuel, result, cooking_time, experience }
+                RecipeDisplay::Furnace {
+                    recipe_category,
+                    ingredient,
+                    fuel,
+                    result,
+                    cooking_time,
+                    experience,
+                }
             }
             3 => {
                 let ingredient = SlotDisplay::decode(buf);
@@ -189,32 +218,17 @@ impl RecipeDisplay {
                 let base = SlotDisplay::decode(buf);
                 let addition = SlotDisplay::decode(buf);
                 let result = SlotDisplay::decode(buf);
-                RecipeDisplay::Smithing { template, base, addition, result }
+                RecipeDisplay::Smithing {
+                    template,
+                    base,
+                    addition,
+                    result,
+                }
             }
             _ => RecipeDisplay::Stonecutter {
                 ingredient: SlotDisplay::Empty,
                 result: SlotDisplay::Empty,
             },
-        }
-    }
-
-    fn write_optional_string(buf: &mut FriendlyByteBuf, s: &Option<String>) {
-        match s {
-            Some(s) => {
-                buf.write_bool(true);
-                let _ = buf.write_utf(s);
-            }
-            None => {
-                buf.write_bool(false);
-            }
-        }
-    }
-
-    fn read_optional_string(buf: &mut FriendlyByteBuf) -> Option<String> {
-        if buf.read_bool() {
-            buf.read_utf().ok()
-        } else {
-            None
         }
     }
 

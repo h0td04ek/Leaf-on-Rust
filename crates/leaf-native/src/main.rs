@@ -1,12 +1,19 @@
 mod audience;
+mod blocks;
 mod chunk_stream;
 mod commands;
+mod crafting;
+mod drops;
 mod gameplay;
 mod items;
+mod maps;
+mod operators;
 mod peers;
 mod player_data;
+mod recipes;
 mod registries;
 mod session;
+mod special_recipes;
 mod wire;
 mod world;
 
@@ -33,7 +40,7 @@ fn run() -> io::Result<()> {
         None => return Ok(()),
     };
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
-    let server = Arc::new(Server::new(PlayerStore::open(&world)?));
+    let server = Arc::new(Server::new(PlayerStore::open(&world)?)?);
     println!(
         "Player data directory: {}",
         world.join("playerdata").display()

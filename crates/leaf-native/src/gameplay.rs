@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
@@ -7,32 +8,44 @@ use leaf_core::entity::{
     equipment_slot::EquipmentSlot, player::abilities::Abilities,
     position_move_rotation::PositionMoveRotation,
 };
+use leaf_core::network::chat::component::Component;
 use leaf_core::network::protocol::game::{
     clientbound_add_entity_packet::ClientboundAddEntityPacket,
     clientbound_block_changed_ack_packet::ClientboundBlockChangedAckPacket,
-    clientbound_block_update_packet::ClientboundBlockUpdatePacket,
+    clientbound_container_close_packet::ClientboundContainerClosePacket,
     clientbound_entity_event_packet::ClientboundEntityEventPacket,
-    clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket,
     clientbound_game_event_packet::{ClientboundGameEventPacket, CHANGE_GAME_MODE},
+    clientbound_open_screen_packet::ClientboundOpenScreenPacket,
+    clientbound_place_ghost_recipe_packet::ClientboundPlaceGhostRecipePacket,
     clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket,
     clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket,
     clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
     clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket,
     clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket,
-    clientbound_take_item_entity_packet::ClientboundTakeItemEntityPacket,
 };
 use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::resources::Identifier;
+use leaf_core::server::network::filterable::Filterable;
 use leaf_core::util::uuid::Uuid;
+use leaf_core::world::inventory::ClickType;
+use leaf_core::world::item::component::{
+    writable_book_content::WritableBookContent, written_book_content::WrittenBookContent,
+};
 use leaf_core::world::item::{component::fireworks::Fireworks, item_stack::ItemStack};
 use leaf_core::world::level::game_type::GameType;
+use leaf_core::world::level::saveddata::maps::MapId;
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::audience::Audience;
+use crate::blocks::{placement_state, Blocks};
 use crate::commands::Commands;
-use crate::items::{item_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY, ITEM_ENTITY};
+use crate::crafting::Crafting;
+use crate::drops::{DropTracker, Drops};
+use crate::items::{item_id, named_id, stack, Items, ELYTRA, FIREWORK, FIREWORK_ENTITY};
+use crate::maps::{map_id, set_map_id, Maps};
 use crate::peers::{gliding_packet, View};
 use crate::player_data::PlayerData;
+use crate::recipes::Recipes;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, AIR, SPAWN_Y};
 
@@ -42,6 +55,10 @@ const TICK: Duration = Duration::from_millis(50);
 
 pub struct PlayContext<'a> {
     pub world: &'a FlatWorld,
+    pub drops: &'a Drops,
+    pub maps: &'a Maps,
+    pub name: &'a str,
+    pub player: Uuid,
     pub ids: &'a PacketIds,
     pub audience: &'a Audience,
     pub commands: &'a Commands,
@@ -50,21 +67,17 @@ pub struct PlayContext<'a> {
 
 pub struct Gameplay {
     pub player: PlayerData,
+    pub crafting: Crafting,
     entity_id: i32,
     on_ground: bool,
     creative_flying: bool,
     gliding: bool,
-    drops: Vec<DropEntity>,
+    drops: DropTracker,
+    mining: Option<(BlockPos, i32)>,
+    sneaking: bool,
     rockets: Vec<(i32, Instant)>,
     last_tick: Instant,
-}
-
-struct DropEntity {
-    id: i32,
-    position: Vec3,
-    velocity: Vec3,
-    stack: ItemStack,
-    created: Instant,
+    shown_maps: HashSet<MapId>,
 }
 
 impl Gameplay {
@@ -72,13 +85,17 @@ impl Gameplay {
         let creative_flying = player.mode == GameType::Spectator;
         Self {
             player,
+            crafting: Crafting::default(),
             entity_id,
             on_ground: true,
             creative_flying,
             gliding: false,
-            drops: vec![],
+            drops: DropTracker::default(),
+            mining: None,
+            sneaking: false,
             rockets: vec![],
             last_tick: Instant::now(),
+            shown_maps: HashSet::new(),
         }
     }
 
@@ -119,6 +136,7 @@ impl Gameplay {
 
     pub fn set_mode(&mut self, mode: GameType, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
         self.player.mode = mode;
+        self.mining = None;
         if !mode.is_creative() {
             self.creative_flying = mode == GameType::Spectator;
         }
@@ -140,6 +158,10 @@ impl Gameplay {
         self.on_ground = true;
         self.creative_flying = self.player.mode == GameType::Spectator;
         self.gliding = false;
+        self.drops.reset();
+        self.shown_maps.clear();
+        self.mining = None;
+        self.sneaking = false;
     }
 
     pub fn movement(
@@ -192,6 +214,93 @@ impl Gameplay {
             return Ok(());
         }
         match name {
+            "container_click" => {
+                let menu = body.varint()?;
+                let _state = body.varint()?;
+                let slot = i16::from_be_bytes(body.fixed()?);
+                let [button] = body.fixed()?;
+                let action = ClickType::by_id(body.count(6)? as i32);
+                // The rest of the packet describes the client's prediction. The server owns every slot.
+                if menu == self.crafting.id {
+                    for item in self.crafting.click(
+                        &mut self.player.inventory,
+                        slot,
+                        button,
+                        action,
+                        self.player.mode.is_creative(),
+                        ctx.maps,
+                    ) {
+                        self.throw_stack(item, ctx);
+                    }
+                    self.sync_menu(wire, ctx)?;
+                }
+            }
+            "container_close" => {
+                let menu = body.varint()?;
+                body.finish()?;
+                if menu == self.crafting.id {
+                    self.close_crafting(wire, ctx, false)?;
+                }
+            }
+            "place_recipe" => {
+                let menu = body.varint()?;
+                let recipe = body.varint()?;
+                let [maximum] = body.fixed()?;
+                body.finish()?;
+                if menu == self.crafting.id {
+                    if let Some(recipe) = Recipes::vanilla().by_id(recipe as usize) {
+                        if self
+                            .crafting
+                            .fill(&mut self.player.inventory, recipe, maximum != 0)
+                        {
+                            self.sync_menu(wire, ctx)?;
+                        } else {
+                            wire.send(
+                                ctx.ids,
+                                &ClientboundPlaceGhostRecipePacket::new(menu, recipe.display()),
+                            )?;
+                        }
+                    }
+                }
+            }
+            "edit_book" => {
+                let slot = body.count(40)?;
+                let pages = (0..body.count(100)?)
+                    .map(|_| body.string(1024))
+                    .collect::<io::Result<Vec<_>>>()?;
+                let [has_title] = body.fixed()?;
+                let title = (has_title != 0).then(|| body.string(32)).transpose()?;
+                body.finish()?;
+                if (slot < 9 || slot == OFFHAND)
+                    && item_id(&self.player.inventory[slot]) == Some(named_id("writable_book"))
+                {
+                    if let Some(title) = title {
+                        let pages = pages
+                            .into_iter()
+                            .map(|page| Filterable::pass_through(Component::literal(page)))
+                            .collect();
+                        let mut written = stack(named_id("written_book"), 1);
+                        written.set_component(
+                            &Identifier::minecraft("written_book_content"),
+                            Some(WrittenBookContent::new(
+                                Some(Filterable::pass_through(title.trim().to_owned())),
+                                ctx.name.to_owned(),
+                                0,
+                                pages,
+                                true,
+                            )),
+                        );
+                        self.player.inventory[slot] = written;
+                    } else {
+                        let pages = pages.into_iter().map(Filterable::pass_through).collect();
+                        self.player.inventory[slot].set_component(
+                            &Identifier::minecraft("writable_book_content"),
+                            Some(WritableBookContent::new(pages)),
+                        );
+                    }
+                    self.sync_slot(slot, wire, ctx.ids)?;
+                }
+            }
             "set_carried_item" => {
                 let slot = i16::from_be_bytes(body.fixed()?);
                 body.finish()?;
@@ -204,7 +313,7 @@ impl Gameplay {
                 let stack = Items::vanilla().read_creative_stack(&mut body)?;
                 body.finish()?;
                 match slot {
-                    -1 if !stack.is_empty() => self.throw_stack(stack, wire, ctx)?,
+                    -1 if !stack.is_empty() => self.throw_stack(stack, ctx),
                     5..=8 => self.player.inventory[(44 - slot) as usize] = stack,
                     9..=35 => self.player.inventory[slot as usize] = stack,
                     36..=44 => self.player.inventory[(slot - 36) as usize] = stack,
@@ -223,31 +332,9 @@ impl Gameplay {
                 body.finish()?;
                 match action {
                     0..=2 => {
-                        let break_action = if self.player.mode.is_creative() { 0 } else { 2 };
-                        if action == break_action
-                            && !self.player.mode.is_block_placing_restricted()
-                            && self.in_reach(block)
-                        {
-                            let old = ctx.world.change(block, AIR, ctx.audience);
-                            if ctx.commands.world.lock().unwrap().drops_enabled() {
-                                if let Some(item) =
-                                    old.and_then(|state| Items::vanilla().block_drop(state))
-                                {
-                                    let pos = Vec3::new(
-                                        f64::from(block.x) + 0.5,
-                                        f64::from(block.y) + 0.35,
-                                        f64::from(block.z) + 0.5,
-                                    );
-                                    self.spawn_drop(item, pos, Vec3::ZERO, wire, ctx)?;
-                                }
-                            }
-                        } else {
-                            wire.send(
-                                ctx.ids,
-                                &ClientboundBlockUpdatePacket::new(block, ctx.world.block(block)),
-                            )?;
-                        }
-                        wire.send(ctx.ids, &ClientboundBlockChangedAckPacket::new(sequence))?;
+                        self.mine(action, block, ctx);
+                        ctx.audience
+                            .send(ctx.player, ClientboundBlockChangedAckPacket::new(sequence));
                     }
                     3 | 4 => {
                         let amount = if action == 3 {
@@ -258,7 +345,7 @@ impl Gameplay {
                         if !self.player.inventory[self.player.selection].is_empty() {
                             let stack = self.player.inventory[self.player.selection].split(amount);
                             self.sync_slot(self.player.selection, wire, ctx.ids)?;
-                            self.throw_stack(stack, wire, ctx)?;
+                            self.throw_stack(stack, ctx);
                         }
                     }
                     6 => {
@@ -282,6 +369,10 @@ impl Gameplay {
                 {
                     self.set_gliding(true, wire, ctx.ids)?;
                 }
+            }
+            "player_input" => {
+                self.sneaking = body.fixed::<1>()?[0] & 32 != 0;
+                body.finish()?;
             }
             "player_abilities" => {
                 let flying = body.fixed::<1>()?[0] & 2 != 0;
@@ -310,45 +401,196 @@ impl Gameplay {
                 let hand = body.count(1)?;
                 let pos = BlockPos::of(i64::from_be_bytes(body.fixed()?));
                 let direction = Direction::from_3d_data_value(body.count(5)? as i32);
-                body.fixed::<14>()?; // hit position, inside and world border
+                let _hit_x = f32::from_be_bytes(body.fixed()?);
+                let hit_y = f32::from_be_bytes(body.fixed()?);
+                let _hit_z = f32::from_be_bytes(body.fixed()?);
+                body.fixed::<2>()?; // inside and world border
                 let sequence = body.varint()?;
                 body.finish()?;
-                if self.in_reach(pos) {
-                    let placed = pos.relative(direction);
-                    let slot = self.hand_slot(hand);
-                    if let Some(state) = Items::vanilla().place_state(&self.player.inventory[slot])
-                    {
-                        let feet = BlockPos::new(
-                            self.player.position.x.floor() as i32,
-                            self.player.position.y.floor() as i32,
-                            self.player.position.z.floor() as i32,
-                        );
-                        if placed != feet
-                            && placed != feet.offset(0, 1, 0)
-                            && !self.player.mode.is_block_placing_restricted()
-                            && ctx.world.block(pos) != AIR
-                        {
-                            if ctx.world.change(placed, state, ctx.audience).is_some()
-                                && !self.player.mode.is_creative()
-                            {
-                                self.player.inventory[slot].shrink(1);
-                                self.sync_slot(slot, wire, ctx.ids)?;
-                            }
-                        } else {
-                            wire.send(
-                                ctx.ids,
-                                &ClientboundBlockUpdatePacket::new(placed, ctx.world.block(placed)),
-                            )?;
-                        }
-                    } else {
-                        self.use_item(hand, wire, ctx)?;
-                    }
-                }
-                wire.send(ctx.ids, &ClientboundBlockChangedAckPacket::new(sequence))?;
+                self.use_block(pos, direction, hit_y, hand, wire, ctx)?;
+                ctx.audience
+                    .send(ctx.player, ClientboundBlockChangedAckPacket::new(sequence));
             }
             _ => {}
         }
         Ok(())
+    }
+
+    fn mine(&mut self, action: i32, pos: BlockPos, ctx: &PlayContext<'_>) {
+        if action == 1 || self.player.mode.is_block_placing_restricted() || !self.in_reach(pos) {
+            self.mining = None;
+            ctx.world.refresh_block(pos, ctx.audience, ctx.player);
+            return;
+        }
+        let current = ctx.world.block(pos);
+        let kind = Blocks::vanilla().get(current);
+        let creative = self.player.mode.is_creative();
+        if !creative && kind.hardness < 0 {
+            self.mining = None;
+            ctx.world.refresh_block(pos, ctx.audience, ctx.player);
+            return;
+        }
+        if action == 0 && !creative && current != AIR && kind.hardness > 0 {
+            self.mining = Some((pos, current));
+            return;
+        }
+        let mining = self.mining.take();
+        if (action == 0 || !creative && mining == Some((pos, current)))
+            && ctx.world.break_block(pos, current, ctx.audience)
+        {
+            if !creative && ctx.commands.world.lock().unwrap().drops_enabled() {
+                if let Some(item) = kind.item {
+                    let center = Vec3::new(
+                        f64::from(pos.x) + 0.5,
+                        f64::from(pos.y) + 0.35,
+                        f64::from(pos.z) + 0.5,
+                    );
+                    self.spawn_drop(stack(item, 1), center, Vec3::ZERO, ctx);
+                }
+            }
+        } else {
+            ctx.world.refresh_block(pos, ctx.audience, ctx.player);
+        }
+    }
+
+    fn use_block(
+        &mut self,
+        pos: BlockPos,
+        direction: Direction,
+        hit_y: f32,
+        hand: usize,
+        wire: &mut Wire,
+        ctx: &PlayContext<'_>,
+    ) -> io::Result<()> {
+        let adjacent = pos.relative(direction);
+        if !self.in_reach(pos) || self.player.mode.is_block_placing_restricted() {
+            ctx.world.refresh_block(adjacent, ctx.audience, ctx.player);
+            return Ok(());
+        }
+        let inventory_slot = self.hand_slot(hand);
+        let held = item_id(&self.player.inventory[inventory_slot]);
+        if !(self.sneaking && held.is_some()) {
+            if Blocks::vanilla().get(ctx.world.block(pos)).name == "crafting_table" && hand == 0 {
+                self.close_crafting(wire, ctx, true)?;
+                self.crafting.open(pos);
+                const CRAFTING_MENU: i32 = 12;
+                wire.send(
+                    ctx.ids,
+                    &ClientboundOpenScreenPacket::new(
+                        self.crafting.id,
+                        CRAFTING_MENU,
+                        Component::translatable("container.crafting", Vec::new()),
+                    ),
+                )?;
+                return self.sync_menu(wire, ctx);
+            }
+            if ctx.world.toggle_door(pos, ctx.audience) {
+                return Ok(());
+            }
+        }
+        let Some(block) = held.and_then(|id| Blocks::vanilla().for_item(id, direction)) else {
+            return self.use_item(hand, wire, ctx);
+        };
+        let clicked = Blocks::vanilla().get(ctx.world.block(pos));
+        let placed = if clicked.replaceable && clicked.item != held {
+            pos
+        } else {
+            adjacent
+        };
+        let state = placement_state(block, direction, self.player.yaw, hit_y);
+        let player = self.player.position;
+        let intersects_player = |block: BlockPos| {
+            let (x, y, z) = (f64::from(block.x), f64::from(block.y), f64::from(block.z));
+            x < player.x + 0.3
+                && x + 1.0 > player.x - 0.3
+                && y < player.y + 1.8
+                && y + 1.0 > player.y
+                && z < player.z + 0.3
+                && z + 1.0 > player.z - 0.3
+        };
+        if ctx
+            .world
+            .place_block(pos, placed, state, intersects_player, ctx.audience)
+        {
+            if !self.player.mode.is_creative() {
+                self.player.inventory[inventory_slot].shrink(1);
+                self.sync_slot(inventory_slot, wire, ctx.ids)?;
+            }
+        } else {
+            ctx.world.refresh_block(placed, ctx.audience, ctx.player);
+            if let Some((other, _, _)) = block.paired(placed, state) {
+                ctx.world.refresh_block(other, ctx.audience, ctx.player);
+            }
+            self.sync_slot(inventory_slot, wire, ctx.ids)?;
+        }
+        Ok(())
+    }
+
+    fn sync_menu(&mut self, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
+        wire.send(
+            ctx.ids,
+            &self.crafting.contents(&self.player.inventory, ctx.maps),
+        )
+    }
+
+    pub fn check_crafting(&mut self, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
+        if self.crafting.table.is_some_and(|pos| {
+            !self.in_reach(pos)
+                || Blocks::vanilla().get(ctx.world.block(pos)).name != "crafting_table"
+        }) {
+            self.close_crafting(wire, ctx, true)?;
+        }
+        Ok(())
+    }
+
+    pub fn close_crafting(
+        &mut self,
+        wire: &mut Wire,
+        ctx: &PlayContext<'_>,
+        notify: bool,
+    ) -> io::Result<()> {
+        let open = self.crafting.id;
+        let has_items = self.crafting.recovery_items().next().is_some();
+        let overflow = self.crafting.close(&mut self.player.inventory);
+        for item in overflow {
+            self.return_drop(item, ctx);
+        }
+        if notify && open != 0 {
+            wire.send(ctx.ids, &ClientboundContainerClosePacket::new(open))?;
+        }
+        if open != 0 || has_items {
+            self.sync_menu(wire, ctx)?;
+        }
+        Ok(())
+    }
+
+    pub fn restore_crafting(&mut self, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
+        let mut changed = Vec::new();
+        for mut item in std::mem::take(&mut self.player.recovery) {
+            insert_inventory(&mut self.player.inventory[..36], &mut item, &mut changed);
+            if !item.is_empty() {
+                self.return_drop(item, ctx);
+            }
+        }
+        if !changed.is_empty() {
+            self.sync_menu(wire, ctx)?;
+        }
+        Ok(())
+    }
+
+    pub fn finish_session(&mut self) {
+        self.player
+            .recovery
+            .extend(self.crafting.close(&mut self.player.inventory));
+    }
+
+    fn return_drop(&self, item: ItemStack, ctx: &PlayContext<'_>) {
+        self.spawn_drop(
+            item,
+            self.player.position.add(0.0, 0.3, 0.0),
+            Vec3::ZERO,
+            ctx,
+        );
     }
 
     pub fn sync_inventory(&self, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
@@ -370,12 +612,12 @@ impl Gameplay {
         } else if !self.has_elytra() {
             let extra = self.insert(stack(ELYTRA, 1), wire, ctx.ids)?;
             if !extra.is_empty() {
-                self.throw_stack(extra, wire, ctx)?;
+                self.throw_stack(extra, ctx);
             }
         }
         let extra = self.insert(stack(FIREWORK, 64), wire, ctx.ids)?;
         if !extra.is_empty() {
-            self.throw_stack(extra, wire, ctx)?;
+            self.throw_stack(extra, ctx);
         }
         Ok(())
     }
@@ -403,6 +645,26 @@ impl Gameplay {
     fn use_item(&mut self, hand: usize, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
         let slot = self.hand_slot(hand);
         match item_id(&self.player.inventory[slot]) {
+            Some(id) if id == named_id("map") => {
+                let position = self.player.position;
+                let id = ctx
+                    .maps
+                    .create(position.x.floor() as i32, position.z.floor() as i32)?;
+                let mut filled = stack(named_id("filled_map"), 1);
+                set_map_id(&mut filled, id);
+                if !self.player.mode.is_creative() {
+                    self.player.inventory[slot].shrink(1);
+                }
+                if self.player.inventory[slot].is_empty() {
+                    self.player.inventory[slot] = filled;
+                } else {
+                    let overflow = self.insert(filled, wire, ctx.ids)?;
+                    if !overflow.is_empty() {
+                        self.return_drop(overflow, ctx);
+                    }
+                }
+                self.sync_slot(slot, wire, ctx.ids)?;
+            }
             Some(ELYTRA) => {
                 self.player.inventory.swap(slot, CHEST);
                 self.sync_slot(slot, wire, ctx.ids)?;
@@ -464,82 +726,45 @@ impl Gameplay {
         wire: &mut Wire,
         ids: &PacketIds,
     ) -> io::Result<ItemStack> {
-        for slot in 0..36 {
-            if stack.is_empty() {
-                break;
-            }
-            let current = &mut self.player.inventory[slot];
-            if ItemStack::is_same_item_same_components(current, &stack) && !current.is_empty() {
-                let amount = (current.get_max_stack_size() - current.count)
-                    .max(0)
-                    .min(stack.count);
-                if amount != 0 {
-                    current.grow(amount);
-                    stack.shrink(amount);
-                    self.sync_slot(slot, wire, ids)?;
-                }
-            }
-        }
-        if !stack.is_empty() {
-            if let Some(slot) = self.player.inventory[..36]
-                .iter()
-                .position(ItemStack::is_empty)
-            {
-                self.player.inventory[slot] = stack;
-                self.sync_slot(slot, wire, ids)?;
-                return Ok(ItemStack::empty());
-            }
+        let mut changed = Vec::new();
+        insert_inventory(&mut self.player.inventory[..36], &mut stack, &mut changed);
+        for slot in changed {
+            self.sync_slot(slot, wire, ids)?;
         }
         Ok(stack)
     }
 
-    fn throw_stack(
-        &mut self,
-        item: ItemStack,
-        wire: &mut Wire,
-        ctx: &PlayContext<'_>,
-    ) -> io::Result<()> {
+    fn throw_stack(&self, item: ItemStack, ctx: &PlayContext<'_>) {
         let direction = Vec3::direction_from_rotation(self.player.pitch, self.player.yaw);
         let pos = self.player.position.add(0.0, 1.32, 0.0);
-        self.spawn_drop(item, pos, direction.scale(0.3), wire, ctx)
+        self.spawn_drop(item, pos, direction.scale(0.3), ctx);
     }
 
-    fn spawn_drop(
+    fn spawn_drop(&self, item: ItemStack, pos: Vec3, velocity: Vec3, ctx: &PlayContext<'_>) {
+        let id = ctx.entity_ids.fetch_add(1, Ordering::Relaxed);
+        ctx.drops.spawn(id, item, pos, velocity);
+    }
+
+    pub fn tick(
         &mut self,
-        item: ItemStack,
-        pos: Vec3,
-        velocity: Vec3,
         wire: &mut Wire,
         ctx: &PlayContext<'_>,
+        loaded: &HashSet<(i32, i32)>,
     ) -> io::Result<()> {
-        if self.drops.len() >= 128 {
-            let previous = self.drops.remove(0);
-            wire.send(
-                ctx.ids,
-                &ClientboundRemoveEntitiesPacket::new(vec![previous.id]),
-            )?;
-        }
-        let entity = spawn(ITEM_ENTITY, pos, velocity, wire, ctx)?;
-        wire.send(
-            ctx.ids,
-            &ClientboundSetEntityDataPacket::new(entity, vec![data(8, 7, item.clone())]),
-        )?;
-        self.drops.push(DropEntity {
-            id: entity,
-            position: pos,
-            velocity,
-            stack: item,
-            created: Instant::now(),
-        });
-        Ok(())
-    }
-
-    pub fn tick(&mut self, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
         if self.last_tick.elapsed() < TICK {
             return Ok(());
         }
         self.last_tick = Instant::now();
         let now = self.last_tick;
+        for slot in [self.player.selection, OFFHAND] {
+            if let Some(id) = map_id(&self.player.inventory[slot]) {
+                if self.shown_maps.insert(id) {
+                    if let Some(packet) = ctx.maps.render(id, ctx.world) {
+                        wire.send(ctx.ids, &packet)?;
+                    }
+                }
+            }
+        }
 
         let mut removed = Vec::new();
         self.rockets.retain(|&(id, end)| {
@@ -554,72 +779,67 @@ impl Gameplay {
             wire.send(ctx.ids, &ClientboundEntityEventPacket::new(id, 17))?;
         }
 
-        for mut drop in std::mem::take(&mut self.drops) {
-            let age = now.saturating_duration_since(drop.created);
-            if age >= Duration::from_secs(300) || drop.position.y < -72.0 {
-                removed.push(drop.id);
-                continue;
-            }
-
-            let next = drop
-                .position
-                .add(drop.velocity.x, drop.velocity.y, drop.velocity.z);
-            let block = BlockPos::new(
-                next.x.floor() as i32,
-                next.y.floor() as i32,
-                next.z.floor() as i32,
-            );
-            let on_ground = drop.velocity.y <= 0.0 && ctx.world.block(block) != AIR;
-            if on_ground {
-                drop.position = Vec3::new(next.x, f64::from(block.y + 1), next.z);
-                drop.velocity = Vec3::ZERO;
-            } else {
-                drop.position = next;
-                drop.velocity = drop.velocity.add(0.0, -0.04, 0.0).scale(0.98);
-            }
-
-            if age >= Duration::from_secs(2)
-                && drop
-                    .position
-                    .distance_to_sqr(&self.player.position.add(0.0, 0.5, 0.0))
-                    < 1.44
-            {
-                let count = drop.stack.get_count();
-                let remaining = self.insert(drop.stack, wire, ctx.ids)?;
-                if remaining.is_empty() {
-                    wire.send(
-                        ctx.ids,
-                        &ClientboundTakeItemEntityPacket::new(drop.id, self.entity_id, count),
-                    )?;
-                    removed.push(drop.id);
-                    continue;
-                }
-                if remaining.get_count() != count {
-                    wire.send(
-                        ctx.ids,
-                        &ClientboundSetEntityDataPacket::new(
-                            drop.id,
-                            vec![data(8, 7, remaining.clone())],
-                        ),
-                    )?;
-                }
-                drop.stack = remaining;
-            }
-            wire.send(
-                ctx.ids,
-                &ClientboundEntityPositionSyncPacket::new(
-                    drop.id,
-                    PositionMoveRotation::new(drop.position, drop.velocity, 0.0, 0.0),
-                    on_ground,
-                ),
-            )?;
-            self.drops.push(drop);
+        let mut changed = Vec::new();
+        let collector = if self.player.mode == GameType::Spectator || self.player.health <= 0.0 {
+            0
+        } else {
+            self.entity_id
+        };
+        self.drops.sync(
+            ctx,
+            loaded,
+            self.player.position,
+            collector,
+            |item| {
+                insert_inventory(&mut self.player.inventory[..36], item, &mut changed);
+            },
+            wire,
+        )?;
+        changed.sort_unstable();
+        changed.dedup();
+        for slot in changed {
+            self.sync_slot(slot, wire, ctx.ids)?;
         }
         if !removed.is_empty() {
             wire.send(ctx.ids, &ClientboundRemoveEntitiesPacket::new(removed))?;
         }
         Ok(())
     }
+}
+
+pub fn insert_inventory(
+    inventory: &mut [ItemStack],
+    stack: &mut ItemStack,
+    changed: &mut Vec<usize>,
+) {
+    for (slot, current) in inventory.iter_mut().enumerate() {
+        if stack.is_empty() {
+            return;
+        }
+        if !current.is_empty() && ItemStack::is_same_item_same_components(current, stack) {
+            let amount = (current.get_max_stack_size() - current.count)
+                .max(0)
+                .min(stack.count);
+            if amount > 0 {
+                current.grow(amount);
+                stack.shrink(amount);
+                changed.push(slot);
+            }
+        }
+    }
+    for (slot, current) in inventory.iter_mut().enumerate() {
+        if stack.is_empty() {
+            return;
+        }
+        if current.is_empty() {
+            *current = stack.split(stack.get_max_stack_size());
+            changed.push(slot);
+        }
+    }
+}
+
+pub fn item_data(id: i32, item: ItemStack) -> ClientboundSetEntityDataPacket {
+    ClientboundSetEntityDataPacket::new(id, vec![data(8, 7, item)])
 }
 
 fn data(id: i32, serializer: i32, value: impl Send + Sync + 'static) -> DataValue {

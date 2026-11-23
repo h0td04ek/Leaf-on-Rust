@@ -22,6 +22,7 @@ use leaf_core::network::protocol::configuration::{
 };
 use leaf_core::network::protocol::game::{
     clientbound_commands_packet::ClientboundCommandsPacket,
+    clientbound_entity_event_packet::ClientboundEntityEventPacket,
     clientbound_game_event_packet::{ClientboundGameEventPacket, LEVEL_CHUNKS_LOAD_START},
     clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket,
     clientbound_login_packet::ClientboundLoginPacket,
@@ -54,14 +55,19 @@ use leaf_core::world::level::{game_type::GameType, LevelKey, RespawnData};
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::audience::Audience;
+use crate::blocks::Blocks;
 use crate::chunk_stream::{
     client_view_distance, ChunkStream, MAX_VIEW_DISTANCE, SIMULATION_DISTANCE,
 };
 use crate::commands::{Commands, PlayerCommand};
+use crate::drops::Drops;
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
+use crate::maps::Maps;
+use crate::operators::{valid_name, Operators, PERMISSION_EVENT};
 use crate::peers::{PeerTracker, Peers, Presence};
 use crate::player_data::PlayerStore;
+use crate::recipes::Recipes;
 use crate::registries::Registries;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, SPAWN_Y};
@@ -88,6 +94,8 @@ pub struct Server {
     audience: Audience,
     peers: Peers,
     flat_world: FlatWorld,
+    drops: Drops,
+    maps: Maps,
     sockets: AtomicUsize,
     players: Mutex<HashSet<Uuid>>,
     online: AtomicUsize,
@@ -95,10 +103,14 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(player_data: PlayerStore) -> Self {
+    pub fn new(player_data: PlayerStore) -> io::Result<Self> {
         Items::vanilla();
+        Blocks::vanilla();
+        Recipes::vanilla();
         let registries = Registries::load();
-        Self {
+        let operators = Operators::open(player_data.ops_path())?;
+        let maps = Maps::open(player_data.maps_path())?;
+        Ok(Self {
             handshake: PacketIds::from_protocol(handshake_protocols::serverbound()),
             status_in: PacketIds::from_protocol(status_protocols::serverbound()),
             status_out: PacketIds::from_protocol(status_protocols::clientbound()),
@@ -109,16 +121,18 @@ impl Server {
             play_in: PacketIds::from_protocol(game_protocols::serverbound_template().bind()),
             play_out: PacketIds::from_protocol(game_protocols::clientbound_template().bind()),
             flat_world: FlatWorld::new(registries.plains_id),
+            drops: Drops::default(),
+            maps,
             registries,
             player_data,
-            commands: Commands::new(),
+            commands: Commands::new(operators),
             audience: Audience::default(),
             peers: Peers::default(),
             sockets: AtomicUsize::new(0),
             players: Mutex::new(HashSet::new()),
             online: AtomicUsize::new(0),
             next_entity: AtomicI32::new(1),
-        }
+        })
     }
 
     pub fn open_session(self: &Arc<Self>) -> Option<SocketSlot> {
@@ -178,11 +192,7 @@ impl Server {
         let name = hello.string(16)?;
         let _client_uuid = hello.fixed::<16>()?;
         hello.finish()?;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        {
+        if !valid_name(&name) {
             return self.login_disconnect(wire, "Invalid player name.");
         }
         let uuid = Uuid::create_offline_player_uuid(&name);
@@ -240,7 +250,11 @@ impl Server {
             &mut saved,
         );
         game.player.health = presence.leave();
-        if let Err(error) = self.player_data.save(uuid, &game.player, &mut saved) {
+        game.finish_session();
+        if let Err(error) =
+            self.player_data
+                .save(uuid, &game.player, std::iter::empty(), &mut saved)
+        {
             eprintln!("Could not save player {uuid} on disconnect: {error}");
         }
         result
@@ -335,14 +349,8 @@ impl Server {
                 false,
             ),
         )?;
-        {
-            let world = self.commands.world.lock().unwrap();
-            world.snapshot().send(wire, ids)?;
-            wire.send(
-                ids,
-                &ClientboundCommandsPacket::from_dispatcher(&self.commands.dispatcher, &world),
-            )?;
-        }
+        let snapshot = self.commands.world.lock().unwrap().snapshot();
+        snapshot.send(wire, ids)?;
         wire.send(ids, &game.abilities())?;
         let mut entry = PlayerInfoEntry::new_minimal(profile.id, true);
         entry.profile = Some(profile);
@@ -365,6 +373,7 @@ impl Server {
             &ClientboundSetHealthPacket::new(game.player.health, 20, 5.0),
         )?;
         game.sync_inventory(wire, ids)?;
+        wire.send(ids, &Recipes::vanilla().book)?;
         self.teleport(wire, game, TELEPORT_ID)?;
         if game.player.health == 0.0 {
             wire.send(
@@ -423,6 +432,10 @@ impl Server {
         let uuid = profile.id;
         let context = PlayContext {
             world: &self.flat_world,
+            drops: &self.drops,
+            maps: &self.maps,
+            name,
+            player: uuid,
             ids: &self.play_out,
             audience: &self.audience,
             commands: &self.commands,
@@ -431,6 +444,7 @@ impl Server {
         let mut chunks =
             ChunkStream::start(game.player.chunk(), view_distance, wire, &self.play_out)?;
         wire.play_timeout()?;
+        game.restore_crafting(wire, &context)?;
         let mut last_ping = Instant::now();
         let mut outstanding = None;
         let mut ping_id = 0i64;
@@ -439,12 +453,25 @@ impl Server {
         let mut tracker = PeerTracker::default();
         let mut next_peer_update = Instant::now();
         let mut player_loaded = false;
+        let mut permission = None;
         let mut next_world_refresh = Instant::now();
         let mut next_save = Instant::now() + PLAYER_SAVE_INTERVAL;
         loop {
             let now = Instant::now();
+            if let Some(mode) = presence.take_mode() {
+                game.close_crafting(wire, &context, true)?;
+                game.set_mode(mode, wire, &self.play_out)?;
+                presence.publish(game.view());
+                self.audience.chat(
+                    Component::literal(format!("Game mode set to {}", mode.get_name())),
+                    Some(uuid),
+                );
+            }
             if let Some(hit) = presence.take_hit() {
                 game.player.health = hit.health;
+                if hit.health == 0.0 {
+                    game.close_crafting(wire, &context, true)?;
+                }
                 wire.send(
                     &self.play_out,
                     &ClientboundSetHealthPacket::new(hit.health, 20, 5.0),
@@ -468,17 +495,44 @@ impl Server {
                 }
             }
             if now >= next_save {
-                if let Err(error) = self.player_data.save(uuid, &game.player, saved) {
+                if let Err(error) =
+                    self.player_data
+                        .save(uuid, &game.player, game.crafting.recovery_items(), saved)
+                {
                     eprintln!("Could not autosave player {uuid}: {error}");
                 }
                 next_save = now + PLAYER_SAVE_INTERVAL;
+            }
+            let updated_permission = self.commands.for_player(name, |world| {
+                let level = world.permission();
+                (permission != Some(level)).then(|| {
+                    (
+                        level,
+                        ClientboundCommandsPacket::from_dispatcher(
+                            &self.commands.dispatcher,
+                            world,
+                        ),
+                    )
+                })
+            });
+            if let Some((level, tree)) = updated_permission {
+                wire.send(&self.play_out, &tree)?;
+                wire.send(
+                    &self.play_out,
+                    &ClientboundEntityEventPacket::new(
+                        presence.id,
+                        (PERMISSION_EVENT + level) as i8,
+                    ),
+                )?;
+                permission = Some(level);
             }
             if Instant::now() >= next_world_refresh {
                 self.commands.world.lock().unwrap().refresh(&self.audience);
                 next_world_refresh = Instant::now() + Duration::from_secs(1);
             }
             subscription.flush(wire, &self.play_out, chunks.loaded())?;
-            game.tick(wire, &context)?;
+            game.check_crafting(wire, &context)?;
+            game.tick(wire, &context, chunks.loaded())?;
             chunks.send_next(&self.flat_world, wire, &self.play_out)?;
             if now >= next_peer_update {
                 presence.publish(game.view());
@@ -539,7 +593,10 @@ impl Server {
                 "chat_command" | "chat_command_signed" => {
                     let command = body.string(256)?;
                     if game.player.health > 0.0 {
-                        match self.commands.execute(command.trim(), &self.audience, uuid) {
+                        match self
+                            .commands
+                            .execute(command.trim(), &self.audience, uuid, name)
+                        {
                             Some(PlayerCommand::Kit) => {
                                 game.kit(wire, &context)?;
                                 self.audience.chat(
@@ -547,15 +604,24 @@ impl Server {
                                     Some(uuid),
                                 );
                             }
-                            Some(PlayerCommand::SetMode(mode)) => {
-                                game.set_mode(mode, wire, &self.play_out)?;
-                                self.audience.chat(
-                                    Component::literal(format!(
-                                        "Game mode set to {}",
-                                        mode.get_name()
-                                    )),
-                                    Some(uuid),
-                                );
+                            Some(PlayerCommand::SetMode(mode, target)) => {
+                                let player = target.as_deref().unwrap_or(name);
+                                if !self.peers.set_mode(player, mode) {
+                                    self.audience.chat(
+                                        Component::literal(format!(
+                                            "Player {player} is not online"
+                                        )),
+                                        Some(uuid),
+                                    );
+                                } else if player != name {
+                                    self.audience.chat(
+                                        Component::literal(format!(
+                                            "Set {player}'s game mode to {}",
+                                            mode.get_name()
+                                        )),
+                                        Some(uuid),
+                                    );
+                                }
                             }
                             None => {}
                         }
@@ -567,10 +633,9 @@ impl Server {
                     let command = body.string(2048)?;
                     body.finish()?;
                     let request = ServerboundCommandSuggestionPacket::new(transaction, command);
-                    let reply = request.reply(
-                        &self.commands.dispatcher,
-                        &self.commands.world.lock().unwrap(),
-                    );
+                    let reply = self.commands.for_player(name, |world| {
+                        request.reply(&self.commands.dispatcher, world)
+                    });
                     wire.send(&self.play_out, &reply)?;
                 }
                 "client_command" => {
@@ -600,6 +665,7 @@ impl Server {
                             ids,
                             &ClientboundGameEventPacket::new(LEVEL_CHUNKS_LOAD_START, 0.0),
                         )?;
+                        permission = None;
                         tracker.reset_entities(wire, ids)?;
                         chunks.restart(game.player.chunk(), wire, ids)?;
                     }

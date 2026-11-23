@@ -57,6 +57,7 @@ struct OnlinePlayer {
     last_attack: Option<Instant>,
     last_hurt: Option<Instant>,
     pending_hit: Option<Hit>,
+    pending_mode: Option<GameType>,
 }
 
 #[derive(Default)]
@@ -85,9 +86,19 @@ impl Peers {
                 last_attack: None,
                 last_hurt: None,
                 pending_hit: None,
+                pending_mode: None,
             },
         );
         Presence { peers: self, id }
+    }
+
+    pub fn set_mode(&self, name: &str, mode: GameType) -> bool {
+        let mut online = self.0.lock().unwrap();
+        let Some(player) = online.values_mut().find(|p| p.player.profile.name == name) else {
+            return false;
+        };
+        player.pending_mode = Some(mode);
+        true
     }
 
     fn snapshot(&self, exclude: i32) -> HashMap<i32, Player> {
@@ -122,6 +133,12 @@ impl Presence<'_> {
             player.player.swings = player.player.swings.wrapping_add(1);
             player.player.last_swing = action;
         });
+    }
+
+    pub fn take_mode(&self) -> Option<GameType> {
+        let mut mode = None;
+        self.update(|player| mode = player.pending_mode.take());
+        mode
     }
 
     pub fn take_hit(&self) -> Option<Hit> {

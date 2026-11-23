@@ -6,28 +6,28 @@ use crate::network::codec::stream_codec::StreamCodec;
 use crate::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::network::protocol::packet::{packet_codec, Packet, PacketTypePtr};
-use crate::resources::identifier::Identifier;
 
 /// `ClientboundOpenScreenPacket`.
 ///
-/// `type` — `MenuType<?>` из реестра `Registries.MENU`;
-/// `ByteBufCodecs.registry(MENU)` пишет `ResourceLocation` ключа,
-/// поэтому здесь — `Identifier` (полная модель MenuType —
-/// с портом контейнеров).
+/// `type` — числовой ID в реестре `Registries.MENU`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClientboundOpenScreenPacket {
     /// `containerId`.
     pub container_id: i32,
-    /// `type` — registry-ключ типа меню.
-    pub menu_type: Identifier,
+    /// `type` — registry-ID типа меню.
+    pub menu_type: i32,
     /// `title`.
     pub title: Component,
 }
 
 impl ClientboundOpenScreenPacket {
     /// `ClientboundOpenScreenPacket::new`.
-    pub fn new(container_id: i32, menu_type: Identifier, title: Component) -> Self {
-        Self { container_id, menu_type, title }
+    pub fn new(container_id: i32, menu_type: i32, title: Component) -> Self {
+        Self {
+            container_id,
+            menu_type,
+            title,
+        }
     }
 
     /// `getContainerId`.
@@ -36,8 +36,8 @@ impl ClientboundOpenScreenPacket {
     }
 
     /// `getType`.
-    pub fn get_type(&self) -> &Identifier {
-        &self.menu_type
+    pub fn get_type(&self) -> i32 {
+        self.menu_type
     }
 
     /// `getTitle`.
@@ -51,7 +51,7 @@ impl ClientboundOpenScreenPacket {
             |buf: &mut FriendlyByteBuf, p: &ClientboundOpenScreenPacket| p.write_packet(buf),
             |buf: &mut FriendlyByteBuf| {
                 let container_id = buf.read_container_id();
-                let menu_type = buf.read_identifier().expect("invalid identifier");
+                let menu_type = buf.read_var_int();
                 let title = component_stream_codec().decode(buf);
                 ClientboundOpenScreenPacket::new(container_id, menu_type, title)
             },
@@ -68,7 +68,7 @@ impl Packet for ClientboundOpenScreenPacket {
     }
     fn write_packet(&self, buf: &mut FriendlyByteBuf) {
         buf.write_container_id(self.container_id);
-        buf.write_identifier(&self.menu_type).expect("invalid identifier");
+        buf.write_var_int(self.menu_type);
         component_stream_codec().encode(buf, &self.title);
     }
 }

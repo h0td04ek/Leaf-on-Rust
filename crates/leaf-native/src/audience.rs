@@ -37,15 +37,19 @@ impl Audience {
     pub fn chat(&self, content: Component, recipient: Option<Uuid>) {
         let packet = ClientboundSystemChatPacket::new(content, false);
         if let Some(uuid) = recipient {
-            let mut audience = self.0.lock().unwrap();
-            if audience
-                .get(&uuid)
-                .is_some_and(|sender| sender.try_send((None, Arc::new(packet))).is_err())
-            {
-                audience.remove(&uuid);
-            }
+            self.send(uuid, packet);
         } else {
             self.broadcast(packet, None);
+        }
+    }
+
+    pub fn send(&self, recipient: Uuid, packet: impl Packet + Send + Sync + 'static) {
+        let mut audience = self.0.lock().unwrap();
+        if audience
+            .get(&recipient)
+            .is_some_and(|sender| sender.try_send((None, Arc::new(packet))).is_err())
+        {
+            audience.remove(&recipient);
         }
     }
 }

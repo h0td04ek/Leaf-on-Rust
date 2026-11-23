@@ -17,9 +17,12 @@ const INVENTORY_SLOTS: usize = 41;
 const FORMAT_VERSION: i32 = 1;
 const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 
+pub type Inventory = [ItemStack; INVENTORY_SLOTS];
+
 pub struct PlayerData {
     pub position: Vec3,
-    pub inventory: [ItemStack; INVENTORY_SLOTS],
+    pub inventory: Inventory,
+    pub recovery: Vec<ItemStack>,
     pub selection: usize,
     pub mode: GameType,
     pub health: f32,
@@ -32,6 +35,7 @@ impl Default for PlayerData {
         Self {
             position: Vec3::new(0.5, f64::from(SPAWN_Y), 0.5),
             inventory: std::array::from_fn(|_| ItemStack::empty()),
+            recovery: Vec::new(),
             selection: 0,
             mode: GameType::Creative,
             health: 20.0,
@@ -116,7 +120,27 @@ impl PlayerData {
             inventory[slot] = stack;
         }
 
+        let recovery = match tag.get("CraftingRecovery") {
+            None => Vec::new(),
+            Some(value) => value
+                .as_list()
+                .filter(|items| items.len() <= 10)
+                .ok_or_else(|| invalid("invalid crafting recovery list"))?
+                .iter()
+                .map(|entry| {
+                    let compound = entry
+                        .as_compound()
+                        .ok_or_else(|| invalid("invalid crafting recovery entry"))?;
+                    let stack = ItemStack::from_nbt(compound).map_err(invalid)?;
+                    if item_id(&stack).is_none() {
+                        return Err(invalid("invalid crafting recovery stack"));
+                    }
+                    Ok(stack)
+                })
+                .collect::<io::Result<Vec<_>>>()?,
+        };
         Ok(Self {
+            recovery,
             position,
             inventory,
             selection,
@@ -127,7 +151,10 @@ impl PlayerData {
         })
     }
 
-    fn to_nbt(&self) -> io::Result<CompoundTag> {
+    fn to_nbt<'a>(
+        &'a self,
+        open_menu: impl Iterator<Item = &'a ItemStack>,
+    ) -> io::Result<CompoundTag> {
         let mut tag = CompoundTag::new();
         tag.put_int("FormatVersion", FORMAT_VERSION);
         tag.put(
@@ -155,6 +182,15 @@ impl PlayerData {
             inventory.push(item.save(slot).map_err(invalid)?);
         }
         tag.put("Inventory", Tag::List(inventory));
+        let recovery = self
+            .recovery
+            .iter()
+            .chain(open_menu)
+            .map(|item| item.save(CompoundTag::new()).map_err(invalid))
+            .collect::<io::Result<Vec<_>>>()?;
+        if !recovery.is_empty() {
+            tag.put("CraftingRecovery", Tag::List(recovery));
+        }
         Ok(tag)
     }
 }
@@ -173,6 +209,14 @@ impl PlayerStore {
             directory,
             _lock: lock,
         })
+    }
+
+    pub fn maps_path(&self) -> PathBuf {
+        self.directory.with_file_name("maps.txt")
+    }
+
+    pub fn ops_path(&self) -> PathBuf {
+        self.directory.with_file_name("ops.txt")
     }
 
     pub fn load(&self, uuid: Uuid) -> io::Result<PlayerData> {
@@ -196,14 +240,15 @@ impl PlayerStore {
         PlayerData::from_nbt(&tag)
     }
 
-    pub fn save(
+    pub fn save<'a>(
         &self,
         uuid: Uuid,
-        player: &PlayerData,
+        player: &'a PlayerData,
+        open_menu: impl Iterator<Item = &'a ItemStack>,
         last_saved: &mut Vec<u8>,
     ) -> io::Result<()> {
-        let bytes =
-            nbt::io::write(&player.to_nbt()?).map_err(|error| invalid(error.to_string()))?;
+        let bytes = nbt::io::write(&player.to_nbt(open_menu)?)
+            .map_err(|error| invalid(error.to_string()))?;
         if bytes == *last_saved {
             return Ok(());
         }
