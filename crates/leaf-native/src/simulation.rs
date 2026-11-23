@@ -123,7 +123,9 @@ impl Simulation {
             drops: &self.drops,
             entity_ids: &self.next_entity,
         };
-        self.mobs.tick(tick, &rules, &ctx, &self.peers, workers);
+        self.terrain.tick_fluids(tick, rules.fluids, &self.audience);
+        self.mobs
+            .tick(tick, &rules.mobs, &ctx, &self.peers, workers);
         self.drops.update(tick, &self.terrain, workers);
         let end = Instant::now();
         self.commands.world.lock().unwrap().complete_tick(

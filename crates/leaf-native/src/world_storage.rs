@@ -8,14 +8,22 @@ use leaf_core::world::level::chunk::palette::{IdMap, Strategy, StrategyKind};
 use leaf_core::world::level::chunk::storage::region_file_storage::RegionFileStorage;
 use leaf_core::world::level::chunk::PalettedContainer;
 use leaf_core::world::level::chunk_pos::ChunkPos;
+use leaf_core::world::ticks::SavedTick;
 
 use crate::blocks::Blocks;
 use crate::wire::invalid;
 
 use super::terrain::{Section, Terrain};
-use super::{Changes, Chunk, WorldEdits, AIR, MIN_Y, SECTIONS};
+use super::{Changes, Chunk, Fluid, NativeWorld, WorldEdits, AIR, MIN_Y, SECTIONS};
 
 const FORMAT_VERSION: i32 = 1;
+
+#[derive(Default)]
+pub(super) struct LoadedWorld {
+    pub chunks: WorldEdits,
+    pub pending_fluids: Vec<(Chunk, Vec<SavedTick<Fluid>>)>,
+    pub legacy_notifications: Vec<BlockPos>,
+}
 
 pub(super) struct WorldStorage {
     regions: RegionFileStorage,
@@ -32,8 +40,8 @@ impl WorldStorage {
         }
     }
 
-    pub fn load(&self) -> io::Result<WorldEdits> {
-        let mut chunks = WorldEdits::new();
+    pub fn load(&self) -> io::Result<LoadedWorld> {
+        let mut world = LoadedWorld::default();
         for pos in self.regions.chunk_positions()? {
             let Some(tag) = self.regions.read(pos)? else {
                 continue;
@@ -41,11 +49,32 @@ impl WorldStorage {
             let changes = self.decode(pos, &tag).map_err(|error| {
                 io::Error::new(error.kind(), format!("native chunk {pos:?}: {error}"))
             })?;
+            let coord = (pos.x, pos.z);
+            match tag.get("fluid_ticks") {
+                Some(Tag::List(entries)) => {
+                    let mut ticks = Vec::new();
+                    for entry in entries {
+                        let tick = entry
+                            .as_compound()
+                            .and_then(SavedTick::<Fluid>::read_nbt)
+                            .filter(|tick| {
+                                super::chunk(tick.pos) == coord && NativeWorld::editable(tick.pos)
+                            })
+                            .ok_or_else(|| invalid("invalid fluid tick in native chunk"))?;
+                        ticks.push(tick);
+                    }
+                    if !ticks.is_empty() {
+                        world.pending_fluids.push((coord, ticks));
+                    }
+                }
+                Some(_) => return Err(invalid("invalid fluid ticks in native chunk")),
+                None => world.legacy_notifications.extend(changes.keys().copied()),
+            }
             if !changes.is_empty() {
-                chunks.insert((pos.x, pos.z), Arc::new(changes));
+                world.chunks.insert(coord, Arc::new(changes));
             }
         }
-        Ok(chunks)
+        Ok(world)
     }
 
     pub fn write(
@@ -53,6 +82,7 @@ impl WorldStorage {
         (x, z): Chunk,
         changes: Option<&Changes>,
         game_time: i64,
+        fluids: &[SavedTick<Fluid>],
     ) -> io::Result<()> {
         let pos = ChunkPos::new(x, z);
         let mut tag = CompoundTag::new();
@@ -64,6 +94,19 @@ impl WorldStorage {
         tag.put_string("Status", "minecraft:full");
         tag.put_long("LastUpdate", game_time);
         tag.put_long("InhabitedTime", 0);
+        tag.put(
+            "fluid_ticks",
+            Tag::List(
+                fluids
+                    .iter()
+                    .map(|tick| {
+                        let mut entry = CompoundTag::new();
+                        tick.write_nbt(&mut entry);
+                        Tag::Compound(entry)
+                    })
+                    .collect(),
+            ),
+        );
 
         let generated = self.terrain.chunk((x, z));
         let mut sections = generated

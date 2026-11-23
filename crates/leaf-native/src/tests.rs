@@ -1370,6 +1370,79 @@ fn saves_block_changes_into_anvil_and_loads_them_after_restart() {
 }
 
 #[test]
+fn buckets_exchange_items_and_sync_flowing_water_to_both_clients() {
+    let directory = TestWorld::new();
+    let server = Arc::new(
+        Server::new(
+            PlayerStore::open(&directory.0).unwrap(),
+            1,
+            Generation::FLAT,
+        )
+        .unwrap(),
+    );
+    let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
+    let owner_id = enter_play(&mut owner, "h0td04ek", 2);
+    acknowledge_teleport(&mut owner);
+    let (mut guest, guest_worker) = connect_server(server);
+    enter_play(&mut guest, "Witness", 2);
+    acknowledge_teleport(&mut guest);
+    assert_eq!(peer_entity(&mut guest, "h0td04ek"), owner_id);
+    peer_entity(&mut owner, "Witness");
+
+    set_creative(&mut owner, 36, "water_bucket", 1);
+    command(&mut owner, "gamemode survival");
+    let mut event = multiplayer_packet(&mut owner, 38);
+    assert_eq!(event.read_unsigned_byte(), 3);
+    assert_eq!(event.read_float(), 0.0);
+
+    let source = BlockPos::new(1, 16, 0);
+    let side = source.offset(1, 0, 0);
+    let water = Blocks::vanilla().named("water").unwrap();
+    let use_bucket = |client: &mut TcpStream, sequence| {
+        send(client, 64, |buf| {
+            buf.write_var_int(0)
+                .write_var_int(sequence)
+                .write_float(-90.0)
+                .write_float(60.0);
+        })
+    };
+    let assert_item = |client: &mut TcpStream, item: &str| {
+        let mut data = multiplayer_packet(client, 106);
+        assert_eq!(data.read_var_int(), 0);
+        assert_eq!(data.read_var_int(), 1);
+        assert_eq!(data.read_var_int(), named_id(item));
+    };
+
+    use_bucket(&mut owner, 1);
+    assert_item(&mut owner, "bucket");
+    for client in [&mut owner, &mut guest] {
+        assert_eq!(block_update(client, source), water.default);
+        let mut flowed = false;
+        for _ in 0..8 {
+            let update = ClientboundSectionBlocksUpdatePacket::stream_codec()
+                .decode(&mut multiplayer_packet(client, 82));
+            update.run_updates(|pos, state| {
+                flowed |= pos == side && water.property(state, "level") == Some("1");
+            });
+            if flowed {
+                break;
+            }
+        }
+        assert!(flowed);
+    }
+
+    use_bucket(&mut owner, 2);
+    assert_item(&mut owner, "water_bucket");
+    for client in [&mut owner, &mut guest] {
+        assert_eq!(block_update(client, source), 0);
+    }
+    drop(owner);
+    drop(guest);
+    assert!(owner_worker.join().unwrap().is_err());
+    assert!(guest_worker.join().unwrap().is_err());
+}
+
+#[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
     let server = Arc::new(

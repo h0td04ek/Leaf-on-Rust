@@ -1,12 +1,9 @@
-use std::collections::HashMap;
-
-use leaf_core::core::{block_pos::BlockPos, section_pos::SectionPos};
-use leaf_core::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use leaf_core::core::block_pos::BlockPos;
 
 use crate::audience::Audience;
 use crate::blocks::{Block, Blocks};
 
-use super::{set_state, state_at, NativeWorld, AIR};
+use super::{broadcast_blocks, set_state, state_at, NativeWorld, AIR};
 
 const WORLD_BORDER: i32 = 30_000_000;
 
@@ -55,7 +52,7 @@ impl NativeWorld {
 
         let blocks = Blocks::vanilla();
         let mut edits = self.edits.lock().unwrap();
-        let mut updates = HashMap::<SectionPos, (Vec<i16>, Vec<i32>)>::new();
+        let mut updates = Vec::new();
         let mut result = FillResult {
             changed: 0,
             destroyed: Vec::new(),
@@ -86,9 +83,7 @@ impl NativeWorld {
                     }
                     result.changed += 1;
                     set_state(&mut edits, pos, next);
-                    let (positions, states) = updates.entry(SectionPos::of(&pos)).or_default();
-                    positions.push(SectionPos::section_relative_pos(&pos));
-                    states.push(next);
+                    updates.push((pos, next));
                 }
             }
         }
@@ -96,11 +91,7 @@ impl NativeWorld {
             return Err("No blocks were filled".into());
         }
 
-        audience.broadcast_batch(updates.into_iter().map(|(section, (positions, states))| {
-            let chunk = (section.x, section.z);
-            let packet = ClientboundSectionBlocksUpdatePacket::new(section, positions, states);
-            (chunk, packet)
-        }));
+        broadcast_blocks(audience, updates);
         Ok(result)
     }
 }

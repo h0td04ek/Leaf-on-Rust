@@ -2,6 +2,8 @@
 mod blast;
 #[path = "fill.rs"]
 mod fill;
+#[path = "fluids.rs"]
+mod fluids;
 #[path = "world_storage.rs"]
 mod storage;
 #[path = "terrain.rs"]
@@ -10,13 +12,14 @@ mod terrain;
 pub use terrain::{Biome, Generation, WorldType, TERRAIN_VERSION};
 
 pub use fill::FillMode;
+pub use fluids::{bucket_hit, BucketHit, Fluid, FluidRules};
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use leaf_core::core::{block_pos::BlockPos, direction::Direction};
+use leaf_core::core::{block_pos::BlockPos, direction::Direction, section_pos::SectionPos};
 use leaf_core::world::phys::vec3::Vec3;
 use std::io;
 
@@ -29,13 +32,15 @@ use leaf_core::network::protocol::game::{
     clientbound_block_update_packet::ClientboundBlockUpdatePacket,
     clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData,
     clientbound_light_update_packet_data::ClientboundLightUpdatePacketData,
+    clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket,
 };
 
 use crate::audience::Audience;
 use crate::maps::MAP_SIZE;
 use crate::wire::{PacketIds, Wire};
 
-use storage::WorldStorage;
+use fluids::FluidUpdates;
+use storage::{LoadedWorld, WorldStorage};
 use terrain::{block_index, GeneratedChunk, Section, Terrain};
 
 const MIN_Y: i32 = -64;
@@ -52,6 +57,7 @@ struct Edits {
     terrain: Arc<Terrain>,
     chunks: Arc<WorldEdits>,
     dirty: HashSet<Chunk>,
+    fluids: FluidUpdates,
 }
 
 impl Deref for Edits {
@@ -101,19 +107,32 @@ impl NativeWorld {
         path: Option<PathBuf>,
     ) -> io::Result<Self> {
         let storage = path.map(|path| WorldStorage::new(path, Arc::clone(&terrain)));
-        let chunks = match &storage {
-            Some(storage) => Arc::new(storage.load()?),
-            None => Arc::default(),
+        let LoadedWorld {
+            chunks,
+            pending_fluids,
+            legacy_notifications,
+        } = storage
+            .as_ref()
+            .map(WorldStorage::load)
+            .transpose()?
+            .unwrap_or_default();
+        let mut edits = Edits {
+            terrain: Arc::clone(&terrain),
+            chunks: Arc::new(chunks),
+            dirty: HashSet::new(),
+            fluids: FluidUpdates::default(),
         };
+        for (coord, ticks) in pending_fluids {
+            edits.fluids.restore(coord, ticks);
+        }
+        for pos in legacy_notifications {
+            fluids::reschedule(&mut edits, pos);
+        }
         Ok(Self {
             spawn_column: terrain.spawn_column(),
             terrain: Arc::clone(&terrain),
             biomes,
-            edits: Mutex::new(Edits {
-                terrain,
-                chunks,
-                dirty: HashSet::new(),
-            }),
+            edits: Mutex::new(edits),
             storage: storage.map(Mutex::new),
         })
     }
@@ -142,18 +161,25 @@ impl NativeWorld {
         let storage = storage.lock().unwrap();
         let (snapshot, dirty) = {
             let mut edits = self.edits.lock().unwrap();
-            (Arc::clone(&edits.chunks), std::mem::take(&mut edits.dirty))
+            let dirty = std::mem::take(&mut edits.dirty)
+                .into_iter()
+                .map(|coord| (coord, edits.fluids.pending(coord, game_time)))
+                .collect::<Vec<_>>();
+            (Arc::clone(&edits.chunks), dirty)
         };
         let count = dirty.len();
         let mut pending = dirty.into_iter();
-        while let Some(coord) = pending.next() {
-            if let Err(error) =
-                storage.write(coord, snapshot.get(&coord).map(Arc::as_ref), game_time)
-            {
+        while let Some((coord, fluid_ticks)) = pending.next() {
+            if let Err(error) = storage.write(
+                coord,
+                snapshot.get(&coord).map(Arc::as_ref),
+                game_time,
+                &fluid_ticks,
+            ) {
                 let mut edits = self.edits.lock().unwrap();
                 // Edits made while the snapshot was saving remain dirty as well.
                 edits.dirty.insert(coord);
-                edits.dirty.extend(pending);
+                edits.dirty.extend(pending.map(|(coord, _)| coord));
                 return Err(error);
             }
         }
@@ -690,21 +716,41 @@ fn update(edits: &mut Edits, pos: BlockPos, state: i32, audience: &Audience) {
 
 fn set_state(edits: &mut Edits, pos: BlockPos, state: i32) {
     let coord = chunk(pos);
-    if state_at(edits, pos) == state {
+    let previous = state_at(edits, pos);
+    if previous == state {
         return;
     }
     edits.dirty.insert(coord);
     let base_state = edits.terrain.block(pos);
-    let edits = Arc::make_mut(&mut edits.chunks);
-    let changes = Arc::make_mut(edits.entry(coord).or_default());
+    let chunks = Arc::make_mut(&mut edits.chunks);
+    let changes = Arc::make_mut(chunks.entry(coord).or_default());
     if state == base_state {
         changes.remove(&pos);
     } else {
         changes.insert(pos, state);
     }
     if changes.is_empty() {
-        edits.remove(&coord);
+        chunks.remove(&coord);
     }
+    fluids::notify(edits, pos, previous, state);
+}
+
+pub(super) fn broadcast_blocks(
+    audience: &Audience,
+    updates: impl IntoIterator<Item = (BlockPos, i32)>,
+) {
+    let mut sections = HashMap::<SectionPos, (Vec<i16>, Vec<i32>)>::new();
+    for (pos, state) in updates {
+        let (positions, states) = sections.entry(SectionPos::of(&pos)).or_default();
+        positions.push(SectionPos::section_relative_pos(&pos));
+        states.push(state);
+    }
+    audience.broadcast_batch(sections.into_iter().map(|(section, (positions, states))| {
+        (
+            (section.x, section.z),
+            ClientboundSectionBlocksUpdatePacket::new(section, positions, states),
+        )
+    }));
 }
 
 fn matching_half(block: &Block, state: i32, property: &str, value: &str) -> bool {

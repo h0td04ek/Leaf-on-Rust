@@ -28,8 +28,8 @@ use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::flag::feature_flag_set::FeatureFlagSet;
 use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::level::gamerules::game_rules::{
-    advance_time, advance_weather, block_drops, max_block_modifications, mob_drops, spawn_mobs,
-    tnt_explodes, tnt_explosion_drop_decay,
+    advance_time, advance_weather, block_drops, lava_source_conversion, max_block_modifications,
+    mob_drops, spawn_mobs, tnt_explodes, tnt_explosion_drop_decay, water_source_conversion,
 };
 use leaf_core::world::level::gamerules::GameRules;
 
@@ -40,7 +40,7 @@ use crate::mobs::{self, COMMAND_LIMIT};
 use crate::operators::{Operators, ALL, GAMEMASTERS, OWNERS};
 use crate::ticking::{Action as TickAction, Clock, TickState, ADMIN_PERMISSION, MAX_RATE};
 use crate::wire::{PacketIds, Wire};
-use crate::world::FillMode;
+use crate::world::{FillMode, FluidRules};
 
 pub enum PlayerCommand {
     Kit,
@@ -491,6 +491,11 @@ fn register_tick(dispatcher: &mut CommandDispatcher<CommandWorld>) {
     }
 }
 
+pub struct WorldTickRules {
+    pub mobs: mobs::Rules,
+    pub fluids: FluidRules,
+}
+
 pub struct CommandWorld {
     clock: Clock,
     operators: Operators,
@@ -552,10 +557,17 @@ impl CommandWorld {
         &mut self,
         now: Instant,
         audience: &Audience,
-    ) -> Result<(i64, bool, mobs::Rules), Duration> {
+    ) -> Result<(i64, bool, WorldTickRules), Duration> {
         let (tick, finished_step) = self.clock.poll(now)?;
         self.refresh(audience);
-        Ok((tick, finished_step, self.mob_rules()))
+        let rules = WorldTickRules {
+            mobs: self.mob_rules(),
+            fluids: FluidRules {
+                water_sources: self.rules.get_or_default(&water_source_conversion()),
+                lava_sources: self.rules.get_or_default(&lava_source_conversion()),
+            },
+        };
+        Ok((tick, finished_step, rules))
     }
 
     pub fn complete_tick(

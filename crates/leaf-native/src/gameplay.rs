@@ -22,11 +22,13 @@ use leaf_core::network::protocol::game::{
     clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket,
     clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket,
     clientbound_set_player_inventory_packet::ClientboundSetPlayerInventoryPacket,
+    clientbound_sound_packet::ClientboundSoundPacket,
 };
 use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::random::{LegacyRandomSource, RandomSource};
 use leaf_core::resources::Identifier;
 use leaf_core::server::network::filterable::Filterable;
+use leaf_core::sounds::{sound_event::SoundEvent, sound_source::SoundSource};
 use leaf_core::util::uuid::Uuid;
 use leaf_core::world::inventory::ClickType;
 use leaf_core::world::item::component::{
@@ -52,7 +54,7 @@ use crate::player_data::PlayerData;
 use crate::recipes::Recipes;
 use crate::simulation::SimulationContext;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{NativeWorld, AIR};
+use crate::world::{bucket_hit, chunk, BucketHit, Fluid, NativeWorld, AIR};
 
 const CHEST: usize = 38;
 const OFFHAND: usize = 40;
@@ -434,7 +436,8 @@ impl Gameplay {
                 self.player.yaw = yaw;
                 self.player.pitch = pitch;
                 self.use_item(hand, wire, ctx)?;
-                wire.send(ctx.ids, &ClientboundBlockChangedAckPacket::new(sequence))?;
+                ctx.audience
+                    .send(ctx.player, ClientboundBlockChangedAckPacket::new(sequence));
             }
             "use_item_on" => {
                 let hand = body.count(1)?;
@@ -686,6 +689,11 @@ impl Gameplay {
                 return Ok(());
             }
         }
+        // Buckets raycast from the player's eye in the use_item packet.
+        // The client can send both use_item_on and use_item for one click.
+        if held.is_some_and(is_bucket) {
+            return Ok(());
+        }
         let Some(block) = held.and_then(|id| Blocks::vanilla().for_item(id, direction)) else {
             return self.use_item(hand, wire, ctx);
         };
@@ -845,6 +853,7 @@ impl Gameplay {
     fn use_item(&mut self, hand: usize, wire: &mut Wire, ctx: &PlayContext<'_>) -> io::Result<()> {
         let slot = self.hand_slot(hand);
         match item_id(&self.player.inventory[slot]) {
+            Some(id) if is_bucket(id) => self.use_bucket(slot, id, wire, ctx)?,
             Some(id) if id == named_id("map") => {
                 let position = self.player.position;
                 let id = ctx
@@ -893,6 +902,105 @@ impl Gameplay {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn use_bucket(
+        &mut self,
+        slot: usize,
+        item: i32,
+        wire: &mut Wire,
+        ctx: &PlayContext<'_>,
+    ) -> io::Result<()> {
+        if self.player.mode.is_block_placing_restricted() {
+            return Ok(());
+        }
+        let empty = named_id("bucket");
+        let collecting = item == empty;
+        let creative = self.player.mode.is_creative();
+        let eye = self
+            .player
+            .position
+            .add(0.0, if self.sneaking { 1.27 } else { 1.62 }, 0.0);
+        let direction = Vec3::direction_from_rotation(self.player.pitch, self.player.yaw);
+        let hit = bucket_hit(
+            &ctx.world.snapshot(),
+            eye,
+            direction,
+            if creative { 5.0 } else { 4.5 },
+            collecting,
+        );
+        let (position, fluid) = match hit {
+            Some(BucketHit::Source(pos)) => {
+                let Some(fluid) = ctx.world.take_fluid(pos, ctx.audience) else {
+                    return Ok(());
+                };
+                (pos, fluid)
+            }
+            Some(BucketHit::Face(pos)) => {
+                let fluid = if item == named_id("water_bucket") {
+                    Fluid::Water
+                } else {
+                    Fluid::Lava
+                };
+                if !ctx.world.pour_fluid(pos, fluid, ctx.audience) {
+                    self.sync_slot(slot, wire, ctx.ids)?;
+                    return Ok(());
+                }
+                (pos, fluid)
+            }
+            None => return Ok(()),
+        };
+        let product = if collecting {
+            named_id(match fluid {
+                Fluid::Water => "water_bucket",
+                Fluid::Lava => "lava_bucket",
+            })
+        } else {
+            empty
+        };
+        if !creative {
+            self.player.inventory[slot].shrink(1);
+            if self.player.inventory[slot].is_empty() {
+                self.player.inventory[slot] = stack(product, 1);
+            } else {
+                let remainder = self.insert(stack(product, 1), wire, ctx.ids)?;
+                if !remainder.is_empty() {
+                    self.return_drop(remainder, ctx);
+                }
+            }
+        } else if collecting
+            && !self
+                .player
+                .inventory
+                .iter()
+                .any(|entry| item_id(entry) == Some(product))
+        {
+            let _ = self.insert(stack(product, 1), wire, ctx.ids)?;
+        }
+        self.sync_slot(slot, wire, ctx.ids)?;
+
+        let sound = match (fluid, collecting) {
+            (Fluid::Water, true) => "item.bucket.fill",
+            (Fluid::Water, false) => "item.bucket.empty",
+            (Fluid::Lava, true) => "item.bucket.fill_lava",
+            (Fluid::Lava, false) => "item.bucket.empty_lava",
+        };
+        let center = position.get_center();
+        let (x, y, z) = ClientboundSoundPacket::pack_position(center.x, center.y, center.z);
+        ctx.audience.broadcast(
+            ClientboundSoundPacket::new(
+                Holder::direct(SoundEvent::new(Identifier::minecraft(sound), None)),
+                SoundSource::Players,
+                x,
+                y,
+                z,
+                1.0,
+                1.0,
+                self.loot_random.next_long(),
+            ),
+            Some(chunk(position)),
+        );
         Ok(())
     }
 
@@ -1058,6 +1166,15 @@ pub fn insert_inventory(
             changed.push(slot);
         }
     }
+}
+
+fn is_bucket(item: i32) -> bool {
+    [
+        named_id("bucket"),
+        named_id("water_bucket"),
+        named_id("lava_bucket"),
+    ]
+    .contains(&item)
 }
 
 pub fn item_data(id: i32, item: ItemStack) -> ClientboundSetEntityDataPacket {
