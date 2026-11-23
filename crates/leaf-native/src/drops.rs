@@ -19,7 +19,7 @@ use crate::gameplay::{item_data, PlayContext};
 use crate::items::ITEM_ENTITY;
 use crate::wire::Wire;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, NativeWorld};
+use crate::world::{chunk, BlockView, Fluid, NativeWorld};
 
 const DROP_WORK_BATCH: usize = 256;
 
@@ -123,6 +123,18 @@ fn step_drop(
     if tick - created >= 6_000 || motion.position.y < -72.0 {
         return None;
     }
+    let buoyant = world.fluid_at(motion.position.add(0.0, 0.11, 0.0)) == Some(Fluid::Water);
+    if buoyant {
+        let lift = if motion.delta_movement.y < 0.06 {
+            0.0005
+        } else {
+            0.0
+        };
+        motion.delta_movement = motion
+            .delta_movement
+            .multiply(0.99, 1.0, 0.99)
+            .add(0.0, lift, 0.0);
+    }
     let next = motion.position.add_vec(&motion.delta_movement);
     let block = block_at(next.add(0.0, -0.01, 0.0));
     let on_ground =
@@ -132,7 +144,9 @@ fn step_drop(
         motion.delta_movement = Vec3::ZERO;
     } else {
         motion.position = next;
-        motion.delta_movement = motion.delta_movement.add(0.0, -0.04, 0.0).scale(0.98);
+        if !buoyant {
+            motion.delta_movement = motion.delta_movement.add(0.0, -0.04, 0.0).scale(0.98);
+        }
     }
     Some((motion, on_ground))
 }
@@ -256,4 +270,26 @@ fn block_at(pos: Vec3) -> BlockPos {
         pos.y.floor() as i32,
         pos.z.floor() as i32,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audience::Audience;
+    use crate::world::FillMode;
+
+    #[test]
+    fn dropped_items_rise_in_water_instead_of_sinking() {
+        let world = NativeWorld::new(0);
+        let water = Blocks::vanilla().named("water").unwrap().default;
+        let pos = BlockPos::new(0, 16, 0);
+        world
+            .fill(pos, pos, water, FillMode::Keep, 1, &Audience::default())
+            .unwrap();
+        let position = pos.get_bottom_center().add(0.0, 0.2, 0.0);
+        let motion = PositionMoveRotation::new(position, Vec3::ZERO, 0.0, 0.0);
+        let (updated, grounded) = step_drop(1, 0, motion, &world.snapshot()).unwrap();
+        assert!(updated.position.y > position.y);
+        assert!(!grounded);
+    }
 }

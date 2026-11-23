@@ -12,7 +12,8 @@ use crate::audience::Audience;
 use crate::blocks::Blocks;
 
 use super::{
-    broadcast_blocks, chunk, set_state, state_at, update, BlockView, Chunk, Edits, NativeWorld, AIR,
+    broadcast_blocks, chunk, fluid_faces, set_state, state_at, update, BlockView, Chunk, Edits,
+    NativeWorld, AIR,
 };
 
 const MAX_FLUID_TICKS: usize = 1024;
@@ -37,6 +38,12 @@ struct Liquid {
 
 impl Liquid {
     fn at(state: i32) -> Option<Self> {
+        if fluid_faces::waterlogged(state) {
+            return Some(Self {
+                fluid: Fluid::Water,
+                level: 0,
+            });
+        }
         let ids = FluidBlocks::get();
         [(Fluid::Water, ids.water), (Fluid::Lava, ids.lava)]
             .into_iter()
@@ -230,7 +237,8 @@ impl FluidUpdates {
 pub(super) fn notify(edits: &mut Edits, pos: BlockPos, old: i32, new: i32) {
     let ids = FluidBlocks::get();
     let blocks = Blocks::vanilla();
-    let solid_shape_changed = blocks.get(old).replaceable != blocks.get(new).replaceable;
+    let solid_shape_changed = blocks.get(old).replaceable != blocks.get(new).replaceable
+        || fluid_faces::shape_changed(old, new);
     if !solid_shape_changed
         && Liquid::at(old).is_none()
         && Liquid::at(new).is_none()
@@ -293,32 +301,92 @@ impl NativeWorld {
             return None;
         }
         let mut edits = self.edits.lock().unwrap();
-        let liquid = Liquid::at(state_at(&edits, pos)).filter(|liquid| liquid.level == 0)?;
-        update(&mut edits, pos, AIR, audience);
+        let state = state_at(&edits, pos);
+        let liquid = Liquid::at(state).filter(|liquid| liquid.level == 0)?;
+        let replacement = if fluid_faces::waterlogged(state) {
+            waterlogged_state(state, false)
+        } else {
+            AIR
+        };
+        update(&mut edits, pos, replacement, audience);
         Some(liquid.fluid)
     }
 
-    pub fn pour_fluid(&self, pos: BlockPos, fluid: Fluid, audience: &Audience) -> bool {
+    pub fn pour_bucket(
+        &self,
+        clicked: BlockPos,
+        adjacent: BlockPos,
+        fluid: Fluid,
+        audience: &Audience,
+    ) -> Option<BlockPos> {
         let mut edits = self.edits.lock().unwrap();
-        if !can_enter(&edits, pos, fluid, 0) {
-            return false;
+        if fluid == Fluid::Water && inside_world(clicked) {
+            let state = state_at(&edits, clicked);
+            if fluid_faces::can_waterlog(state) {
+                if fluid_faces::waterlogged(state) {
+                    return None;
+                }
+                update(
+                    &mut edits,
+                    clicked,
+                    waterlogged_state(state, true),
+                    audience,
+                );
+                return Some(clicked);
+            }
         }
-        // Placing water on a lava source solidifies the existing lava.
-        if fluid == Fluid::Water
-            && Liquid::at(state_at(&edits, pos)).is_some_and(|liquid| liquid.fluid == Fluid::Lava)
-        {
+        pour_fluid(&mut edits, adjacent, fluid, audience).then_some(adjacent)
+    }
+
+    #[cfg(test)]
+    fn pour_fluid(&self, pos: BlockPos, fluid: Fluid, audience: &Audience) -> bool {
+        pour_fluid(&mut self.edits.lock().unwrap(), pos, fluid, audience)
+    }
+}
+
+fn pour_fluid(edits: &mut Edits, pos: BlockPos, fluid: Fluid, audience: &Audience) -> bool {
+    if !can_enter(edits, pos, fluid, 0) {
+        return false;
+    }
+    let previous = Liquid::at(state_at(edits, pos));
+    let state = if let (Fluid::Water, Some(other)) = (fluid, previous) {
+        if other.fluid == Fluid::Lava {
             let ids = FluidBlocks::get();
-            let liquid = Liquid::at(state_at(&edits, pos)).unwrap();
-            let state = if liquid.level == 0 {
+            if other.level == 0 {
                 ids.obsidian
             } else {
                 ids.cobblestone
-            };
-            update(&mut edits, pos, state, audience);
+            }
         } else {
-            update(&mut edits, pos, fluid.state(0), audience);
+            fluid.state(0)
         }
-        true
+    } else {
+        fluid.state(0)
+    };
+    update(edits, pos, state, audience);
+    true
+}
+
+fn waterlogged_state(state: i32, wet: bool) -> i32 {
+    Blocks::vanilla().get(state).state(
+        state,
+        &[("waterlogged", if wet { "true" } else { "false" })],
+    )
+}
+
+pub(super) fn waterlog_on_place(previous: i32, placed: i32) -> i32 {
+    if previous == Fluid::Water.state(0) && fluid_faces::can_waterlog(placed) {
+        waterlogged_state(placed, true)
+    } else {
+        placed
+    }
+}
+
+pub(super) fn after_break(state: i32) -> i32 {
+    if fluid_faces::waterlogged(state) {
+        Fluid::Water.state(0)
+    } else {
+        AIR
     }
 }
 
@@ -368,6 +436,12 @@ impl Flow<'_> {
         self.updates.insert(pos, state);
     }
 
+    fn pass(&self, from: BlockPos, direction: Direction) -> bool {
+        let state = state_at(self.edits, from);
+        let next = state_at(self.edits, from.relative(direction));
+        fluid_faces::can_pass(state, next, direction)
+    }
+
     fn tick(&mut self, pos: BlockPos, fluid: Fluid) {
         let Some(liquid) =
             Liquid::at(state_at(self.edits, pos)).filter(|liquid| liquid.fluid == fluid)
@@ -394,14 +468,16 @@ impl Flow<'_> {
         };
 
         let below = pos.relative(Direction::DOWN);
-        if can_enter(self.edits, below, fluid, 8) {
-            self.spread(below, fluid, 8);
-            return;
-        }
-        if Liquid::at(state_at(self.edits, below))
-            .is_some_and(|lower| lower.fluid == fluid && lower.level != 0)
-        {
-            return;
+        if self.pass(pos, Direction::DOWN) {
+            if can_enter(self.edits, below, fluid, 8) {
+                self.spread(below, fluid, 8);
+                return;
+            }
+            if Liquid::at(state_at(self.edits, below))
+                .is_some_and(|lower| lower.fluid == fluid && lower.level != 0)
+            {
+                return;
+            }
         }
         let next = if level >= 8 { 0 } else { level } + fluid.drop_off();
         if next > 7 {
@@ -411,7 +487,7 @@ impl Flow<'_> {
             .into_iter()
             .filter_map(|side| {
                 let neighbor = pos.relative(side);
-                can_enter(self.edits, neighbor, fluid, next).then(|| {
+                (can_enter(self.edits, neighbor, fluid, next) && self.pass(pos, side)).then(|| {
                     let distance = self.slope_distance(
                         neighbor,
                         fluid,
@@ -457,7 +533,7 @@ impl Flow<'_> {
     fn incoming_level(&self, pos: BlockPos, fluid: Fluid) -> Option<i32> {
         let from = |side| {
             Liquid::at(state_at(self.edits, pos.relative(side)))
-                .filter(|other| other.fluid == fluid)
+                .filter(|other| other.fluid == fluid && self.pass(pos, side))
         };
         let horizontal = HORIZONTAL.into_iter().filter_map(from);
         let mut sources = 0;
@@ -482,7 +558,9 @@ impl Flow<'_> {
     }
 
     fn slope_distance(&self, pos: BlockPos, fluid: Fluid, back: Direction, remaining: u8) -> u8 {
-        if can_enter(self.edits, pos.relative(Direction::DOWN), fluid, 8) {
+        if can_enter(self.edits, pos.relative(Direction::DOWN), fluid, 8)
+            && self.pass(pos, Direction::DOWN)
+        {
             return 0;
         }
         if remaining == 1 {
@@ -493,7 +571,7 @@ impl Flow<'_> {
             .filter(|&side| side != back)
             .filter_map(|side| {
                 let next = pos.relative(side);
-                slope_can_pass(self.edits, next, fluid).then(|| {
+                (slope_can_pass(self.edits, next, fluid) && self.pass(pos, side)).then(|| {
                     self.slope_distance(next, fluid, side.get_opposite(), remaining - 1)
                         .saturating_add(1)
                 })
@@ -522,9 +600,29 @@ impl Flow<'_> {
     }
 }
 
+impl BlockView {
+    pub fn fluid_at(&self, position: Vec3) -> Option<Fluid> {
+        let pos = BlockPos::containing_vec3(&position);
+        let liquid = Liquid::at(self.block(pos))?;
+        let relative_y = position.y - f64::from(pos.y);
+        let height = f64::from(8 - liquid.distance()) / 9.0;
+        if relative_y < height
+            || Liquid::at(self.block(pos.relative(Direction::UP)))
+                .is_some_and(|above| above.fluid == liquid.fluid)
+        {
+            Some(liquid.fluid)
+        } else {
+            None
+        }
+    }
+}
+
 pub enum BucketHit {
     Source(BlockPos),
-    Face(BlockPos),
+    Face {
+        clicked: BlockPos,
+        adjacent: BlockPos,
+    },
 }
 
 pub fn bucket_hit(
@@ -558,7 +656,10 @@ pub fn bucket_hit(
             return if collecting {
                 None
             } else {
-                previous.map(BucketHit::Face)
+                previous.map(|adjacent| BucketHit::Face {
+                    clicked: position,
+                    adjacent,
+                })
             };
         }
         let axis = (0..3)
@@ -655,6 +756,80 @@ mod tests {
             world.tick_fluids(tick, RULES, &audience);
         }
         assert_eq!(world.block(basin), Fluid::Water.state(0));
+    }
+
+    #[test]
+    fn slabs_preserve_waterlogged_states_and_only_open_faces_leak() {
+        let directory = TestWorld::new();
+        let path = directory.0.join("native-region");
+        let audience = Audience::default();
+        let world = NativeWorld::open([0; 10], Generation::FLAT, path.clone()).unwrap();
+        let block = Blocks::vanilla().named("oak_slab").unwrap();
+        let bottom = BlockPos::new(0, 18, 0);
+        let top = BlockPos::new(12, 18, 0);
+        let upper = block.state(block.default, &[("type", "top")]);
+        world
+            .fill(
+                bottom,
+                bottom,
+                block.default,
+                crate::world::FillMode::Keep,
+                1,
+                &audience,
+            )
+            .unwrap();
+        world
+            .fill(top, top, upper, crate::world::FillMode::Keep, 1, &audience)
+            .unwrap();
+        for pos in [bottom, top] {
+            assert_eq!(
+                world.pour_bucket(pos, pos.offset(0, 1, 0), Fluid::Water, &audience),
+                Some(pos)
+            );
+        }
+        let wet_top = block.state(upper, &[("waterlogged", "true")]);
+        let wet_bottom = block.state(block.default, &[("waterlogged", "true")]);
+        assert_eq!(world.block(top), wet_top);
+        assert_eq!(world.block(bottom), wet_bottom);
+        assert_eq!(
+            world
+                .snapshot()
+                .fluid_at(bottom.get_bottom_center().add(0.0, 0.7, 0.0)),
+            Some(Fluid::Water)
+        );
+        world.tick_fluids(5, RULES, &audience);
+        assert_eq!(world.block(bottom.offset(0, -1, 0)), AIR);
+        assert_eq!(world.block(top.offset(0, -1, 0)), Fluid::Water.state(8));
+        world.save(5).unwrap();
+        drop(world);
+
+        let world = NativeWorld::open([0; 10], Generation::FLAT, path).unwrap();
+        assert_eq!(world.block(top), wet_top);
+        assert_eq!(world.take_fluid(top, &audience), Some(Fluid::Water));
+        assert_eq!(world.block(top), upper);
+        assert_eq!(world.take_fluid(top, &audience), None);
+        assert!(world.break_block(bottom, wet_bottom, &audience));
+        assert_eq!(world.block(bottom), Fluid::Water.state(0));
+
+        let source = BlockPos::new(22, 16, 0);
+        world
+            .fill(
+                source,
+                source,
+                Fluid::Water.state(0),
+                crate::world::FillMode::Keep,
+                1,
+                &audience,
+            )
+            .unwrap();
+        assert!(world.place_block(
+            source.offset(0, -1, 0),
+            source,
+            block.default,
+            |_| false,
+            &audience
+        ));
+        assert_eq!(world.block(source), wet_bottom);
     }
 
     #[test]

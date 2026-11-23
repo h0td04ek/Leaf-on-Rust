@@ -1,8 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use leaf_core::core::{block_pos::BlockPos, section_pos::SectionPos};
-use leaf_core::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use leaf_core::core::block_pos::BlockPos;
 use leaf_core::random::RandomSource;
 use leaf_core::world::phys::vec3::Vec3;
 
@@ -10,7 +9,10 @@ use crate::audience::Audience;
 use crate::blocks::Blocks;
 use crate::workers::Workers;
 
-use super::{matching_half, set_state, state_at, BlockView, NativeWorld, AIR};
+use super::{
+    broadcast_blocks, fluid_faces, fluids, matching_half, set_state, state_at, BlockView,
+    NativeWorld, AIR,
+};
 
 impl NativeWorld {
     pub fn blast(
@@ -41,23 +43,15 @@ impl NativeWorld {
             .collect::<Vec<_>>();
         affected.sort_unstable_by_key(|p| (p.x, p.y, p.z));
         let mut removed = Vec::with_capacity(affected.len());
-        let mut sections: HashMap<SectionPos, Vec<i16>> = HashMap::new();
+        let mut updates = Vec::with_capacity(affected.len());
         for pos in affected {
-            removed.push((pos, state_at(&edits, pos)));
-            set_state(&mut edits, pos, AIR);
-            sections
-                .entry(SectionPos::of(&pos))
-                .or_default()
-                .push(SectionPos::section_relative_pos(&pos));
+            let state = state_at(&edits, pos);
+            let remaining = fluids::after_break(state);
+            removed.push((pos, state));
+            set_state(&mut edits, pos, remaining);
+            updates.push((pos, remaining));
         }
-        for (section, positions) in sections {
-            let chunk = (section.x, section.z);
-            let states = vec![AIR; positions.len()];
-            audience.broadcast(
-                ClientboundSectionBlocksUpdatePacket::new(section, positions, states),
-                Some(chunk),
-            );
-        }
+        broadcast_blocks(audience, updates);
         removed
     }
 }
@@ -81,7 +75,12 @@ fn trace_rays(
             let state = world.block(pos);
             if state != AIR {
                 let block = blocks.get(state);
-                energy -= (block.blast_resistance + 0.3) * 0.3;
+                let resistance = if fluid_faces::waterlogged(state) {
+                    block.blast_resistance.max(100.0)
+                } else {
+                    block.blast_resistance
+                };
+                energy -= (resistance + 0.3) * 0.3;
                 if energy > 0.0 && block.hardness >= 0 && affected.insert(pos) {
                     if let Some((other, property, value)) = block.paired(pos, state) {
                         if matching_half(block, world.block(other), property, value) {

@@ -519,8 +519,11 @@ impl Gameplay {
         block: &crate::blocks::Block,
         ctx: &PlayContext<'_>,
     ) -> f32 {
-        let eye = BlockPos::containing_vec3(&self.player.position.add(0.0, 1.62, 0.0));
-        let underwater = Blocks::vanilla().get(ctx.world.block(eye)).name == "water"
+        let eye = self
+            .player
+            .position
+            .add(0.0, if self.sneaking { 1.27 } else { 1.62 }, 0.0);
+        let underwater = ctx.world.snapshot().fluid_at(eye) == Some(Fluid::Water)
             && enchantment_level(&self.player.inventory[39], "aqua_affinity") == 0;
         miner.progress(block, self.on_ground, underwater)
     }
@@ -937,16 +940,19 @@ impl Gameplay {
                 };
                 (pos, fluid)
             }
-            Some(BucketHit::Face(pos)) => {
+            Some(BucketHit::Face { clicked, adjacent }) => {
                 let fluid = if item == named_id("water_bucket") {
                     Fluid::Water
                 } else {
                     Fluid::Lava
                 };
-                if !ctx.world.pour_fluid(pos, fluid, ctx.audience) {
+                let Some(pos) = ctx
+                    .world
+                    .pour_bucket(clicked, adjacent, fluid, ctx.audience)
+                else {
                     self.sync_slot(slot, wire, ctx.ids)?;
                     return Ok(());
-                }
+                };
                 (pos, fluid)
             }
             None => return Ok(()),

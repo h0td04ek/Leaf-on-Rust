@@ -2,6 +2,8 @@
 mod blast;
 #[path = "fill.rs"]
 mod fill;
+#[path = "fluid_faces.rs"]
+mod fluid_faces;
 #[path = "fluids.rs"]
 mod fluids;
 #[path = "world_storage.rs"]
@@ -218,10 +220,10 @@ impl NativeWorld {
         if let Some((other, property, value)) = block.paired(pos, expected) {
             let second = state_at(&edits, other);
             if matching_half(block, second, property, value) {
-                update(&mut edits, other, AIR, audience);
+                update(&mut edits, other, fluids::after_break(second), audience);
             }
         }
-        update(&mut edits, pos, AIR, audience);
+        update(&mut edits, pos, fluids::after_break(expected), audience);
         true
     }
 
@@ -260,14 +262,12 @@ impl NativeWorld {
                 return false;
             }
         }
-        update(&mut edits, pos, state, audience);
+        let placed = fluids::waterlog_on_place(state_at(&edits, pos), state);
+        update(&mut edits, pos, placed, audience);
         if let Some((other, property, value)) = pair {
-            update(
-                &mut edits,
-                other,
-                block.state(state, &[(property, value)]),
-                audience,
-            );
+            let other_state = block.state(state, &[(property, value)]);
+            let other_state = fluids::waterlog_on_place(state_at(&edits, other), other_state);
+            update(&mut edits, other, other_state, audience);
         }
         true
     }

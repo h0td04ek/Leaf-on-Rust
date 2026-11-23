@@ -32,7 +32,7 @@ use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, clear_sight_with, MobTarget, Peers};
 use crate::simulation::SimulationContext;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, NativeWorld};
+use crate::world::{chunk, BlockView, Fluid, NativeWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
 const FUSE_TICKS: i64 = 80;
@@ -672,8 +672,7 @@ impl Mob {
         ) {
             return;
         }
-        let feet = BlockPos::containing_vec3(&self.motion.position);
-        if Blocks::vanilla().get(world.block(feet)).name == "water" {
+        if world.fluid_at(self.motion.position) == Some(Fluid::Water) {
             self.fire_until = now;
         } else if sunlight {
             let head = BlockPos::containing_vec3(&self.motion.position.add(

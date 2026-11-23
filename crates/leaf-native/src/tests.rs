@@ -1443,6 +1443,41 @@ fn buckets_exchange_items_and_sync_flowing_water_to_both_clients() {
 }
 
 #[test]
+fn buckets_waterlog_the_clicked_slab_and_keep_its_orientation() {
+    let directory = TestWorld::new();
+    let (mut client, worker) = connect(&directory);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    multiplayer_packet(&mut client, 11);
+
+    let pos = BlockPos::new(1, 16, 0);
+    command(&mut client, "fill 1 16 0 1 16 0 oak_slab");
+    multiplayer_packet(&mut client, 119);
+    set_creative(&mut client, 36, "water_bucket", 1);
+    command(&mut client, "gamemode survival");
+    let mut event = multiplayer_packet(&mut client, 38);
+    assert_eq!((event.read_unsigned_byte(), event.read_float()), (3, 0.0));
+
+    let slab = Blocks::vanilla().named("oak_slab").unwrap();
+    let wet = slab.state(slab.default, &[("waterlogged", "true")]);
+    for (sequence, expected, held) in [(1, wet, "bucket"), (2, slab.default, "water_bucket")] {
+        send(&mut client, 64, |buf| {
+            buf.write_var_int(0)
+                .write_var_int(sequence)
+                .write_float(-90.0)
+                .write_float(60.0);
+        });
+        let mut inventory = multiplayer_packet(&mut client, 106);
+        assert_eq!(inventory.read_var_int(), 0);
+        assert_eq!(inventory.read_var_int(), 1);
+        assert_eq!(inventory.read_var_int(), named_id(held));
+        assert_eq!(block_update(&mut client, pos), expected);
+    }
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
     let server = Arc::new(
