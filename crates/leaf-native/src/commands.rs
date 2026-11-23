@@ -28,8 +28,9 @@ use leaf_core::world::difficulty::Difficulty;
 use leaf_core::world::flag::feature_flag_set::FeatureFlagSet;
 use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::level::gamerules::game_rules::{
-    advance_time, advance_weather, block_drops, lava_source_conversion, max_block_modifications,
-    mob_drops, spawn_mobs, tnt_explodes, tnt_explosion_drop_decay, water_source_conversion,
+    advance_time, advance_weather, block_drops, drowning_damage, fire_damage,
+    lava_source_conversion, max_block_modifications, mob_drops, spawn_mobs, tnt_explodes,
+    tnt_explosion_drop_decay, water_source_conversion,
 };
 use leaf_core::world::level::gamerules::GameRules;
 
@@ -494,6 +495,7 @@ fn register_tick(dispatcher: &mut CommandDispatcher<CommandWorld>) {
 pub struct WorldTickRules {
     pub mobs: mobs::Rules,
     pub fluids: FluidRules,
+    pub hazards: crate::player_environment::Rules,
 }
 
 pub struct CommandWorld {
@@ -562,6 +564,10 @@ impl CommandWorld {
         self.refresh(audience);
         let rules = WorldTickRules {
             mobs: self.mob_rules(),
+            hazards: crate::player_environment::Rules {
+                drowning_damage: self.rules.get_or_default(&drowning_damage()),
+                fire_damage: self.rules.get_or_default(&fire_damage()),
+            },
             fluids: FluidRules {
                 water_sources: self.rules.get_or_default(&water_source_conversion()),
                 lava_sources: self.rules.get_or_default(&lava_source_conversion()),

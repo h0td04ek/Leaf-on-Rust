@@ -7,7 +7,6 @@ use tracking::SentMob;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::RwLock;
-use std::time::Instant;
 
 use leaf_core::core::{
     block_pos::BlockPos, holder::Holder, particles::particle_options::ParticleOptions,
@@ -294,7 +293,7 @@ impl Mobs {
                 let current = scene.entities.get_mut(&id).unwrap();
                 let previous = SentMob::from(*current);
                 *current = updated;
-                scene.finish_step(id, previous, updated, attack, peers);
+                scene.finish_step(id, previous, updated, attack, peers, now);
             }
         } else {
             for id in jobs {
@@ -302,7 +301,7 @@ impl Mobs {
                 let previous = SentMob::from(*mob);
                 let attack = mob.step(id, now, &players, &world);
                 let updated = *mob;
-                scene.finish_step(id, previous, updated, attack, peers);
+                scene.finish_step(id, previous, updated, attack, peers, now);
             }
         }
         for id in removed {
@@ -322,6 +321,7 @@ impl Scene {
         updated: Mob,
         attack: Option<MobAttack>,
         peers: &Peers,
+        tick: i64,
     ) {
         let current = SentMob::from(updated);
         if previous != current {
@@ -340,7 +340,7 @@ impl Scene {
                 3.0,
                 attack.velocity,
                 updated.kind.name.into(),
-                Instant::now(),
+                tick,
             );
         }
     }
@@ -580,13 +580,7 @@ impl Scene {
             .filter(|target| target.vulnerable)
         {
             if let Some((damage, velocity)) = blast_hit(center, target.position, ctx.world) {
-                peers.hurt(
-                    target.id,
-                    damage,
-                    velocity,
-                    "explosion".into(),
-                    Instant::now(),
-                );
+                peers.hurt(target.id, damage, velocity, "explosion".into(), now);
             }
         }
         let nearby = self.nearby(center, 8.0, usize::MAX).collect::<Vec<_>>();

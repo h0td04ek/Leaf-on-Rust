@@ -13,6 +13,7 @@ mod mobs;
 mod operators;
 mod peers;
 mod player_data;
+mod player_environment;
 mod recipes;
 mod registries;
 mod session;

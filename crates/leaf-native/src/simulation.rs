@@ -124,6 +124,8 @@ impl Simulation {
             entity_ids: &self.next_entity,
         };
         self.terrain.tick_fluids(tick, rules.fluids, &self.audience);
+        self.peers
+            .tick_environment(tick, rules.hazards, &self.terrain);
         self.mobs
             .tick(tick, &rules.mobs, &ctx, &self.peers, workers);
         self.drops.update(tick, &self.terrain, workers);

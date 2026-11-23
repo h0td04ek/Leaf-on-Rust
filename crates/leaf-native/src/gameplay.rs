@@ -49,8 +49,9 @@ use crate::maps::{map_id, set_map_id, Maps};
 use crate::mining::{enchantment_level, Miner, Mining};
 use crate::mob_types;
 use crate::mobs::Mobs;
-use crate::peers::{clear_sight_with, gliding_packet, View};
+use crate::peers::{clear_sight_with, flags, gliding_packet, View};
 use crate::player_data::PlayerData;
+use crate::player_environment::Environment;
 use crate::recipes::Recipes;
 use crate::simulation::SimulationContext;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
@@ -106,6 +107,7 @@ pub struct Gameplay {
     on_ground: bool,
     creative_flying: bool,
     gliding: bool,
+    environment: Environment,
     drops: DropTracker,
     mining: Option<Digging>,
     loot_random: LegacyRandomSource,
@@ -126,6 +128,7 @@ impl Gameplay {
             on_ground: true,
             creative_flying,
             gliding: false,
+            environment: Environment::default(),
             drops: DropTracker::default(),
             mining: None,
             loot_random: LegacyRandomSource::new(i64::from(entity_id) << 32 ^ game_tick),
@@ -158,6 +161,7 @@ impl Gameplay {
             ),
             on_ground: self.on_ground,
             gliding: self.gliding,
+            sneaking: self.sneaking,
             equipment,
             mode: self.player.mode,
         }
@@ -842,7 +846,38 @@ impl Gameplay {
             return Ok(());
         }
         self.gliding = gliding;
-        wire.send(ids, &gliding_packet(self.entity_id, gliding))
+        wire.send(
+            ids,
+            &gliding_packet(self.entity_id, gliding, self.environment.burning),
+        )
+    }
+
+    pub fn sync_environment(
+        &mut self,
+        environment: Environment,
+        wire: &mut Wire,
+        ids: &PacketIds,
+    ) -> io::Result<()> {
+        if self.environment == environment {
+            return Ok(());
+        }
+        let mut values = Vec::new();
+        if environment.air != self.environment.air {
+            values.push(DataValue {
+                id: 1,
+                serializer: 1,
+                value: Box::new(environment.air),
+            });
+        }
+        if environment.burning != self.environment.burning {
+            values.push(flags(self.gliding, environment.burning));
+        }
+        wire.send(
+            ids,
+            &ClientboundSetEntityDataPacket::new(self.entity_id, values),
+        )?;
+        self.environment = environment;
+        Ok(())
     }
 
     fn hand_slot(&self, hand: usize) -> usize {

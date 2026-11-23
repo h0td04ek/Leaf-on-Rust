@@ -499,7 +499,9 @@ impl Server {
                     Some(uuid),
                 );
             }
-            if let Some(hit) = presence.take_hit() {
+            let (hit, environment) = presence.take_updates();
+            game.sync_environment(environment, wire, &self.play_out)?;
+            if let Some(hit) = hit {
                 game.player.health = hit.health;
                 if hit.health == 0.0 {
                     game.close_crafting(wire, &context, true)?;
@@ -519,10 +521,10 @@ impl Server {
                         &ClientboundPlayerCombatKillPacket::new(presence.id, death.clone()),
                     )?;
                     self.simulation.audience.chat(death, None);
-                } else {
+                } else if let Some(velocity) = hit.velocity {
                     wire.send(
                         &self.play_out,
-                        &ClientboundSetEntityMotionPacket::new(presence.id, hit.velocity),
+                        &ClientboundSetEntityMotionPacket::new(presence.id, velocity),
                     )?;
                 }
             }
@@ -803,7 +805,11 @@ impl Server {
                         body.fixed::<1>()?;
                         body.finish()?;
                         if tracker.sees(target) {
-                            presence.attack(target, &self.simulation.terrain);
+                            presence.attack(
+                                target,
+                                &self.simulation.terrain,
+                                self.simulation.commands.game_time(),
+                            );
                         } else if mob_tracker.sees(target) {
                             let damage =
                                 attack_damage(&game.player.inventory[game.player.selection]);

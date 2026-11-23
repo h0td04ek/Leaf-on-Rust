@@ -1478,6 +1478,104 @@ fn buckets_waterlog_the_clicked_slab_and_keep_its_orientation() {
 }
 
 #[test]
+fn players_drown_burn_and_are_extinguished_by_water() {
+    use leaf_core::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
+
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    let player = enter_play(&mut client, "h0td04ek", 2);
+    assert_eq!(multiplayer_packet(&mut client, 102).read_float(), 20.0);
+    acknowledge_teleport(&mut client);
+    command(&mut client, "gamerule spawn_mobs false");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "tick freeze");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "fill -1 16 -1 1 17 1 glass");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "fill 0 16 0 0 17 0 water");
+    multiplayer_packet(&mut client, 119);
+    send_location(&mut client, Vec3::new(0.5, 16.0, 0.5), 0.0, 0.0);
+
+    let mut state = (300, false, 20.0);
+    let mut sprint = |client: &mut TcpStream, ticks: i64| {
+        command(client, &format!("tick sprint {ticks}t"));
+        let summary = format!("World sprint ran {ticks} tick(s)");
+        let mut finished = false;
+        for _ in 0..512 {
+            let (id, mut body) = receive(client);
+            match id {
+                11 => send(client, 10, |buf| {
+                    buf.write_float(64.0);
+                }),
+                97 => {
+                    let packet = ClientboundSetEntityDataPacket::stream_codec().decode(&mut body);
+                    if packet.id == player {
+                        for value in packet.packed_items {
+                            match value.id {
+                                0 => state.1 = *value.value.downcast_ref::<i8>().unwrap() & 1 != 0,
+                                1 => state.0 = *value.value.downcast_ref::<i32>().unwrap(),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                102 => state.2 = body.read_float(),
+                119 => {
+                    let tag = body.read_nbt().unwrap().unwrap();
+                    if let Some(message) = tag.as_string() {
+                        if message.starts_with(&summary) {
+                            finished = true;
+                            // The reply follows any player updates from the completed sprint.
+                            command(client, "tick freeze");
+                        } else if finished && message == "The world is frozen" {
+                            return state;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("no completion message after sprinting {ticks} ticks");
+    };
+
+    assert_eq!(sprint(&mut client, 320), (300, false, 20.0));
+    command(&mut client, "gamemode survival");
+    multiplayer_packet(&mut client, 38);
+    assert_eq!(sprint(&mut client, 300), (0, false, 20.0));
+    assert_eq!(sprint(&mut client, 19), (-19, false, 20.0));
+    assert_eq!(sprint(&mut client, 1), (0, false, 18.0));
+
+    send_location(&mut client, Vec3::new(8.5, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 75), (300, false, 18.0));
+    command(&mut client, "fill 4 16 0 4 16 0 lava");
+    multiplayer_packet(&mut client, 119);
+    // The edge of the player touches the lava while their position is in the next block.
+    send_location(&mut client, Vec3::new(3.8, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 1), (300, true, 14.0));
+    send_location(&mut client, Vec3::new(8.5, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 21), (300, true, 13.0));
+
+    send_location(&mut client, Vec3::new(0.5, 17.5, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 21), (300, false, 13.0));
+    command(&mut client, "gamerule fire_damage false");
+    multiplayer_packet(&mut client, 119);
+    send_location(&mut client, Vec3::new(4.5, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 20), (300, true, 13.0));
+    command(&mut client, "gamemode spectator");
+    multiplayer_packet(&mut client, 38);
+    assert_eq!(sprint(&mut client, 1), (300, false, 13.0));
+    command(&mut client, "gamerule drowning_damage false");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "gamemode adventure");
+    multiplayer_packet(&mut client, 38);
+    send_location(&mut client, Vec3::new(0.5, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 320), (0, false, 13.0));
+
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
     let server = Arc::new(

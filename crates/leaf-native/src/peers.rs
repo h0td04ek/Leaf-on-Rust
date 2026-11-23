@@ -24,20 +24,27 @@ use leaf_core::network::protocol::game::{
 };
 use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::util::{mth, uuid::Uuid};
-use leaf_core::world::{item::item_stack::ItemStack, level::game_type::GameType, phys::vec3::Vec3};
+use leaf_core::world::{
+    item::item_stack::ItemStack,
+    level::game_type::GameType,
+    phys::{aabb::Aabb, vec3::Vec3},
+};
 
+use crate::mining::enchantment_level;
+use crate::player_environment::{Environment, Hazards, Rules};
 use crate::wire::{PacketIds, Wire};
-use crate::world::{NativeWorld, AIR};
+use crate::world::{Fluid, NativeWorld, AIR};
 
 const PLAYER_ENTITY_TYPE: i32 = 155; // Minecraft Java 1.21.11 entity_type registry.
 const ATTACK_COOLDOWN: Duration = Duration::from_millis(500);
-const HURT_COOLDOWN: Duration = Duration::from_millis(500);
+const HURT_COOLDOWN: i64 = 10;
 
 #[derive(Clone, PartialEq)]
 pub struct View {
     pub motion: PositionMoveRotation,
     pub on_ground: bool,
     pub gliding: bool,
+    pub sneaking: bool,
     pub equipment: Vec<(EquipmentSlot, ItemStack)>,
     pub mode: GameType,
 }
@@ -50,12 +57,14 @@ struct Player {
     swings: u64,
     last_swing: i32,
     hurt: u64,
+    burning: bool,
 }
 
 struct OnlinePlayer {
     player: Player,
     last_attack: Option<Instant>,
-    last_hurt: Option<Instant>,
+    last_hurt: Option<i64>,
+    hazards: Hazards,
     pending_hit: Option<Hit>,
     pending_mode: Option<GameType>,
 }
@@ -65,7 +74,7 @@ pub struct Peers(Mutex<HashMap<i32, OnlinePlayer>>);
 
 pub struct Hit {
     pub health: f32,
-    pub velocity: Vec3,
+    pub velocity: Option<Vec3>,
     pub death_message: String,
 }
 
@@ -95,12 +104,64 @@ impl Peers {
             .collect()
     }
 
-    pub fn hurt(&self, id: i32, damage: f32, velocity: Vec3, source: String, now: Instant) {
+    pub fn tick_environment(&self, tick: i64, rules: Rules, world: &NativeWorld) {
+        let mut players = self.0.lock().unwrap();
+        if players.is_empty() {
+            return;
+        }
+        let blocks = world.snapshot();
+        for online in players.values_mut() {
+            let player = &mut online.player;
+            if player.health == 0.0 || !player.view.mode.is_survival() {
+                online.hazards.clear();
+                player.burning = false;
+                continue;
+            }
+
+            let view = &player.view;
+            let position = view.motion.position;
+            let (height, eye_height) = if view.gliding {
+                (0.6, 0.4)
+            } else if view.sneaking {
+                (1.5, 1.27)
+            } else {
+                (1.8, 1.62)
+            };
+            let underwater =
+                blocks.fluid_at(position.add(0.0, eye_height, 0.0)) == Some(Fluid::Water);
+            let respiration = if underwater {
+                view.equipment
+                    .iter()
+                    .find(|(slot, _)| *slot == EquipmentSlot::Head)
+                    .map_or(0, |(_, item)| enchantment_level(item, "respiration"))
+            } else {
+                0
+            };
+            let (in_water, in_lava) = blocks.touching_fluids(Aabb::new(
+                position.x - 0.299,
+                position.y + 0.001,
+                position.z - 0.299,
+                position.x + 0.299,
+                position.y + height - 0.001,
+                position.z + 0.299,
+            ));
+            let hazard = online
+                .hazards
+                .tick(underwater, in_water, in_lava, respiration, rules);
+            player.burning = online.hazards.environment().burning;
+            if let Some(hazard) = hazard.filter(|_| can_hurt(online, tick)) {
+                let message = format!("{} {}", online.player.profile.name, hazard.death());
+                apply_hit(online, hazard.damage(), None, message, tick);
+            }
+        }
+    }
+
+    pub fn hurt(&self, id: i32, damage: f32, velocity: Vec3, source: String, tick: i64) {
         let mut players = self.0.lock().unwrap();
         let Some(target) = players.get_mut(&id) else {
             return;
         };
-        if !can_hurt(target, now) {
+        if !can_hurt(target, tick) {
             return;
         }
         let name = &target.player.profile.name;
@@ -109,10 +170,11 @@ impl Peers {
         } else {
             format!("{name} was slain by {source}")
         };
-        apply_hit(target, damage, velocity, message, now);
+        apply_hit(target, damage, Some(velocity), message, tick);
     }
 
     pub fn join(&self, id: i32, profile: GameProfile, view: View, health: f32) -> Presence<'_> {
+        let profile_seed = profile.id.least_significant_bits;
         let player = Player {
             profile,
             view,
@@ -120,6 +182,7 @@ impl Peers {
             swings: 0,
             last_swing: 0,
             hurt: 0,
+            burning: false,
         };
         self.0.lock().unwrap().insert(
             id,
@@ -127,6 +190,7 @@ impl Peers {
                 player,
                 last_attack: None,
                 last_hurt: None,
+                hazards: Hazards::new(profile_seed),
                 pending_hit: None,
                 pending_mode: None,
             },
@@ -183,10 +247,10 @@ impl Presence<'_> {
         mode
     }
 
-    pub fn take_hit(&self) -> Option<Hit> {
-        let mut hit = None;
-        self.update(|player| hit = player.pending_hit.take());
-        hit
+    pub fn take_updates(&self) -> (Option<Hit>, Environment) {
+        let mut updates = (None, Environment::default());
+        self.update(|player| updates = (player.pending_hit.take(), player.hazards.environment()));
+        updates
     }
 
     pub fn health(&self) -> f32 {
@@ -206,6 +270,8 @@ impl Presence<'_> {
             }
             online.player.health = 20.0;
             online.player.view = view;
+            online.player.burning = false;
+            online.hazards.clear();
             online.last_hurt = None;
             online.last_attack = None;
             online.pending_hit = None;
@@ -223,7 +289,7 @@ impl Presence<'_> {
             .map_or(20.0, |player| player.player.health)
     }
 
-    pub fn attack(&self, target_id: i32, world: &NativeWorld) {
+    pub fn attack(&self, target_id: i32, world: &NativeWorld, tick: i64) {
         if self.id == target_id {
             return;
         }
@@ -245,7 +311,7 @@ impl Presence<'_> {
             return;
         };
         let destination = &target.player;
-        if !can_hurt(target, now) {
+        if !can_hurt(target, tick) {
             return;
         }
         let from = source.view.motion.position;
@@ -276,9 +342,9 @@ impl Presence<'_> {
         apply_hit(
             players.get_mut(&target_id).unwrap(),
             damage,
-            velocity,
+            Some(velocity),
             message,
-            now,
+            tick,
         );
     }
 }
@@ -289,22 +355,22 @@ impl Drop for Presence<'_> {
     }
 }
 
-fn can_hurt(target: &OnlinePlayer, now: Instant) -> bool {
+fn can_hurt(target: &OnlinePlayer, tick: i64) -> bool {
     target.player.health > 0.0
         && target.player.view.mode.is_survival()
         && target
             .last_hurt
-            .is_none_or(|last| now.saturating_duration_since(last) >= HURT_COOLDOWN)
+            .is_none_or(|last| tick.saturating_sub(last) >= HURT_COOLDOWN)
 }
 
 fn apply_hit(
     target: &mut OnlinePlayer,
     damage: f32,
-    velocity: Vec3,
+    velocity: Option<Vec3>,
     death_message: String,
-    now: Instant,
+    tick: i64,
 ) {
-    target.last_hurt = Some(now);
+    target.last_hurt = Some(tick);
     let health = (target.player.health - damage).max(0.0);
     target.player.health = health;
     target.player.hurt = target.player.hurt.wrapping_add(1);
@@ -472,8 +538,10 @@ impl PeerTracker {
                 &ClientboundRotateHeadPacket::new(id, mth::pack_degrees(motion.y_rot)),
             )?;
         }
-        if previous.is_none_or(|old| old.view.gliding != view.gliding) {
-            wire.send(ids, &gliding_packet(id, view.gliding))?;
+        if previous
+            .is_none_or(|old| old.view.gliding != view.gliding || old.burning != player.burning)
+        {
+            wire.send(ids, &gliding_packet(id, view.gliding, player.burning))?;
         }
         if previous.is_none_or(|old| old.view.equipment != view.equipment) {
             wire.send(
@@ -492,15 +560,19 @@ impl PeerTracker {
     }
 }
 
-pub fn gliding_packet(id: i32, gliding: bool) -> ClientboundSetEntityDataPacket {
+pub fn flags(gliding: bool, burning: bool) -> DataValue {
+    DataValue {
+        id: 0,
+        serializer: 0,
+        value: Box::new((if gliding { -128_i8 } else { 0 }) | i8::from(burning)),
+    }
+}
+
+pub fn gliding_packet(id: i32, gliding: bool, burning: bool) -> ClientboundSetEntityDataPacket {
     ClientboundSetEntityDataPacket::new(
         id,
         vec![
-            DataValue {
-                id: 0,
-                serializer: 0,
-                value: Box::new(if gliding { -128_i8 } else { 0_i8 }),
-            },
+            flags(gliding, burning),
             DataValue {
                 id: 6,
                 serializer: 20,

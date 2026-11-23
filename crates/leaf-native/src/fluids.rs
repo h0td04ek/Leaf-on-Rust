@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use leaf_core::core::{block_pos::BlockPos, direction::Direction};
 use leaf_core::nbt::Tag;
 use leaf_core::world::level::chunk_pos::ChunkPos;
-use leaf_core::world::phys::vec3::Vec3;
+use leaf_core::world::phys::{aabb::Aabb, vec3::Vec3};
 use leaf_core::world::ticks::scheduled_tick::{SavedTick, TickNbt, TickType};
 use leaf_core::world::ticks::{LevelTicks, ScheduledTick, TickAccess};
 
@@ -604,16 +604,40 @@ impl BlockView {
     pub fn fluid_at(&self, position: Vec3) -> Option<Fluid> {
         let pos = BlockPos::containing_vec3(&position);
         let liquid = Liquid::at(self.block(pos))?;
-        let relative_y = position.y - f64::from(pos.y);
-        let height = f64::from(8 - liquid.distance()) / 9.0;
-        if relative_y < height
-            || Liquid::at(self.block(pos.relative(Direction::UP)))
-                .is_some_and(|above| above.fluid == liquid.fluid)
-        {
-            Some(liquid.fluid)
-        } else {
-            None
+        (position.y < self.liquid_top(pos, liquid)).then_some(liquid.fluid)
+    }
+
+    pub fn touching_fluids(&self, bounds: Aabb) -> (bool, bool) {
+        let mut water = false;
+        let mut lava = false;
+        for x in bounds.min_x.floor() as i32..bounds.max_x.ceil() as i32 {
+            for z in bounds.min_z.floor() as i32..bounds.max_z.ceil() as i32 {
+                for y in bounds.min_y.floor() as i32..bounds.max_y.ceil() as i32 {
+                    let pos = BlockPos::new(x, y, z);
+                    let Some(liquid) = Liquid::at(self.block(pos)) else {
+                        continue;
+                    };
+                    if bounds.min_y < self.liquid_top(pos, liquid) {
+                        match liquid.fluid {
+                            Fluid::Water => water = true,
+                            Fluid::Lava => lava = true,
+                        }
+                    }
+                }
+            }
         }
+        (water, lava)
+    }
+
+    fn liquid_top(&self, pos: BlockPos, liquid: Liquid) -> f64 {
+        let height = if Liquid::at(self.block(pos.relative(Direction::UP)))
+            .is_some_and(|above| above.fluid == liquid.fluid)
+        {
+            1.0
+        } else {
+            f64::from(8 - liquid.distance()) / 9.0
+        };
+        f64::from(pos.y) + height
     }
 }
 
