@@ -1,6 +1,6 @@
 //! Чтение и запись регионов Anvil и вынесенных файлов чанков.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
@@ -87,6 +87,60 @@ impl RegionFileStorage {
             decode_chunk(region.take(length - 1), compression)?
         };
         Ok(Some(tag))
+    }
+
+    /// Lists occupied chunk slots without decoding the region payloads.
+    pub fn chunk_positions(&self) -> io::Result<Vec<ChunkPos>> {
+        let files = match fs::read_dir(&self.directory) {
+            Ok(files) => files,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut chunks = Vec::new();
+        for entry in files {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(region) = name
+                .strip_prefix("r.")
+                .and_then(|name| name.strip_suffix(".mca"))
+            else {
+                continue;
+            };
+            let Some((x, z)) = region.split_once('.') else {
+                continue;
+            };
+            let base = |axis: &str| {
+                axis.parse::<i32>()
+                    .ok()
+                    .and_then(|axis| axis.checked_mul(32))
+            };
+            let (Some(x), Some(z)) = (base(x), base(z)) else {
+                continue;
+            };
+
+            let mut file = File::open(entry.path())?;
+            FileExt::lock_shared(&file)?;
+            let len = file.metadata()?.len();
+            if len == 0 {
+                continue;
+            }
+            if len < HEADER_BYTES {
+                return Err(invalid_data("truncated region header"));
+            }
+            let mut locations = [0; SECTOR_BYTES as usize];
+            file.read_exact(&mut locations)?;
+            for (slot, location) in locations.chunks_exact(4).enumerate() {
+                if location != [0; 4] {
+                    chunks.push(ChunkPos::new(
+                        x + (slot % 32) as i32,
+                        z + (slot / 32) as i32,
+                    ));
+                }
+            }
+        }
+        chunks.sort_unstable_by_key(|pos| (pos.x, pos.z));
+        Ok(chunks)
     }
 
     fn region_path(&self, pos: ChunkPos) -> PathBuf {

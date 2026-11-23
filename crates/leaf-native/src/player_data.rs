@@ -211,6 +211,10 @@ impl PlayerStore {
         })
     }
 
+    pub fn region_path(&self) -> PathBuf {
+        self.directory.with_file_name("native-region")
+    }
+
     pub fn maps_path(&self) -> PathBuf {
         self.directory.with_file_name("maps.txt")
     }

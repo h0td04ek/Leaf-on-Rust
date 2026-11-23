@@ -239,6 +239,11 @@ impl<T: Clone + PartialEq + Eq + Hash + 'static> PalettedContainer<T> {
 
     /// Вставка в палитру без resize — конфиг выбран с достаточной ёмкостью.
     fn palette_insert_no_resize(palette: &mut Palette<T>, value: T, map: &dyn IdMap<T>) -> usize {
+        // GlobalPalette::id_for doesn't have the registry. This path is used
+        // when converting existing entries to global IDs during a resize.
+        if matches!(palette, Palette::Global) {
+            return map.get_id(&value).max(0) as usize;
+        }
         match palette.id_for(value.clone()) {
             IdFor::Id(id) => id,
             IdFor::Resize { .. } => {

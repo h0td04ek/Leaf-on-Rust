@@ -1,5 +1,5 @@
 use std::io;
-use std::sync::{atomic::AtomicI32, Arc};
+use std::sync::{atomic::AtomicI32, mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,22 @@ use crate::mobs::Mobs;
 use crate::peers::Peers;
 use crate::workers::Workers;
 use crate::world::FlatWorld;
+
+const SAVE_INTERVAL: Duration = Duration::from_secs(5);
+
+pub struct Autosave {
+    stop: mpsc::Sender<()>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for Autosave {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 
 pub struct Simulation {
     pub terrain: FlatWorld,
@@ -61,6 +77,31 @@ impl Simulation {
                 }
             })?;
         Ok(simulation)
+    }
+
+    pub fn autosave(self: &Arc<Self>) -> io::Result<Autosave> {
+        let (stop, receiver) = mpsc::channel();
+        let simulation = Arc::clone(self);
+        let thread = thread::Builder::new()
+            .name("leaf-native-save".into())
+            .spawn(move || loop {
+                let stopping =
+                    receiver.recv_timeout(SAVE_INTERVAL) != Err(mpsc::RecvTimeoutError::Timeout);
+                if let Err(error) = simulation.save_world() {
+                    eprintln!("leaf-native: saving block changes: {error}");
+                }
+                if stopping {
+                    break;
+                }
+            })?;
+        Ok(Autosave {
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    pub fn save_world(&self) -> io::Result<usize> {
+        self.terrain.save(self.commands.game_time())
     }
 
     fn poll(&self, workers: &Workers) -> Duration {

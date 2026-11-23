@@ -22,7 +22,7 @@ impl FlatWorld {
         workers: &Workers,
     ) -> Vec<(BlockPos, i32)> {
         let mut edits = self.edits.lock().unwrap();
-        let world = BlockView(Arc::clone(&edits));
+        let world = BlockView(Arc::clone(&edits.chunks));
         let directions = rays();
         let energies = directions
             .iter()

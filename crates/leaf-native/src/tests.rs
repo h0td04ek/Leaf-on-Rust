@@ -1158,6 +1158,46 @@ fn fills_a_thousand_tnt_across_chunk_boundaries_for_both_clients() {
 }
 
 #[test]
+fn saves_block_changes_into_anvil_and_loads_them_after_restart() {
+    use leaf_core::world::level::chunk::storage::region_file_storage::RegionFileStorage;
+    use leaf_core::world::level::chunk_pos::ChunkPos;
+
+    let directory = TestWorld::new();
+    let (mut client, worker) = connect(&directory);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    command(&mut client, "fill 1 16 0 1 16 0 tnt");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "fill -513 16 0 -512 16 0 tnt");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "save-all flush");
+    assert!(multiplayer_packet(&mut client, 119)
+        .copy_bytes()
+        .windows(b"Saved the world".len())
+        .any(|window| window == b"Saved the world"));
+    let storage = RegionFileStorage::new(directory.0.join("native-region"));
+    assert_eq!(
+        storage.chunk_positions().unwrap(),
+        [
+            ChunkPos::new(-33, 0),
+            ChunkPos::new(-32, 0),
+            ChunkPos::new(0, 0)
+        ]
+    );
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let (mut client, worker) = connect(&directory);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+    set_creative(&mut client, 36, "flint_and_steel", 1);
+    use_block(&mut client, BlockPos::new(1, 16, 0), 0);
+    spawned(&mut client, crate::mob_types::named("tnt").unwrap().id);
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
 fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
     let world = TestWorld::new();
     let server = Arc::new(

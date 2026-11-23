@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 use leaf_core::core::block_pos::BlockPos;
 use leaf_core::core::direction::Direction;
+use leaf_core::nbt::{CompoundTag, Tag};
 
 pub const GLOBAL_BITS: usize = 15;
 
@@ -22,7 +23,14 @@ pub struct Block {
     pub map_color: u8,
     pub blast_resistance: f32,
     pub replaceable: bool,
-    variants: Vec<(i32, Vec<(&'static str, &'static str)>)>,
+    first: i32,
+    properties: Vec<BlockProperty>,
+}
+
+struct BlockProperty {
+    name: &'static str,
+    values: Vec<&'static str>,
+    stride: i32,
 }
 
 impl Blocks {
@@ -37,16 +45,9 @@ impl Blocks {
             };
             for line in include_str!("../data/blocks-774.txt").lines().skip(1) {
                 let mut fields = line.split_ascii_whitespace();
-                let first = fields.next().unwrap();
-                if let Some(state) = first.strip_prefix('+') {
-                    blocks.kinds.last_mut().unwrap().variants.push((
-                        state.parse().unwrap(),
-                        fields.map(|p| p.split_once('=').unwrap()).collect(),
-                    ));
-                    continue;
-                }
+                let first: i32 = fields.next().unwrap().parse().unwrap();
                 let index = blocks.kinds.len();
-                assert_eq!(first.parse::<usize>().unwrap(), blocks.states.len());
+                assert_eq!(first as usize, blocks.states.len());
                 let default = fields.next().unwrap().parse().unwrap();
                 let last: usize = fields.next().unwrap().parse().unwrap();
                 let item: i32 = fields.next().unwrap().parse().unwrap();
@@ -55,6 +56,22 @@ impl Blocks {
                 let hardness = fields.next().unwrap().parse().unwrap();
                 let map_color = fields.next().unwrap().parse().unwrap();
                 let replaceable = fields.next().unwrap() == "1";
+                let mut properties = fields
+                    .map(|field| {
+                        let (name, values) = field.split_once('=').unwrap();
+                        BlockProperty {
+                            name,
+                            values: values.split(',').collect(),
+                            stride: 0,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let mut stride = 1;
+                for property in properties.iter_mut().rev() {
+                    property.stride = stride;
+                    stride *= property.values.len() as i32;
+                }
+                assert_eq!(first as usize + stride as usize, last + 1, "{name}");
                 blocks.states.resize(last + 1, index);
                 blocks.names.insert(name, index);
                 blocks.kinds.push(Block {
@@ -66,7 +83,8 @@ impl Blocks {
                     map_color,
                     blast_resistance: 0.0,
                     replaceable,
-                    variants: vec![],
+                    first,
+                    properties,
                 });
                 if item != 0 {
                     blocks.items.entry(item).or_insert(index);
@@ -100,6 +118,37 @@ impl Blocks {
         &self.kinds[self.states[state as usize]]
     }
 
+    pub fn state_count(&self) -> usize {
+        self.states.len()
+    }
+
+    pub fn decode_state(&self, tag: &CompoundTag) -> Option<i32> {
+        let name = tag.get_string("Name")?.strip_prefix("minecraft:")?;
+        let block = self.named(name)?;
+        let mut state = block.default;
+        if let Some(properties) = tag.get("Properties") {
+            for (name, value) in properties.as_compound()?.iter() {
+                let property = block.properties.iter().find(|p| p.name == name)?;
+                state = property.with_value(block.first, state, value.as_string()?)?;
+            }
+        }
+        Some(state)
+    }
+
+    pub fn encode_state(&self, state: i32) -> CompoundTag {
+        let block = self.get(state);
+        let mut tag = CompoundTag::new();
+        tag.put_string("Name", &format!("minecraft:{}", block.name));
+        if !block.properties.is_empty() {
+            let mut properties = CompoundTag::new();
+            for property in &block.properties {
+                properties.put_string(property.name, property.value(block.first, state));
+            }
+            tag.put("Properties", Tag::Compound(properties));
+        }
+        tag
+    }
+
     pub fn named(&self, name: &str) -> Option<&Block> {
         self.names.get(name).map(|&index| &self.kinds[index])
     }
@@ -122,35 +171,40 @@ impl Blocks {
     }
 }
 
+impl BlockProperty {
+    fn index(&self, first: i32, state: i32) -> i32 {
+        (state - first) / self.stride % self.values.len() as i32
+    }
+
+    fn value(&self, first: i32, state: i32) -> &'static str {
+        self.values[self.index(first, state) as usize]
+    }
+
+    fn with_value(&self, first: i32, state: i32, value: &str) -> Option<i32> {
+        let index = self.values.iter().position(|&entry| entry == value)? as i32;
+        Some(state + (index - self.index(first, state)) * self.stride)
+    }
+}
+
 impl Block {
     pub fn state(&self, base: i32, overrides: &[(&str, &str)]) -> i32 {
-        let Some((_, properties)) = self.variants.iter().find(|(state, _)| *state == base) else {
-            return base;
-        };
-        self.variants
-            .iter()
-            .find(|(_, variant)| {
-                properties
-                    .iter()
-                    .zip(variant)
-                    .all(|((key, original), (_, value))| {
-                        overrides
-                            .iter()
-                            .find(|(k, _)| k == key)
-                            .map_or(original, |(_, updated)| updated)
-                            == value
-                    })
-            })
-            .map_or(base, |(state, _)| *state)
+        let mut state = base;
+        for &(name, value) in overrides {
+            if let Some(property) = self.properties.iter().find(|p| p.name == name) {
+                let Some(next) = property.with_value(self.first, state, value) else {
+                    return base;
+                };
+                state = next;
+            }
+        }
+        state
     }
 
     pub fn property(&self, state: i32, key: &str) -> Option<&'static str> {
-        self.variants
+        self.properties
             .iter()
-            .find(|(id, _)| *id == state)?
-            .1
-            .iter()
-            .find_map(|&(property, value)| (property == key).then_some(value))
+            .find(|property| property.name == key)
+            .map(|property| property.value(self.first, state))
     }
 
     pub fn door(&self) -> bool {

@@ -68,7 +68,7 @@ use crate::peers::{attack_damage, PeerTracker, Presence};
 use crate::player_data::PlayerStore;
 use crate::recipes::Recipes;
 use crate::registries::Registries;
-use crate::simulation::Simulation;
+use crate::simulation::{Autosave, Simulation};
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, SPAWN_Y};
 
@@ -79,6 +79,8 @@ const TELEPORT_ID: i32 = 1;
 const PLAYER_SAVE_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Server {
+    // Stop and flush the autosave thread before releasing the world directory lock.
+    _autosave: Autosave,
     handshake: PacketIds,
     status_in: PacketIds,
     status_out: PacketIds,
@@ -106,11 +108,12 @@ impl Server {
         let operators = Operators::open(player_data.ops_path())?;
         let maps = Maps::open(player_data.maps_path())?;
         let simulation = Simulation::start(
-            FlatWorld::new(registries.plains_id),
+            FlatWorld::open(registries.plains_id, player_data.region_path())?,
             Commands::new(operators),
             workers,
         )?;
         Ok(Self {
+            _autosave: simulation.autosave()?,
             handshake: PacketIds::from_protocol(handshake_protocols::serverbound()),
             status_in: PacketIds::from_protocol(status_protocols::serverbound()),
             status_out: PacketIds::from_protocol(status_protocols::clientbound()),
@@ -607,6 +610,20 @@ impl Server {
                                     Component::literal("Flight kit: elytra and firework rockets"),
                                     Some(uuid),
                                 );
+                            }
+                            Some(PlayerCommand::SaveWorld) => {
+                                let feedback = match self.simulation.save_world() {
+                                    Ok(count) => {
+                                        format!("Saved the world ({count} changed chunk(s))")
+                                    }
+                                    Err(error) => {
+                                        eprintln!("leaf-native: saving block changes: {error}");
+                                        "Failed to save the world. Check the server log.".into()
+                                    }
+                                };
+                                context
+                                    .audience
+                                    .chat(Component::literal(feedback), Some(uuid));
                             }
                             Some(PlayerCommand::SetMode(mode, target)) => {
                                 let player = target.as_deref().unwrap_or(name);

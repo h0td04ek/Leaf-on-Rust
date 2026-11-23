@@ -46,6 +46,7 @@ const SEED: i64 = 0;
 
 pub enum PlayerCommand {
     Kit,
+    SaveWorld,
     SetMode(GameType, Option<String>),
     Fill {
         from: Coordinates,
@@ -78,7 +79,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /kit. Operators: /gamemode, /fill, /summon, /tick, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
+                            "/help, /kit. Operators: /gamemode, /fill, /summon, /tick, /time, /weather, /difficulty, /seed, /gamerule, /save-all, /op, /deop",
                         ),
                         false,
                     );
@@ -137,6 +138,17 @@ impl Commands {
         register_fill(&mut dispatcher);
         register_summon(&mut dispatcher);
         register_tick(&mut dispatcher);
+        let save = dispatcher
+            .add_node(
+                dispatcher.root(),
+                CommandNode::literal("save-all")
+                    .requires(|source: &CommandWorld| source.has_permission(OWNERS))
+                    .executes(save_world),
+            )
+            .expect("register save-all");
+        dispatcher
+            .add_node(save, CommandNode::literal("flush").executes(save_world))
+            .expect("register save-all flush");
         for (command, grant) in [("op", true), ("deop", false)] {
             let root = dispatcher
                 .add_node(
@@ -217,6 +229,11 @@ impl Commands {
         world.permission = ALL;
         world.action.take()
     }
+}
+
+fn save_world(world: &mut CommandWorld, _: &CommandContext) -> i32 {
+    world.action = Some(PlayerCommand::SaveWorld);
+    1
 }
 
 fn register_fill(dispatcher: &mut CommandDispatcher<CommandWorld>) {

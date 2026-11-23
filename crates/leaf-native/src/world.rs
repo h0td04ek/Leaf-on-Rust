@@ -2,10 +2,14 @@
 mod blast;
 #[path = "fill.rs"]
 mod fill;
+#[path = "world_storage.rs"]
+mod storage;
 
 pub use fill::FillMode;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use leaf_core::core::{block_pos::BlockPos, direction::Direction};
@@ -28,6 +32,8 @@ use crate::audience::Audience;
 use crate::maps::MAP_SIZE;
 use crate::wire::{PacketIds, Wire};
 
+use storage::WorldStorage;
+
 const MIN_Y: i32 = -64;
 const SECTIONS: usize = 24;
 pub const AIR: i32 = 0;
@@ -35,7 +41,22 @@ const STONE: i32 = 1;
 pub const SPAWN_Y: i32 = 16;
 
 type Changes = HashMap<BlockPos, i32>;
-type WorldEdits = HashMap<(i32, i32), Arc<Changes>>;
+type Chunk = (i32, i32);
+type WorldEdits = HashMap<Chunk, Arc<Changes>>;
+
+#[derive(Default)]
+struct Edits {
+    chunks: Arc<WorldEdits>,
+    dirty: HashSet<Chunk>,
+}
+
+impl Deref for Edits {
+    type Target = WorldEdits;
+
+    fn deref(&self) -> &Self::Target {
+        &self.chunks
+    }
+}
 
 #[derive(Clone)]
 pub struct BlockView(Arc<WorldEdits>);
@@ -44,7 +65,8 @@ pub struct FlatWorld {
     flat_chunk_body: Vec<u8>,
     light: ClientboundLightUpdatePacketData,
     biome: i32,
-    edits: Mutex<Arc<WorldEdits>>,
+    edits: Mutex<Edits>,
+    storage: Option<Mutex<WorldStorage>>,
 }
 
 pub fn chunk(pos: BlockPos) -> (i32, i32) {
@@ -98,11 +120,49 @@ impl FlatWorld {
             light,
             biome,
             edits: Mutex::default(),
+            storage: None,
         }
     }
 
+    pub fn open(biome: i32, region_path: PathBuf) -> io::Result<Self> {
+        let storage = WorldStorage::new(region_path);
+        let chunks = Arc::new(storage.load()?);
+        let mut world = Self::new(biome);
+        world.edits = Mutex::new(Edits {
+            chunks,
+            dirty: HashSet::new(),
+        });
+        world.storage = Some(Mutex::new(storage));
+        Ok(world)
+    }
+
+    pub fn save(&self, game_time: i64) -> io::Result<usize> {
+        let Some(storage) = &self.storage else {
+            return Ok(0);
+        };
+        let storage = storage.lock().unwrap();
+        let (snapshot, dirty) = {
+            let mut edits = self.edits.lock().unwrap();
+            (Arc::clone(&edits.chunks), std::mem::take(&mut edits.dirty))
+        };
+        let count = dirty.len();
+        let mut pending = dirty.into_iter();
+        while let Some(coord) = pending.next() {
+            if let Err(error) =
+                storage.write(coord, snapshot.get(&coord).map(Arc::as_ref), game_time)
+            {
+                let mut edits = self.edits.lock().unwrap();
+                // Edits made while the snapshot was saving remain dirty as well.
+                edits.dirty.insert(coord);
+                edits.dirty.extend(pending);
+                return Err(error);
+            }
+        }
+        Ok(count)
+    }
+
     pub fn snapshot(&self) -> BlockView {
-        BlockView(Arc::clone(&self.edits.lock().unwrap()))
+        BlockView(Arc::clone(&self.edits.lock().unwrap().chunks))
     }
 
     pub fn block(&self, pos: BlockPos) -> i32 {
@@ -458,7 +518,7 @@ fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
         .unwrap_or_else(|| base(pos))
 }
 
-fn update(edits: &mut Arc<WorldEdits>, pos: BlockPos, state: i32, audience: &Audience) {
+fn update(edits: &mut Edits, pos: BlockPos, state: i32, audience: &Audience) {
     set_state(edits, pos, state);
     audience.broadcast(
         ClientboundBlockUpdatePacket::new(pos, state),
@@ -466,9 +526,13 @@ fn update(edits: &mut Arc<WorldEdits>, pos: BlockPos, state: i32, audience: &Aud
     );
 }
 
-fn set_state(edits: &mut Arc<WorldEdits>, pos: BlockPos, state: i32) {
-    let edits = Arc::make_mut(edits);
+fn set_state(edits: &mut Edits, pos: BlockPos, state: i32) {
     let coord = chunk(pos);
+    if state_at(edits, pos) == state {
+        return;
+    }
+    edits.dirty.insert(coord);
+    let edits = Arc::make_mut(&mut edits.chunks);
     let changes = Arc::make_mut(edits.entry(coord).or_default());
     if state == base(pos) {
         changes.remove(&pos);
