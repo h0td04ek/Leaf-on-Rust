@@ -1338,19 +1338,46 @@ fn tick_commands_change_the_clock_and_pause_the_tnt_fuse() {
     assert_eq!(running.read_float(), 1000.0);
     assert!(!running.read_bool());
     command(&mut client, "tick query");
-    for _ in 0..10 {
+    let status = loop {
         let reply = multiplayer_packet(&mut client, 119)
             .read_nbt()
             .unwrap()
             .unwrap();
-        if reply
-            .as_string()
-            .is_some_and(|text| text.contains("1000.0 TPS"))
-        {
-            drop(client);
-            assert!(worker.join().unwrap().is_err());
-            return;
+        if let Some(tag) = reply.as_compound() {
+            break tag.get_string("translate").unwrap().to_owned();
         }
-    }
-    panic!("tick query did not report the configured rate");
+    };
+    assert!(matches!(
+        status.as_str(),
+        "commands.tick.status.running" | "commands.tick.status.lagging"
+    ));
+    let rate = multiplayer_packet(&mut client, 119)
+        .read_nbt()
+        .unwrap()
+        .unwrap();
+    let rate = rate.as_compound().unwrap();
+    assert_eq!(
+        rate.get_string("translate"),
+        Some("commands.tick.query.rate.running")
+    );
+    let args = rate.get_list("with").unwrap();
+    assert_eq!(args[0].as_string(), Some("1000.0"));
+    assert_eq!(args[2].as_string(), Some("1.0"));
+    let percentiles = multiplayer_packet(&mut client, 119)
+        .read_nbt()
+        .unwrap()
+        .unwrap();
+    let percentiles = percentiles.as_compound().unwrap();
+    assert_eq!(
+        percentiles.get_string("translate"),
+        Some("commands.tick.query.percentiles")
+    );
+    let samples = percentiles.get_list("with").unwrap()[3]
+        .as_string()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    assert!((80..=100).contains(&samples));
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
 }

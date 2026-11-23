@@ -288,13 +288,17 @@ fn register_tick(dispatcher: &mut CommandDispatcher<CommandWorld>) {
             dispatcher.root(),
             CommandNode::literal("tick")
                 .requires(|source: &CommandWorld| source.has_permission(ADMIN_PERMISSION))
-                .executes(|source: &mut CommandWorld, _| {
-                    source.run_tick_command(TickAction::Query)
-                }),
+                .executes(|source: &mut CommandWorld, _| source.send_tick_report()),
+        )
+        .unwrap();
+    dispatcher
+        .add_node(
+            root,
+            CommandNode::literal("query")
+                .executes(|source: &mut CommandWorld, _| source.send_tick_report()),
         )
         .unwrap();
     for (name, action) in [
-        ("query", TickAction::Query),
         ("freeze", TickAction::Freeze(true)),
         ("unfreeze", TickAction::Freeze(false)),
     ] {
@@ -404,12 +408,19 @@ impl CommandWorld {
         }
     }
 
+    fn send_tick_report(&mut self) -> i32 {
+        for line in self.clock.report() {
+            self.send_success(line, false);
+        }
+        self.clock.state().rate as i32
+    }
+
     fn run_tick_command(&mut self, action: TickAction) -> i32 {
         let before = self.clock.state();
         let (message, result) = self.clock.execute(action, Instant::now());
         self.send_success(
             Component::literal(message),
-            result != 0 && !matches!(action, TickAction::Query) && before != self.clock.state(),
+            result != 0 && before != self.clock.state(),
         );
         result
     }

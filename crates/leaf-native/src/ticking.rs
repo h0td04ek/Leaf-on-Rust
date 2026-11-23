@@ -1,14 +1,16 @@
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use leaf_core::network::chat::{component::Component, component_contents::TranslatableArg};
 use leaf_core::world::tick_rate_manager::TickRateManager;
 
 pub const MAX_RATE: f32 = 10_000.0;
 pub const ADMIN_PERMISSION: u8 = 3;
+const TICK_HISTORY_SIZE: usize = 100;
 const CONTROL_POLL: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Copy)]
 pub enum Action {
-    Query,
     Rate(f32),
     Freeze(bool),
     Step(i32),
@@ -29,7 +31,7 @@ pub struct Clock {
     next_tick: Instant,
     game_time: i64,
     sprint: Option<Sprint>,
-    average_ms: f64,
+    tick_history: VecDeque<Duration>,
 }
 
 struct Sprint {
@@ -46,7 +48,7 @@ impl Clock {
             next_tick: now + Duration::from_millis(50),
             game_time: 0,
             sprint: None,
-            average_ms: 0.0,
+            tick_history: VecDeque::with_capacity(TICK_HISTORY_SIZE),
         }
     }
 
@@ -85,8 +87,10 @@ impl Clock {
     }
 
     pub fn complete(&mut self, elapsed: Duration, now: Instant) -> Option<String> {
-        let milliseconds = elapsed.as_secs_f64() * 1000.0;
-        self.average_ms += (milliseconds - self.average_ms) * 0.05;
+        if self.tick_history.len() == TICK_HISTORY_SIZE {
+            self.tick_history.pop_front();
+        }
+        self.tick_history.push_back(elapsed);
         if self
             .sprint
             .as_ref()
@@ -98,30 +102,53 @@ impl Clock {
         }
     }
 
+    pub fn report(&self) -> [Component; 3] {
+        let count = self.tick_history.len();
+        let average = self.tick_history.iter().copied().sum::<Duration>() / count.max(1) as u32;
+        let target = self.period();
+        let sprinting = self.sprint.is_some();
+        let status = if sprinting {
+            "commands.tick.status.sprinting"
+        } else if self.manager.is_frozen() {
+            "commands.tick.status.frozen"
+        } else if average > target {
+            "commands.tick.status.lagging"
+        } else {
+            "commands.tick.status.running"
+        };
+        let mut rate_args = vec![
+            decimal(f64::from(self.manager.tickrate())),
+            milliseconds(average),
+        ];
+        let rate = if sprinting {
+            "commands.tick.query.rate.sprinting"
+        } else {
+            rate_args.push(milliseconds(target));
+            "commands.tick.query.rate.running"
+        };
+
+        let mut sorted = self.tick_history.iter().copied().collect::<Vec<_>>();
+        sorted.sort_unstable();
+        let mut percentiles = [50, 95, 99]
+            .map(|percentile| {
+                milliseconds(
+                    sorted
+                        .get(count * percentile / 100)
+                        .copied()
+                        .unwrap_or_default(),
+                )
+            })
+            .to_vec();
+        percentiles.push(TranslatableArg::Text(count.to_string()));
+        [
+            Component::translatable(status, vec![]),
+            Component::translatable(rate, rate_args),
+            Component::translatable("commands.tick.query.percentiles", percentiles),
+        ]
+    }
+
     pub fn execute(&mut self, action: Action, now: Instant) -> (String, i32) {
         match action {
-            Action::Query => {
-                let state = match &self.sprint {
-                    Some(sprint) => format!("sprinting ({} ticks left)", sprint.remaining),
-                    None if self.manager.is_stepping_forward() => format!(
-                        "stepping ({} ticks left)",
-                        self.manager.frozen_ticks_to_run()
-                    ),
-                    None if self.manager.is_frozen() => "frozen".into(),
-                    None if self.average_ms > self.period().as_secs_f64() * 1000.0 => {
-                        "lagging".into()
-                    }
-                    None => "running".into(),
-                };
-                let rate = self.manager.tickrate();
-                (
-                    format!(
-                        "Tick rate: {rate:.1} TPS, {state}, {:.2} ms/tick",
-                        self.average_ms
-                    ),
-                    rate as i32,
-                )
-            }
             Action::Rate(rate) => {
                 self.manager.set_tick_rate(rate);
                 self.next_tick = now + self.period();
@@ -182,6 +209,14 @@ impl Clock {
     }
 }
 
+fn milliseconds(duration: Duration) -> TranslatableArg {
+    decimal(duration.as_secs_f64() * 1000.0)
+}
+
+fn decimal(value: f64) -> TranslatableArg {
+    TranslatableArg::Text(format!("{value:.1}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +263,52 @@ mod tests {
         assert!(clock.state().frozen);
         clock.execute(Action::Freeze(false), ms(502));
         assert_eq!(clock.poll(ms(527)), Ok((9, false)));
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use leaf_core::network::chat::component_contents::ComponentContents;
+
+    #[test]
+    fn report_uses_the_most_recent_hundred_tick_times() {
+        let now = Instant::now();
+        let mut clock = Clock::new(now);
+        for duration in 1..=110 {
+            clock.complete(Duration::from_millis(duration), now);
+        }
+        let [status, rate, percentiles] = clock.report().map(|line| match line.contents {
+            ComponentContents::Translatable(text) => text,
+            _ => panic!("expected Minecraft translation"),
+        });
+        assert_eq!(status.key, "commands.tick.status.lagging");
+        assert_eq!(rate.key, "commands.tick.query.rate.running");
+        let strings = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| TranslatableArg::Text((*value).into()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rate.args, strings(&["20.0", "60.5", "50.0"]));
+        assert_eq!(percentiles.key, "commands.tick.query.percentiles");
+        assert_eq!(
+            percentiles.args,
+            strings(&["61.0", "106.0", "110.0", "100"])
+        );
+
+        clock.execute(Action::Freeze(true), now);
+        let [status, _, _] = clock.report();
+        assert!(
+            matches!(status.contents, ComponentContents::Translatable(text) if text.key == "commands.tick.status.frozen")
+        );
+        clock.execute(Action::Sprint(5), now);
+        let [status, rate, _] = clock.report();
+        assert!(
+            matches!(status.contents, ComponentContents::Translatable(text) if text.key == "commands.tick.status.sprinting")
+        );
+        assert!(
+            matches!(rate.contents, ComponentContents::Translatable(text) if text.key == "commands.tick.query.rate.sprinting" && text.args.len() == 2)
+        );
     }
 }
