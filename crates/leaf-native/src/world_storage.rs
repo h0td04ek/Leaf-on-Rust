@@ -12,20 +12,23 @@ use leaf_core::world::level::chunk_pos::ChunkPos;
 use crate::blocks::Blocks;
 use crate::wire::invalid;
 
-use super::{base, Changes, Chunk, WorldEdits, AIR, MIN_Y, SECTIONS};
+use super::terrain::{Section, Terrain};
+use super::{Changes, Chunk, WorldEdits, AIR, MIN_Y, SECTIONS};
 
 const FORMAT_VERSION: i32 = 1;
 
 pub(super) struct WorldStorage {
     regions: RegionFileStorage,
     blocks: Arc<StateIds>,
+    terrain: Arc<Terrain>,
 }
 
 impl WorldStorage {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf, terrain: Arc<Terrain>) -> Self {
         Self {
             regions: RegionFileStorage::new(path),
             blocks: Arc::new(StateIds),
+            terrain,
         }
     }
 
@@ -62,12 +65,48 @@ impl WorldStorage {
         tag.put_long("LastUpdate", game_time);
         tag.put_long("InhabitedTime", 0);
 
-        let mut sections = (0..SECTIONS)
-            .map(|index| self.palette(base(BlockPos::new(0, MIN_Y + index as i32 * 16, 0))))
+        let generated = self.terrain.chunk((x, z));
+        let mut sections = generated
+            .sections
+            .iter()
+            .map(|section| match section {
+                Section::Uniform(state) => self.palette(i32::from(*state)),
+                Section::Mixed(states) => {
+                    let mut palette = self.palette(i32::from(states[0]));
+                    for (index, &state) in states.iter().enumerate() {
+                        palette.set_by_index_unchecked(index, i32::from(state));
+                    }
+                    palette
+                }
+            })
             .collect::<Vec<_>>();
         for (&block, &state) in changes.into_iter().flatten() {
             let index = ((block.y - MIN_Y) >> 4) as usize;
             sections[index].set(block.x & 15, block.y & 15, block.z & 15, state);
+        }
+        let mut biome_states = PalettedContainer::new(
+            generated.biomes[0] as i32,
+            Strategy::new(StrategyKind::Biomes, super::Biome::NAMES.len()),
+            Some(self.blocks.clone()),
+        );
+        for index in 0..64 {
+            biome_states.set_by_index_unchecked(index, generated.biomes[index % 16] as i32);
+        }
+        let (values, words) = biome_states.pack();
+        let mut biomes = CompoundTag::new();
+        biomes.put(
+            "palette",
+            Tag::List(
+                values
+                    .into_iter()
+                    .map(|biome| {
+                        Tag::String(format!("minecraft:{}", super::Biome::NAMES[biome as usize]))
+                    })
+                    .collect(),
+            ),
+        );
+        if !words.is_empty() {
+            biomes.put_long_array("data", &words);
         }
         let sections = sections.into_iter().enumerate().map(|(index, section)| {
             let (values, words) = section.pack();
@@ -80,15 +119,10 @@ impl WorldStorage {
             if !words.is_empty() {
                 block_states.put_long_array("data", &words);
             }
-            let mut biomes = CompoundTag::new();
-            biomes.put(
-                "palette",
-                Tag::List(vec![Tag::String("minecraft:plains".into())]),
-            );
             let mut tag = CompoundTag::new();
             tag.put_byte("Y", ((MIN_Y >> 4) + index as i32) as i8);
             tag.put("block_states", Tag::Compound(block_states));
-            tag.put("biomes", Tag::Compound(biomes));
+            tag.put("biomes", Tag::Compound(biomes.clone()));
             Tag::Compound(tag)
         });
         tag.put("sections", Tag::List(sections.collect()));
@@ -119,6 +153,7 @@ impl WorldStorage {
             .and_then(Tag::as_list)
             .filter(|list| list.len() == SECTIONS)
             .ok_or_else(|| invalid("invalid native chunk sections"))?;
+        let generated = self.terrain.chunk((pos.x, pos.z));
         let mut changes = Changes::new();
         let mut seen = [false; SECTIONS];
         for entry in list {
@@ -155,13 +190,15 @@ impl WorldStorage {
             };
             let mut palette = self.palette(AIR);
             palette.unpack(values, words).map_err(invalid)?;
-            let baseline = base(BlockPos::new(0, y * 16, 0));
-            if !palette.maybe_has(&|state| *state != baseline) {
-                continue;
+            let baseline = &generated.sections[index];
+            if let Section::Uniform(state) = baseline {
+                if !palette.maybe_has(&|current| *current != i32::from(*state)) {
+                    continue;
+                }
             }
             for index in 0..4096 {
                 let state = palette.get_by_index(index);
-                if state != baseline {
+                if state != i32::from(baseline.state(index)) {
                     let block = BlockPos::new(
                         pos.x * 16 + (index & 15) as i32,
                         y * 16 + (index >> 8) as i32,
@@ -204,7 +241,7 @@ mod tests {
     use super::*;
     use crate::audience::Audience;
     use crate::tests::TestWorld;
-    use crate::world::{set_state, FillMode, FlatWorld, STONE};
+    use crate::world::{set_state, FillMode, NativeWorld, STONE};
 
     #[test]
     fn block_state_names_and_properties_round_trip_for_the_entire_registry() {
@@ -220,7 +257,8 @@ mod tests {
         let directory = TestWorld::new();
         std::fs::create_dir_all(&directory.0).unwrap();
         let path = directory.0.join("native-region");
-        let world = FlatWorld::open(0, path.clone()).unwrap();
+        let world =
+            NativeWorld::open([0; 10], super::super::Generation::FLAT, path.clone()).unwrap();
         let pos = BlockPos::new(-513, 15, 15);
         let audience = Audience::default();
         assert!(world.break_block(pos, STONE, &audience));
@@ -238,7 +276,8 @@ mod tests {
         assert_eq!(world.save(20).unwrap(), 1);
         assert_eq!(world.save(21).unwrap(), 0);
 
-        let world = FlatWorld::open(0, path.clone()).unwrap();
+        let world =
+            NativeWorld::open([0; 10], super::super::Generation::FLAT, path.clone()).unwrap();
         assert_eq!(world.block(pos), AIR);
         for id in 1..=300 {
             let block = BlockPos::new(-528 + (id % 16), 16 + (id / 256), (id / 16) % 16);
@@ -259,7 +298,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(world.save(30).unwrap(), 1);
-        let restored = FlatWorld::open(0, path).unwrap();
+        let restored = NativeWorld::open([0; 10], super::super::Generation::FLAT, path).unwrap();
         assert_eq!(restored.block(pos), STONE);
         assert!(restored.edits.lock().unwrap().is_empty());
     }

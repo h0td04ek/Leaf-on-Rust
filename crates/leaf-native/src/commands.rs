@@ -42,8 +42,6 @@ use crate::ticking::{Action as TickAction, Clock, TickState, ADMIN_PERMISSION, M
 use crate::wire::{PacketIds, Wire};
 use crate::world::FillMode;
 
-const SEED: i64 = 0;
-
 pub enum PlayerCommand {
     Kit,
     SaveWorld,
@@ -68,7 +66,7 @@ pub struct Commands {
 }
 
 impl Commands {
-    pub fn new(operators: Operators) -> Self {
+    pub fn new(operators: Operators, seed: i64) -> Self {
         let features = FeatureFlagSet::empty();
         let mut dispatcher = CommandDispatcher::<CommandWorld>::new();
         register_world_commands(&mut dispatcher, true).expect("register world commands");
@@ -184,7 +182,7 @@ impl Commands {
         }
         Self {
             dispatcher,
-            world: std::sync::Mutex::new(CommandWorld::new(features, operators)),
+            world: std::sync::Mutex::new(CommandWorld::new(features, operators, seed)),
         }
     }
 
@@ -497,6 +495,7 @@ pub struct CommandWorld {
     clock: Clock,
     operators: Operators,
     permission: u8,
+    seed: i64,
     day_start: i64,
     day_value: i64,
     rules: GameRules,
@@ -509,15 +508,16 @@ pub struct CommandWorld {
 }
 
 impl CommandWorld {
-    fn new(features: FeatureFlagSet, operators: Operators) -> Self {
+    fn new(features: FeatureFlagSet, operators: Operators, seed: i64) -> Self {
         Self {
             clock: Clock::new(Instant::now()),
             operators,
             permission: ALL,
+            seed,
             day_start: 0,
             day_value: 6000,
             rules: GameRules::new(features),
-            random: LegacyRandomSource::new(SEED),
+            random: LegacyRandomSource::new(seed),
             weather: WeatherParameters {
                 clear_time: 0,
                 rain_time: 0,
@@ -525,7 +525,7 @@ impl CommandWorld {
                 thundering: false,
             },
             expires: None,
-            difficulty: Difficulty::Peaceful,
+            difficulty: Difficulty::Normal,
             feedback: vec![],
             action: None,
         }
@@ -675,7 +675,7 @@ impl WorldCommandSource for CommandWorld {
         self.difficulty = difficulty;
     }
     fn seed(&self) -> i64 {
-        SEED
+        self.seed
     }
 }
 

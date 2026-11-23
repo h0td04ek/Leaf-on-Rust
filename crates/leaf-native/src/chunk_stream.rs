@@ -12,7 +12,7 @@ use leaf_core::network::protocol::game::{
 use leaf_core::world::level::chunk_pos::ChunkPos;
 
 use crate::wire::{Cursor, PacketIds, Wire};
-use crate::world::FlatWorld;
+use crate::world::NativeWorld;
 
 pub const MAX_VIEW_DISTANCE: i32 = 32;
 pub const SIMULATION_DISTANCE: i32 = 2;
@@ -128,7 +128,7 @@ impl ChunkStream {
 
     pub fn send_next(
         &mut self,
-        world: &FlatWorld,
+        world: &NativeWorld,
         wire: &mut Wire,
         ids: &PacketIds,
     ) -> io::Result<()> {

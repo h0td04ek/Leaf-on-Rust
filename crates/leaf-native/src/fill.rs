@@ -6,7 +6,7 @@ use leaf_core::network::protocol::game::clientbound_section_blocks_update_packet
 use crate::audience::Audience;
 use crate::blocks::{Block, Blocks};
 
-use super::{set_state, state_at, FlatWorld, AIR};
+use super::{set_state, state_at, NativeWorld, AIR};
 
 const WORLD_BORDER: i32 = 30_000_000;
 
@@ -24,7 +24,7 @@ pub struct FillResult {
     pub destroyed: Vec<(BlockPos, i32)>,
 }
 
-impl FlatWorld {
+impl NativeWorld {
     pub fn fill(
         &self,
         from: BlockPos,
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn fill_modes_preserve_interior_filter_and_drop_behavior() {
-        let world = FlatWorld::new(0);
+        let world = NativeWorld::new(0);
         let audience = Audience::default();
         let blocks = Blocks::vanilla();
         let tnt = blocks.named("tnt").unwrap();

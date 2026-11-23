@@ -9,7 +9,7 @@ use crate::drops::Drops;
 use crate::mobs::Mobs;
 use crate::peers::Peers;
 use crate::workers::Workers;
-use crate::world::FlatWorld;
+use crate::world::NativeWorld;
 
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -28,7 +28,7 @@ impl Drop for Autosave {
 }
 
 pub struct Simulation {
-    pub terrain: FlatWorld,
+    pub terrain: NativeWorld,
     pub commands: Commands,
     pub audience: Audience,
     pub peers: Peers,
@@ -38,7 +38,7 @@ pub struct Simulation {
 }
 
 pub struct SimulationContext<'a> {
-    pub world: &'a FlatWorld,
+    pub world: &'a NativeWorld,
     pub commands: &'a Commands,
     pub audience: &'a Audience,
     pub drops: &'a Drops,
@@ -47,7 +47,7 @@ pub struct SimulationContext<'a> {
 
 impl Simulation {
     pub fn start(
-        terrain: FlatWorld,
+        terrain: NativeWorld,
         commands: Commands,
         worker_count: usize,
     ) -> io::Result<Arc<Self>> {

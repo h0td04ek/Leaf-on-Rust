@@ -125,26 +125,28 @@ impl ImprovedNoise {
         delta_z: f64,
         delta_y: f64,
     ) -> f64 {
-        let var0 = (grid_x as usize) & 0xFF;
-        let var1 = ((grid_x as usize) + 1) & 0xFF;
+        let grid_y = (grid_y & 0xFF) as usize;
+        let grid_z = (grid_z & 0xFF) as usize;
+        let var0 = (grid_x & 0xFF) as usize;
+        let var1 = (var0 + 1) & 0xFF;
         let var2 = self.p_at(var0);
         let var3 = self.p_at(var1);
-        let var4 = (var2 + grid_y as usize) & 0xFF;
-        let var5 = (var3 + grid_y as usize) & 0xFF;
-        let var6 = (var2 + grid_y as usize + 1) & 0xFF;
-        let var7 = (var3 + grid_y as usize + 1) & 0xFF;
+        let var4 = (var2 + grid_y) & 0xFF;
+        let var5 = (var3 + grid_y) & 0xFF;
+        let var6 = (var2 + grid_y + 1) & 0xFF;
+        let var7 = (var3 + grid_y + 1) & 0xFF;
         let var8 = self.p_at(var4);
         let var9 = self.p_at(var5);
         let var10 = self.p_at(var6);
         let var11 = self.p_at(var7);
-        let var12 = (var8 + grid_z as usize) & 0xFF;
-        let var13 = (var9 + grid_z as usize) & 0xFF;
-        let var14 = (var10 + grid_z as usize) & 0xFF;
-        let var15 = (var11 + grid_z as usize) & 0xFF;
-        let var16 = (var8 + grid_z as usize + 1) & 0xFF;
-        let var17 = (var9 + grid_z as usize + 1) & 0xFF;
-        let var18 = (var10 + grid_z as usize + 1) & 0xFF;
-        let var19 = (var11 + grid_z as usize + 1) & 0xFF;
+        let var12 = (var8 + grid_z) & 0xFF;
+        let var13 = (var9 + grid_z) & 0xFF;
+        let var14 = (var10 + grid_z) & 0xFF;
+        let var15 = (var11 + grid_z) & 0xFF;
+        let var16 = (var8 + grid_z + 1) & 0xFF;
+        let var17 = (var9 + grid_z + 1) & 0xFF;
+        let var18 = (var10 + grid_z + 1) & 0xFF;
+        let var19 = (var11 + grid_z + 1) & 0xFF;
         let var20 = (self.p[var12] & 15) << 2;
         let var21 = (self.p[var13] & 15) << 2;
         let var22 = (self.p[var14] & 15) << 2;
@@ -203,20 +205,23 @@ impl ImprovedNoise {
         delta_z: f64,
         noise_values: &mut [f64; 3],
     ) -> f64 {
-        let i = self.p_at(grid_x as usize);
-        let i1 = self.p_at((grid_x as usize) + 1);
-        let i2 = self.p_at(i + grid_y as usize);
-        let i3 = self.p_at(i + grid_y as usize + 1);
-        let i4 = self.p_at(i1 + grid_y as usize);
-        let i5 = self.p_at(i1 + grid_y as usize + 1);
-        let i6 = self.p_at(i2 + grid_z as usize);
-        let i7 = self.p_at(i4 + grid_z as usize);
-        let i8 = self.p_at(i3 + grid_z as usize);
-        let i9 = self.p_at(i5 + grid_z as usize);
-        let i10 = self.p_at(i2 + grid_z as usize + 1);
-        let i11 = self.p_at(i4 + grid_z as usize + 1);
-        let i12 = self.p_at(i3 + grid_z as usize + 1);
-        let i13 = self.p_at(i5 + grid_z as usize + 1);
+        let grid_x = (grid_x & 0xFF) as usize;
+        let grid_y = (grid_y & 0xFF) as usize;
+        let grid_z = (grid_z & 0xFF) as usize;
+        let i = self.p_at(grid_x);
+        let i1 = self.p_at(grid_x + 1);
+        let i2 = self.p_at(i + grid_y);
+        let i3 = self.p_at(i + grid_y + 1);
+        let i4 = self.p_at(i1 + grid_y);
+        let i5 = self.p_at(i1 + grid_y + 1);
+        let i6 = self.p_at(i2 + grid_z);
+        let i7 = self.p_at(i4 + grid_z);
+        let i8 = self.p_at(i3 + grid_z);
+        let i9 = self.p_at(i5 + grid_z);
+        let i10 = self.p_at(i2 + grid_z + 1);
+        let i11 = self.p_at(i4 + grid_z + 1);
+        let i12 = self.p_at(i3 + grid_z + 1);
+        let i13 = self.p_at(i5 + grid_z + 1);
 
         let ints = &GRADIENT[i6 & 15];
         let ints1 = &GRADIENT[i7 & 15];

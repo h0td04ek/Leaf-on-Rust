@@ -7,11 +7,13 @@ use leaf_core::network::protocol::common::clientbound_update_tags_packet::{
 use leaf_core::network::protocol::configuration::clientbound_registry_data_packet::ClientboundRegistryDataPacket;
 use leaf_core::resources::{Identifier, ResourceKey};
 
+use crate::world::Biome;
+
 pub struct Registries {
     pub packets: Vec<ClientboundRegistryDataPacket>,
     pub tags: ClientboundUpdateTagsPacket,
     pub overworld_id: i32,
-    pub plains_id: i32,
+    pub biomes: [i32; 10],
 }
 
 impl Registries {
@@ -66,7 +68,7 @@ impl Registries {
         };
         Self {
             overworld_id: index("dimension_type", "overworld"),
-            plains_id: index("worldgen/biome", "plains"),
+            biomes: Biome::NAMES.map(|name| index("worldgen/biome", name)),
             packets,
             tags: ClientboundUpdateTagsPacket::new(tags),
         }

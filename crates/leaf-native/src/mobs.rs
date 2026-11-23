@@ -31,7 +31,7 @@ use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, clear_sight_with, MobTarget, Peers};
 use crate::simulation::SimulationContext;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, FlatWorld};
+use crate::world::{chunk, BlockView, NativeWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
 const FUSE_TICKS: i64 = 80;
@@ -804,7 +804,7 @@ fn spawn_item(ctx: &SimulationContext<'_>, item: i32, position: Vec3, tick: i64)
     );
 }
 
-fn blast_hit(center: Vec3, pos: Vec3, world: &FlatWorld) -> Option<(f32, Vec3)> {
+fn blast_hit(center: Vec3, pos: Vec3, world: &NativeWorld) -> Option<(f32, Vec3)> {
     let displacement = center.vector_to(&pos.add(0.0, 0.35, 0.0));
     let distance = displacement.length();
     if distance >= 8.0 || !clear_sight(world, center, pos.add(0.0, 0.35, 0.0)) {
@@ -825,7 +825,7 @@ fn valid_position(position: Vec3) -> bool {
         && position.z.is_finite()
         && position.x.abs() <= 29_999_984.0
         && position.z.abs() <= 29_999_984.0
-        && FlatWorld::editable(BlockPos::containing_vec3(&position))
+        && NativeWorld::editable(BlockPos::containing_vec3(&position))
 }
 
 fn spiral(index: usize) -> (i32, i32) {
@@ -859,7 +859,7 @@ mod tests {
         let mobs = Mobs::default();
         let mut scene = mobs.0.write().unwrap();
         let ids = AtomicI32::new(1);
-        let world = FlatWorld::new(0);
+        let world = NativeWorld::new(0);
         let audience = Audience::default();
         let obstacle = BlockPos::new(1, 16, 0);
         assert!(world.place_block(obstacle.offset(0, -1, 0), obstacle, 1, |_| false, &audience));
@@ -900,11 +900,11 @@ mod tests {
     fn queues_spawns_in_groups_and_tracks_all_50k_pigs() {
         let directory = TestWorld::new();
         std::fs::create_dir_all(&directory.0).unwrap();
-        let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap());
+        let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap(), 0);
         let maps = Maps::open(directory.0.join("maps.txt")).unwrap();
         let mobs = Mobs::default();
         let ctx = PlayContext {
-            world: &FlatWorld::new(0),
+            world: &NativeWorld::new(0),
             drops: &Drops::default(),
             maps: &maps,
             mobs: &mobs,

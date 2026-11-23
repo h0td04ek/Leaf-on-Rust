@@ -10,9 +10,9 @@ use crate::audience::Audience;
 use crate::blocks::Blocks;
 use crate::workers::Workers;
 
-use super::{matching_half, set_state, state_at, BlockView, FlatWorld, AIR};
+use super::{matching_half, set_state, state_at, BlockView, NativeWorld, AIR};
 
-impl FlatWorld {
+impl NativeWorld {
     pub fn blast(
         &self,
         center: Vec3,
@@ -22,7 +22,7 @@ impl FlatWorld {
         workers: &Workers,
     ) -> Vec<(BlockPos, i32)> {
         let mut edits = self.edits.lock().unwrap();
-        let world = BlockView(Arc::clone(&edits.chunks));
+        let world = BlockView(Arc::clone(&edits.chunks), Arc::clone(&edits.terrain));
         let directions = rays();
         let energies = directions
             .iter()
@@ -75,7 +75,7 @@ fn trace_rays(
         let mut position = center;
         while energy > 0.0 {
             let pos = BlockPos::containing_vec3(&position);
-            if !FlatWorld::editable(pos) {
+            if !NativeWorld::editable(pos) {
                 break;
             }
             let state = world.block(pos);

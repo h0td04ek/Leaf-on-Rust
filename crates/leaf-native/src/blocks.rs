@@ -23,6 +23,7 @@ pub struct Block {
     pub map_color: u8,
     pub blast_resistance: f32,
     pub replaceable: bool,
+    pub transmits_sky: bool,
     first: i32,
     properties: Vec<BlockProperty>,
 }
@@ -83,6 +84,12 @@ impl Blocks {
                     map_color,
                     blast_resistance: 0.0,
                     replaceable,
+                    transmits_sky: replaceable
+                        || name == "glass"
+                        || name == "glass_pane"
+                        || name.ends_with("_glass")
+                        || name.ends_with("_glass_pane")
+                        || name.ends_with("_leaves"),
                     first,
                     properties,
                 });

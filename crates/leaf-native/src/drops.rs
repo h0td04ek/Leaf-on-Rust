@@ -17,7 +17,7 @@ use crate::gameplay::{item_data, PlayContext};
 use crate::items::ITEM_ENTITY;
 use crate::wire::Wire;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, FlatWorld, AIR};
+use crate::world::{chunk, BlockView, NativeWorld, AIR};
 
 const DROP_WORK_BATCH: usize = 256;
 
@@ -46,7 +46,7 @@ impl Drops {
         });
     }
 
-    pub fn update(&self, tick: i64, world: &FlatWorld, workers: &Workers) {
+    pub fn update(&self, tick: i64, world: &NativeWorld, workers: &Workers) {
         let mut items = self.0.lock().unwrap();
         if items.is_empty() {
             return;

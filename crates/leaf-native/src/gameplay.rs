@@ -50,14 +50,14 @@ use crate::player_data::PlayerData;
 use crate::recipes::Recipes;
 use crate::simulation::SimulationContext;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{FlatWorld, AIR, SPAWN_Y};
+use crate::world::{NativeWorld, AIR};
 
 const CHEST: usize = 38;
 const OFFHAND: usize = 40;
 const TICK: Duration = Duration::from_millis(50);
 
 pub struct PlayContext<'a> {
-    pub world: &'a FlatWorld,
+    pub world: &'a NativeWorld,
     pub drops: &'a Drops,
     pub maps: &'a Maps,
     pub mobs: &'a Mobs,
@@ -168,8 +168,8 @@ impl Gameplay {
         wire.send(ids, &self.abilities())
     }
 
-    pub fn reset_after_death(&mut self) {
-        self.player.position = Vec3::new(0.5, f64::from(SPAWN_Y), 0.5);
+    pub fn reset_after_death(&mut self, spawn: Vec3) {
+        self.player.position = spawn;
         self.player.yaw = 0.0;
         self.player.pitch = 0.0;
         self.player.health = 20.0;

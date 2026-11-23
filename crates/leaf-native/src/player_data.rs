@@ -11,7 +11,7 @@ use leaf_core::world::phys::vec3::Vec3;
 
 use crate::items::item_id;
 use crate::wire::invalid;
-use crate::world::SPAWN_Y;
+use crate::world::{Generation, WorldType, SPAWN_Y};
 
 const INVENTORY_SLOTS: usize = 41;
 const FORMAT_VERSION: i32 = 1;
@@ -211,6 +211,66 @@ impl PlayerStore {
         })
     }
 
+    pub fn generation(
+        &self,
+        requested_type: Option<WorldType>,
+        requested_seed: Option<i64>,
+    ) -> io::Result<Generation> {
+        let path = self.directory.with_file_name("world-generation");
+        match fs::read_to_string(&path) {
+            Ok(data) => {
+                let mut fields = data.split_ascii_whitespace();
+                let (Some("1"), Some(kind), Some(seed), None) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                else {
+                    return Err(invalid("invalid native world-generation metadata"));
+                };
+                let world_type =
+                    WorldType::parse(kind).ok_or_else(|| invalid("invalid saved world type"))?;
+                let seed = seed
+                    .parse()
+                    .map_err(|_| invalid("invalid saved world seed"))?;
+                if requested_type.is_some_and(|kind| kind != world_type)
+                    || requested_seed.is_some_and(|value| value != seed)
+                {
+                    return Err(invalid("the data directory already has a different generator or seed; choose another --data-dir"));
+                }
+                Ok(Generation { world_type, seed })
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let legacy_flat = self.region_path().exists()
+                    || self.ops_path().exists()
+                    || self.directory.read_dir()?.next().transpose()?.is_some();
+                if legacy_flat
+                    && (requested_type == Some(WorldType::Normal)
+                        || requested_seed.is_some_and(|seed| seed != 0))
+                {
+                    return Err(invalid("the data directory contains a legacy flat world; choose another --data-dir for a generated world"));
+                }
+                let world_type = requested_type.unwrap_or(if legacy_flat {
+                    WorldType::Flat
+                } else {
+                    WorldType::Normal
+                });
+                let seed = requested_seed.unwrap_or_else(|| {
+                    if world_type == WorldType::Flat {
+                        0
+                    } else {
+                        Uuid::random().most_significant_bits
+                    }
+                });
+                let temporary = path.with_extension("tmp");
+                let mut file = File::create(&temporary)?;
+                writeln!(file, "1 {} {seed}", world_type.name())?;
+                file.sync_all()?;
+                drop(file);
+                fs::rename(temporary, path)?;
+                Ok(Generation { world_type, seed })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn region_path(&self) -> PathBuf {
         self.directory.with_file_name("native-region")
     }
@@ -223,12 +283,16 @@ impl PlayerStore {
         self.directory.with_file_name("ops.txt")
     }
 
-    pub fn load(&self, uuid: Uuid) -> io::Result<PlayerData> {
+    pub fn load(&self, uuid: Uuid, spawn: Vec3, mode: GameType) -> io::Result<PlayerData> {
         let path = self.directory.join(format!("{uuid}.dat"));
         let file = match File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(PlayerData::default())
+                return Ok(PlayerData {
+                    position: spawn,
+                    mode,
+                    ..PlayerData::default()
+                })
             }
             Err(error) => return Err(error),
         };

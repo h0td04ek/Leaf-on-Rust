@@ -4,6 +4,10 @@ mod blast;
 mod fill;
 #[path = "world_storage.rs"]
 mod storage;
+#[path = "terrain.rs"]
+mod terrain;
+
+pub use terrain::{Biome, Generation, WorldType};
 
 pub use fill::FillMode;
 
@@ -24,7 +28,6 @@ use leaf_core::network::friendly_byte_buf::FriendlyByteBuf;
 use leaf_core::network::protocol::game::{
     clientbound_block_update_packet::ClientboundBlockUpdatePacket,
     clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData,
-    clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket,
     clientbound_light_update_packet_data::ClientboundLightUpdatePacketData,
 };
 
@@ -33,6 +36,7 @@ use crate::maps::MAP_SIZE;
 use crate::wire::{PacketIds, Wire};
 
 use storage::WorldStorage;
+use terrain::{block_index, GeneratedChunk, Section, Terrain};
 
 const MIN_Y: i32 = -64;
 const SECTIONS: usize = 24;
@@ -44,8 +48,8 @@ type Changes = HashMap<BlockPos, i32>;
 type Chunk = (i32, i32);
 type WorldEdits = HashMap<Chunk, Arc<Changes>>;
 
-#[derive(Default)]
 struct Edits {
+    terrain: Arc<Terrain>,
     chunks: Arc<WorldEdits>,
     dirty: HashSet<Chunk>,
 }
@@ -59,12 +63,12 @@ impl Deref for Edits {
 }
 
 #[derive(Clone)]
-pub struct BlockView(Arc<WorldEdits>);
+pub struct BlockView(Arc<WorldEdits>, Arc<Terrain>);
 
-pub struct FlatWorld {
-    flat_chunk_body: Vec<u8>,
-    light: ClientboundLightUpdatePacketData,
-    biome: i32,
+pub struct NativeWorld {
+    terrain: Arc<Terrain>,
+    biomes: [i32; 10],
+    spawn_column: (i32, i32),
     edits: Mutex<Edits>,
     storage: Option<Mutex<WorldStorage>>,
 }
@@ -73,67 +77,62 @@ pub fn chunk(pos: BlockPos) -> (i32, i32) {
     (pos.x >> 4, pos.z >> 4)
 }
 
-fn base(pos: BlockPos) -> i32 {
-    if (MIN_Y..SPAWN_Y).contains(&pos.y) {
-        STONE
-    } else {
-        AIR
-    }
-}
-
-impl FlatWorld {
+impl NativeWorld {
+    #[cfg(test)]
     pub fn new(biome: i32) -> Self {
-        let mut sections = FriendlyByteBuf::new();
-        let solid = ((SPAWN_Y - MIN_Y) / 16) as usize;
-        for section in 0..SECTIONS {
-            let stone = section < solid;
-            sections.write_short(if stone { 4096 } else { 0 });
-            // Single-value palettes in 1.21.11 have no storage longs.
-            sections
-                .write_byte(0)
-                .write_var_int(if stone { STONE } else { AIR });
-            sections.write_byte(0).write_var_int(biome);
-        }
-        let data = ClientboundLevelChunkPacketData::new(
-            [(1, heightmap()), (4, heightmap()), (5, heightmap())]
-                .into_iter()
-                .collect(),
-            sections.copy_bytes(),
-            Vec::new(),
-        );
-
-        let layers = SECTIONS + 2;
-        let sky = solid + 1;
-        let light = ClientboundLightUpdatePacketData::new(
-            (0..layers).map(|index| index >= sky).collect(),
-            Vec::new(),
-            (0..layers).map(|index| index < sky).collect(),
-            vec![true; layers],
-            vec![vec![0xff; 2048]; layers - sky],
-            Vec::new(),
-        );
-        let mut body = FriendlyByteBuf::new();
-        data.write(&mut body);
-        light.write(&mut body);
-        Self {
-            flat_chunk_body: body.copy_bytes(),
-            light,
-            biome,
-            edits: Mutex::default(),
-            storage: None,
-        }
+        Self::from_terrain([biome; 10], Arc::new(Terrain::new(Generation::FLAT)), None).unwrap()
     }
 
-    pub fn open(biome: i32, region_path: PathBuf) -> io::Result<Self> {
-        let storage = WorldStorage::new(region_path);
-        let chunks = Arc::new(storage.load()?);
-        let mut world = Self::new(biome);
-        world.edits = Mutex::new(Edits {
-            chunks,
-            dirty: HashSet::new(),
-        });
-        world.storage = Some(Mutex::new(storage));
-        Ok(world)
+    pub fn open(
+        biomes: [i32; 10],
+        generation: Generation,
+        region_path: PathBuf,
+    ) -> io::Result<Self> {
+        Self::from_terrain(
+            biomes,
+            Arc::new(Terrain::new(generation)),
+            Some(region_path),
+        )
+    }
+
+    fn from_terrain(
+        biomes: [i32; 10],
+        terrain: Arc<Terrain>,
+        path: Option<PathBuf>,
+    ) -> io::Result<Self> {
+        let storage = path.map(|path| WorldStorage::new(path, Arc::clone(&terrain)));
+        let chunks = match &storage {
+            Some(storage) => Arc::new(storage.load()?),
+            None => Arc::default(),
+        };
+        Ok(Self {
+            spawn_column: terrain.spawn_column(),
+            terrain: Arc::clone(&terrain),
+            biomes,
+            edits: Mutex::new(Edits {
+                terrain,
+                chunks,
+                dirty: HashSet::new(),
+            }),
+            storage: storage.map(Mutex::new),
+        })
+    }
+
+    pub fn generation(&self) -> Generation {
+        self.terrain.generation()
+    }
+
+    pub fn sea_level(&self) -> i32 {
+        self.terrain.sea_level()
+    }
+
+    pub fn spawn(&self) -> BlockPos {
+        let (x, z) = self.spawn_column;
+        if let Some(position) = self.open_surface(x, z) {
+            BlockPos::containing_vec3(&position)
+        } else {
+            BlockPos::new(x, self.sea_level() + 1, z)
+        }
     }
 
     pub fn save(&self, game_time: i64) -> io::Result<usize> {
@@ -162,7 +161,10 @@ impl FlatWorld {
     }
 
     pub fn snapshot(&self) -> BlockView {
-        BlockView(Arc::clone(&self.edits.lock().unwrap().chunks))
+        BlockView(
+            Arc::clone(&self.edits.lock().unwrap().chunks),
+            Arc::clone(&self.terrain),
+        )
     }
 
     pub fn block(&self, pos: BlockPos) -> i32 {
@@ -281,12 +283,20 @@ impl FlatWorld {
     }
 
     pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
-        has_room(&self.edits.lock().unwrap(), position, height, aquatic)
+        has_room(
+            &self.edits.lock().unwrap(),
+            &self.terrain,
+            position,
+            height,
+            aquatic,
+        )
     }
 
     pub fn open_surface(&self, x: i32, z: i32) -> Option<Vec3> {
         let edits = self.edits.lock().unwrap();
-        let column = edits.get(&(x >> 4, z >> 4));
+        let coord = (x >> 4, z >> 4);
+        let terrain = self.terrain.chunk(coord);
+        let column = edits.get(&coord).map(Arc::as_ref);
         let top_edit = column
             .into_iter()
             .flat_map(|changes| changes.iter())
@@ -295,11 +305,15 @@ impl FlatWorld {
             })
             .map(|(pos, _)| pos.y)
             .max();
-        let top = top_edit.unwrap_or(SPAWN_Y - 1).max(SPAWN_Y - 1);
+        let generated_top = terrain.column_top(x, z).saturating_add(1);
+        let top = top_edit.unwrap_or(generated_top).max(generated_top);
         for y in (MIN_Y..=top).rev() {
             let pos = BlockPos::new(x, y, z);
-            if !Blocks::vanilla().get(state_at(&edits, pos)).replaceable {
-                return FlatWorld::editable(pos.offset(0, 1, 0))
+            if !Blocks::vanilla()
+                .get(block_at(column, &terrain, pos))
+                .replaceable
+            {
+                return NativeWorld::editable(pos.offset(0, 1, 0))
                     .then(|| Vec3::new(f64::from(x) + 0.5, f64::from(y + 1), f64::from(z) + 0.5));
             }
         }
@@ -362,6 +376,16 @@ impl FlatWorld {
         let side = MAP_SIZE as usize;
         let mut pixels = vec![46; side * side]; // stone, normal brightness
         let mut heights = vec![SPAWN_Y - 1; pixels.len()];
+        if self.generation().world_type == WorldType::Normal {
+            let blocks = Blocks::vanilla();
+            for index in 0..pixels.len() {
+                let px = x + index as i32 % MAP_SIZE * step + step / 2;
+                let pz = z + index as i32 / MAP_SIZE * step + step / 2;
+                let (height, state) = self.terrain.surface(px, pz);
+                heights[index] = height;
+                pixels[index] = blocks.get(state).map_color * 4 + 2;
+            }
+        }
         let world = self.edits.lock().unwrap();
         let end_x = x + MAP_SIZE * step;
         let end_z = z + MAP_SIZE * step;
@@ -389,116 +413,229 @@ impl FlatWorld {
     }
 
     pub fn send_chunk(&self, x: i32, z: i32, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
-        let changed = self.edits.lock().unwrap().get(&(x, z)).cloned();
-        if let Some(changes) = changed {
-            let data = self.changed_chunk(x, z, &changes);
-            let packet = ClientboundLevelChunkWithLightPacket::new(x, z, data, self.light.clone());
-            wire.send(ids, &packet)
+        let changes = self.edits.lock().unwrap().get(&(x, z)).cloned();
+        let terrain = self.terrain.chunk((x, z));
+        let mut prefix = FriendlyByteBuf::new();
+        prefix
+            .write_var_int(ids.id("level_chunk_with_light")?)
+            .write_int(x)
+            .write_int(z);
+        if let Some(changes) = changes {
+            let encoded = encode_chunk(&terrain, Some(&changes), &self.biomes);
+            wire.send_parts(&prefix.copy_bytes(), &encoded)
         } else {
-            // The unedited terrain and light body are the same in every chunk.
-            let mut prefix = FriendlyByteBuf::new();
-            prefix
-                .write_var_int(ids.id("level_chunk_with_light")?)
-                .write_int(x)
-                .write_int(z);
-            wire.send_parts(&prefix.copy_bytes(), &self.flat_chunk_body)
+            let encoded = terrain
+                .encoded
+                .get_or_init(|| encode_chunk(&terrain, None, &self.biomes));
+            wire.send_parts(&prefix.copy_bytes(), encoded)
         }
     }
-    fn changed_chunk(&self, x: i32, z: i32, changes: &Changes) -> ClientboundLevelChunkPacketData {
-        let mut sections = FriendlyByteBuf::new();
-        let mut heights = vec![0_i64; 256usize.div_ceil(7)];
-        for section in 0..SECTIONS {
-            let mut palette = vec![AIR];
-            let mut lookup = HashMap::from([(AIR, 0)]);
-            let mut indices = [0usize; 4096];
-            let mut solid = 0;
-            for (index, palette_index) in indices.iter_mut().enumerate() {
-                let lx = index & 15;
-                let lz = (index >> 4) & 15;
-                let local_y = 16 * section + (index >> 8);
-                let pos = BlockPos::new(
-                    x * 16 + lx as i32,
-                    MIN_Y + local_y as i32,
-                    z * 16 + lz as i32,
-                );
-                let state = changes.get(&pos).copied().unwrap_or_else(|| base(pos));
-                if state != AIR {
-                    solid += 1;
-                    let column = lx + lz * 16;
-                    let shift = 9 * (column % 7);
-                    let packed = &mut heights[column / 7];
-                    *packed = (*packed & !(511 << shift)) | ((local_y as i64 + 1) << shift);
-                }
-                *palette_index = *lookup.entry(state).or_insert_with(|| {
-                    palette.push(state);
-                    palette.len() - 1
-                });
-            }
-            sections.write_short(solid);
-            if solid == 0 || (solid == 4096 && palette.len() == 2) {
-                sections
+}
+
+fn encode_chunk(
+    chunk: &GeneratedChunk,
+    changes: Option<&Changes>,
+    biome_ids: &[i32; 10],
+) -> Vec<u8> {
+    let mut buffer = FriendlyByteBuf::new();
+    let mut heights = [MIN_Y - 1; 256];
+    let mut sky_heights = heights;
+    let blocks = Blocks::vanilla();
+    let mut palette_indices = vec![0_u16; blocks.state_count()];
+    let mut edited: [Vec<(usize, u16)>; SECTIONS] = std::array::from_fn(|_| Vec::new());
+    for (&pos, &state) in changes.into_iter().flatten() {
+        let (section, index) = block_index(pos).expect("a block edit is within the dimension");
+        edited[section].push((index, state as u16));
+    }
+    let biomes: [u16; 64] =
+        std::array::from_fn(|index| biome_ids[chunk.biomes[index % 16] as usize] as u16);
+    let mut encoded_biomes = FriendlyByteBuf::new();
+    write_palette(&mut encoded_biomes, &biomes, &mut palette_indices, 1, 3, 7);
+    let encoded_biomes = encoded_biomes.copy_bytes();
+    for (number, original) in chunk.sections.iter().enumerate() {
+        let bottom = MIN_Y + number as i32 * 16;
+        match (original, edited[number].is_empty()) {
+            (Section::Uniform(state), true) => {
+                let solid = if *state == AIR as u16 { 0 } else { 4096 };
+                buffer
+                    .write_short(solid)
                     .write_byte(0)
-                    .write_var_int(palette[usize::from(solid != 0)]);
-            } else {
-                let local_bits =
-                    (usize::BITS - (palette.len() - 1).leading_zeros()).max(4) as usize;
-                let global = local_bits > 8;
-                let bits = if global { GLOBAL_BITS } else { local_bits };
-                sections.write_byte(bits as i32);
-                if !global {
-                    sections.write_var_int(palette.len() as i32);
-                    for &id in &palette {
-                        sections.write_var_int(id);
+                    .write_var_int(i32::from(*state));
+                if solid != 0 {
+                    heights.fill(bottom + 15);
+                    if !blocks.get(i32::from(*state)).transmits_sky {
+                        sky_heights.fill(bottom + 15);
                     }
-                }
-                for group in indices.chunks(64 / bits) {
-                    let mut word = 0_i64;
-                    for (position, &index) in group.iter().enumerate() {
-                        let index = if global {
-                            palette[index] as usize
-                        } else {
-                            index
-                        };
-                        word |= (index as i64) << (position * bits);
-                    }
-                    sections.write_long(word);
                 }
             }
-            sections.write_byte(0).write_var_int(self.biome);
+            _ => {
+                let mut values = match original {
+                    Section::Uniform(state) => [*state; 4096],
+                    Section::Mixed(states) => **states,
+                };
+                for &(index, state) in &edited[number] {
+                    values[index] = state;
+                }
+                let mut count = 0;
+                for (index, &state) in values.iter().enumerate() {
+                    if state != AIR as u16 {
+                        count += 1;
+                        let y = bottom + (index / 256) as i32;
+                        heights[index % 256] = y;
+                        if !blocks.get(i32::from(state)).transmits_sky {
+                            sky_heights[index % 256] = y;
+                        }
+                    }
+                }
+                buffer.write_short(count);
+                write_palette(
+                    &mut buffer,
+                    &values,
+                    &mut palette_indices,
+                    4,
+                    8,
+                    GLOBAL_BITS,
+                );
+            }
         }
-        ClientboundLevelChunkPacketData::new(
-            [(1, heights.clone()), (4, heights.clone()), (5, heights)]
-                .into_iter()
-                .collect(),
-            sections.copy_bytes(),
-            Vec::new(),
-        )
+        buffer.write_bytes(&encoded_biomes);
     }
+    let mut packed = vec![0_i64; 256usize.div_ceil(7)];
+    for (column, height) in heights.iter().enumerate() {
+        packed[column / 7] |= i64::from(height - MIN_Y + 1) << (9 * (column % 7));
+    }
+    let data = ClientboundLevelChunkPacketData::new(
+        [(1, packed.clone()), (4, packed.clone()), (5, packed)]
+            .into_iter()
+            .collect(),
+        buffer.copy_bytes(),
+        Vec::new(),
+    );
+    let mut encoded = FriendlyByteBuf::new();
+    data.write(&mut encoded);
+    sky_light(&sky_heights).write(&mut encoded);
+    encoded.copy_bytes()
+}
+
+fn write_palette(
+    buffer: &mut FriendlyByteBuf,
+    states: &[u16],
+    palette_indices: &mut [u16],
+    min_bits: usize,
+    max_local: usize,
+    global_bits: usize,
+) {
+    let mut palette = Vec::new();
+    for &state in states {
+        let index = &mut palette_indices[usize::from(state)];
+        if *index == 0 {
+            palette.push(state);
+            *index = palette.len() as u16;
+        }
+    }
+    if palette.len() == 1 {
+        buffer.write_byte(0).write_var_int(i32::from(palette[0]));
+    } else {
+        let local_bits = (usize::BITS - (palette.len() - 1).leading_zeros()) as usize;
+        let global = local_bits > max_local;
+        let bits = if global {
+            global_bits
+        } else {
+            local_bits.max(min_bits)
+        };
+        buffer.write_byte(bits as i32);
+        if !global {
+            buffer.write_var_int(palette.len() as i32);
+            for &id in &palette {
+                buffer.write_var_int(i32::from(id));
+            }
+        }
+        for group in states.chunks(64 / bits) {
+            let mut word = 0_i64;
+            for (position, &state) in group.iter().enumerate() {
+                let value = if global {
+                    state
+                } else {
+                    palette_indices[usize::from(state)] - 1
+                };
+                word |= i64::from(value) << (position * bits);
+            }
+            buffer.write_long(word);
+        }
+    }
+    for id in palette {
+        palette_indices[usize::from(id)] = 0;
+    }
+}
+
+fn sky_light(heights: &[i32; 256]) -> ClientboundLightUpdatePacketData {
+    let mut present = Vec::new();
+    let mut empty = Vec::new();
+    let mut layers = Vec::new();
+    let minimum = *heights.iter().min().unwrap();
+    let maximum = *heights.iter().max().unwrap();
+    for section in 0..SECTIONS + 2 {
+        let bottom = MIN_Y + section as i32 * 16 - 16;
+        let has_sky = bottom + 15 > minimum;
+        present.push(has_sky);
+        empty.push(!has_sky);
+        if !has_sky {
+            continue;
+        }
+        let mut light = vec![0xff; 2048];
+        if bottom <= maximum {
+            for y in 0..16 {
+                for (column, pair) in heights.chunks_exact(2).enumerate() {
+                    let low = if bottom + y > pair[0] { 0x0f } else { 0 };
+                    let high = if bottom + y > pair[1] { 0xf0 } else { 0 };
+                    light[y as usize * 128 + column] = low | high;
+                }
+            }
+        }
+        layers.push(light);
+    }
+    ClientboundLightUpdatePacketData::new(
+        present,
+        Vec::new(),
+        empty,
+        vec![true; SECTIONS + 2],
+        layers,
+        Vec::new(),
+    )
 }
 
 impl BlockView {
     pub fn block(&self, pos: BlockPos) -> i32 {
-        state_at(&self.0, pos)
+        self.0
+            .get(&chunk(pos))
+            .and_then(|changes| changes.get(&pos).copied())
+            .unwrap_or_else(|| self.1.block(pos))
     }
 
     pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
-        has_room(&self.0, position, height, aquatic)
+        has_room(&self.0, &self.1, position, height, aquatic)
     }
 }
 
-fn has_room(edits: &WorldEdits, position: Vec3, height: f64, aquatic: bool) -> bool {
+fn has_room(
+    edits: &WorldEdits,
+    terrain: &Terrain,
+    position: Vec3,
+    height: f64,
+    aquatic: bool,
+) -> bool {
     let floor = BlockPos::containing_vec3(&position);
-    if !FlatWorld::editable(floor) {
+    if !NativeWorld::editable(floor) {
         return false;
     }
     let roof = BlockPos::containing_vec3(&position.add(0.0, height - 0.01, 0.0));
-    let chunk_edits = edits.get(&chunk(floor));
+    let coord = chunk(floor);
+    let chunk_edits = edits.get(&coord).map(Arc::as_ref);
+    let generated = terrain.chunk(coord);
     let blocks = Blocks::vanilla();
     (floor.y..=roof.y).all(|y| {
         let pos = BlockPos::new(floor.x, y, floor.z);
-        let state = chunk_edits
-            .and_then(|edits| edits.get(&pos).copied())
-            .unwrap_or_else(|| base(pos));
+        let state = block_at(chunk_edits, &generated, pos);
         if state == AIR {
             return !aquatic;
         }
@@ -511,11 +648,17 @@ fn has_room(edits: &WorldEdits, position: Vec3, height: f64, aquatic: bool) -> b
     })
 }
 
-fn state_at(edits: &WorldEdits, pos: BlockPos) -> i32 {
+fn block_at(edits: Option<&Changes>, generated: &GeneratedChunk, pos: BlockPos) -> i32 {
+    edits
+        .and_then(|changes| changes.get(&pos).copied())
+        .unwrap_or_else(|| generated.block(pos))
+}
+
+fn state_at(edits: &Edits, pos: BlockPos) -> i32 {
     edits
         .get(&chunk(pos))
         .and_then(|changes| changes.get(&pos).copied())
-        .unwrap_or_else(|| base(pos))
+        .unwrap_or_else(|| edits.terrain.block(pos))
 }
 
 fn update(edits: &mut Edits, pos: BlockPos, state: i32, audience: &Audience) {
@@ -532,9 +675,10 @@ fn set_state(edits: &mut Edits, pos: BlockPos, state: i32) {
         return;
     }
     edits.dirty.insert(coord);
+    let base_state = edits.terrain.block(pos);
     let edits = Arc::make_mut(&mut edits.chunks);
     let changes = Arc::make_mut(edits.entry(coord).or_default());
-    if state == base(pos) {
+    if state == base_state {
         changes.remove(&pos);
     } else {
         changes.insert(pos, state);
@@ -547,14 +691,4 @@ fn set_state(edits: &mut Edits, pos: BlockPos, state: i32) {
 fn matching_half(block: &Block, state: i32, property: &str, value: &str) -> bool {
     let actual = Blocks::vanilla().get(state);
     block.name == actual.name && actual.property(state, property) == Some(value)
-}
-
-fn heightmap() -> Vec<i64> {
-    // The 384-block dimension uses nine bits per entry, seven entries per long.
-    let mut data = vec![0; 256usize.div_ceil(7)];
-    let height = i64::from(SPAWN_Y - MIN_Y);
-    for column in 0..256 {
-        data[column / 7] |= height << (9 * (column % 7));
-    }
-    data
 }

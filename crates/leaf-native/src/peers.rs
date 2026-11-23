@@ -27,7 +27,7 @@ use leaf_core::util::{mth, uuid::Uuid};
 use leaf_core::world::{item::item_stack::ItemStack, level::game_type::GameType, phys::vec3::Vec3};
 
 use crate::wire::{PacketIds, Wire};
-use crate::world::{FlatWorld, AIR};
+use crate::world::{NativeWorld, AIR};
 
 const PLAYER_ENTITY_TYPE: i32 = 155; // Minecraft Java 1.21.11 entity_type registry.
 const ATTACK_COOLDOWN: Duration = Duration::from_millis(500);
@@ -223,7 +223,7 @@ impl Presence<'_> {
             .map_or(20.0, |player| player.player.health)
     }
 
-    pub fn attack(&self, target_id: i32, world: &FlatWorld) {
+    pub fn attack(&self, target_id: i32, world: &NativeWorld) {
         if self.id == target_id {
             return;
         }
@@ -327,7 +327,7 @@ pub fn attack_damage(item: &ItemStack) -> f32 {
         })
 }
 
-pub fn clear_sight(world: &FlatWorld, from: Vec3, to: Vec3) -> bool {
+pub fn clear_sight(world: &NativeWorld, from: Vec3, to: Vec3) -> bool {
     clear_sight_with(from, to, |pos| world.block(pos))
 }
 

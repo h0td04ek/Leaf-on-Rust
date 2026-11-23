@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use leaf_core::authlib::game_profile::GameProfile;
-use leaf_core::core::block_pos::BlockPos;
 use leaf_core::core::holder::Holder;
 use leaf_core::core::shared_constants::CURRENT_PROTOCOL_VERSION;
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
@@ -70,7 +69,7 @@ use crate::recipes::Recipes;
 use crate::registries::Registries;
 use crate::simulation::{Autosave, Simulation};
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
-use crate::world::{FlatWorld, SPAWN_Y};
+use crate::world::{Generation, NativeWorld, WorldType};
 
 pub const MAX_PLAYERS: usize = 8;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(8);
@@ -100,7 +99,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(player_data: PlayerStore, workers: usize) -> io::Result<Self> {
+    pub fn new(
+        player_data: PlayerStore,
+        workers: usize,
+        generation: Generation,
+    ) -> io::Result<Self> {
         Items::vanilla();
         Blocks::vanilla();
         Recipes::vanilla();
@@ -108,8 +111,8 @@ impl Server {
         let operators = Operators::open(player_data.ops_path())?;
         let maps = Maps::open(player_data.maps_path())?;
         let simulation = Simulation::start(
-            FlatWorld::open(registries.plains_id, player_data.region_path())?,
-            Commands::new(operators),
+            NativeWorld::open(registries.biomes, generation, player_data.region_path())?,
+            Commands::new(operators, generation.seed),
             workers,
         )?;
         Ok(Self {
@@ -161,7 +164,12 @@ impl Server {
         wire.expect(&self.status_in, "status_request")?.finish()?;
         let status = ServerStatus {
             version: Some(Version::current()),
-            description: Component::literal("Leaf native | Flat world preview"),
+            description: Component::literal(
+                match self.simulation.terrain.generation().world_type {
+                    WorldType::Flat => "Leaf native | Flat world preview",
+                    WorldType::Normal => "Leaf native | Overworld",
+                },
+            ),
             players: Some(Players::new(
                 MAX_PLAYERS as i32,
                 self.online.load(Ordering::Relaxed) as i32,
@@ -209,7 +217,16 @@ impl Server {
                 joined: false,
             }
         };
-        let player = match self.player_data.load(uuid) {
+        let world = &self.simulation.terrain;
+        let mode = if world.generation().world_type == WorldType::Normal {
+            GameType::Survival
+        } else {
+            GameType::Creative
+        };
+        let player = match self
+            .player_data
+            .load(uuid, world.spawn().get_bottom_center(), mode)
+        {
             Ok(player) => player,
             Err(error) => {
                 eprintln!("Could not load player {uuid}: {error}");
@@ -362,7 +379,7 @@ impl Server {
             ids,
             &ClientboundSetDefaultSpawnPositionPacket::new(RespawnData::of(
                 LevelKey::overworld(),
-                BlockPos::new(0, SPAWN_Y, 0),
+                self.simulation.terrain.spawn(),
                 0.0,
                 0.0,
             )),
@@ -390,14 +407,14 @@ impl Server {
         CommonPlayerSpawnInfo {
             dimension_type: Holder::Reference(self.registries.overworld_id),
             dimension: LevelKey::overworld(),
-            seed: 0,
+            seed: self.simulation.terrain.generation().biome_seed(),
             game_type: mode,
             previous_game_type: None,
             is_debug: false,
-            is_flat: true,
+            is_flat: self.simulation.terrain.generation().world_type == WorldType::Flat,
             last_death_location: None,
             portal_cooldown: 0,
-            sea_level: SPAWN_Y - 1,
+            sea_level: self.simulation.terrain.sea_level(),
         }
     }
 
@@ -736,7 +753,7 @@ impl Server {
                     let action = body.varint()?;
                     body.finish()?;
                     if action == 0 && presence.health() == 0.0 {
-                        game.reset_after_death();
+                        game.reset_after_death(self.simulation.terrain.spawn().get_bottom_center());
                         presence.respawn(game.view());
                         confirmed = false;
                         teleport_id = teleport_id.wrapping_add(1);
@@ -793,7 +810,7 @@ impl Server {
                 "player_loaded" if !player_loaded => {
                     body.finish()?;
                     player_loaded = true;
-                    println!("{name} loaded the flat world");
+                    println!("{name} loaded the world");
                 }
                 kind @ ("move_player_pos"
                 | "move_player_pos_rot"

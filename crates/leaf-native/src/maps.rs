@@ -8,7 +8,7 @@ use leaf_core::resources::Identifier;
 use leaf_core::world::item::item_stack::ItemStack;
 use leaf_core::world::level::saveddata::maps::{MapId, MapPatch};
 
-use crate::world::FlatWorld;
+use crate::world::NativeWorld;
 
 const MAX_SCALE: u8 = 4;
 pub const MAP_SIZE: i32 = 128;
@@ -106,7 +106,7 @@ impl Maps {
         Ok(id)
     }
 
-    pub fn render(&self, id: MapId, world: &FlatWorld) -> Option<ClientboundMapItemDataPacket> {
+    pub fn render(&self, id: MapId, world: &NativeWorld) -> Option<ClientboundMapItemDataPacket> {
         let map = self.get(id)?;
         let step = 1 << map.scale;
         let offset = MAP_SIZE / 2 * step;

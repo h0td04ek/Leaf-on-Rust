@@ -28,6 +28,7 @@ use crate::items::{item_id, named_id};
 use crate::player_data::PlayerStore;
 use crate::recipes::Recipes;
 use crate::session::Server;
+use crate::world::Generation;
 
 pub(crate) struct TestWorld(pub(crate) PathBuf);
 
@@ -45,7 +46,7 @@ impl Drop for TestWorld {
 
 fn connect(world: &TestWorld) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
     let store = PlayerStore::open(&world.0).unwrap();
-    connect_server(Arc::new(Server::new(store, 1).unwrap()))
+    connect_server(Arc::new(Server::new(store, 1, Generation::FLAT).unwrap()))
 }
 
 fn connect_server(server: Arc<Server>) -> (TcpStream, thread::JoinHandle<io::Result<()>>) {
@@ -114,6 +115,80 @@ fn replies_to_status_and_ping() {
     assert_eq!(id, 1);
     assert_eq!(body.read_long(), 0x1020304050607080);
     worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn normal_world_logs_in_on_normal_difficulty_and_reloads_terrain_edits() {
+    use crate::world::{NativeWorld, WorldType};
+    use leaf_core::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
+    use leaf_core::world::difficulty::Difficulty;
+
+    let directory = TestWorld::new();
+    let store = PlayerStore::open(&directory.0).unwrap();
+    let generation = store.generation(None, Some(322)).unwrap();
+    assert_eq!(generation.world_type, WorldType::Normal);
+    let regions = store.region_path();
+    let server = Arc::new(Server::new(store, 1, generation).unwrap());
+    let (mut client, worker) = connect_server(server);
+    enter_play(&mut client, "h0td04ek", 2);
+    let difficulty = ClientboundChangeDifficultyPacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 10));
+    assert_eq!(difficulty.difficulty, Difficulty::Normal);
+    let mut teleport = multiplayer_packet(&mut client, 70);
+    let teleport_id = teleport.read_var_int();
+    let position = teleport.read_vec3();
+    assert!(position.y > 63.0, "{position:?}");
+    send(&mut client, 0, |buf| {
+        buf.write_var_int(teleport_id);
+    });
+
+    let packet = ClientboundLevelChunkWithLightPacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 44));
+    assert_eq!(
+        (packet.x, packet.z),
+        (
+            position.x.floor() as i32 >> 4,
+            position.z.floor() as i32 >> 4
+        )
+    );
+    assert!(packet.chunk_data.buffer.len() > 2000);
+    assert!(!packet.light_data.sky_updates.is_empty());
+    let pos = BlockPos::containing_vec3(&position).offset(1, 2, 0);
+    command(
+        &mut client,
+        &format!(
+            "fill {} {} {} {} {} {} stone",
+            pos.x, pos.y, pos.z, pos.x, pos.y, pos.z
+        ),
+    );
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "save-all flush");
+    multiplayer_packet(&mut client, 119);
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let store = PlayerStore::open(&directory.0).unwrap();
+    assert_eq!(store.generation(None, None).unwrap(), generation);
+    assert!(store.generation(None, Some(323)).is_err());
+    let world = NativeWorld::open(
+        crate::registries::Registries::load().biomes,
+        generation,
+        regions,
+    )
+    .unwrap();
+    assert_eq!(
+        world.block(pos),
+        Blocks::vanilla().named("stone").unwrap().default
+    );
+    let spawn = world.spawn();
+    assert!(world.has_room(spawn.get_bottom_center(), 1.8, false));
+    assert!(world.block(spawn.offset(0, -1, 0)) != 0);
+
+    let legacy = TestWorld::new();
+    let store = PlayerStore::open(&legacy.0).unwrap();
+    std::fs::write(store.ops_path(), "h0td04ek").unwrap();
+    assert!(store.generation(Some(WorldType::Normal), None).is_err());
+    assert_eq!(store.generation(None, None).unwrap(), Generation::FLAT);
 }
 
 #[test]
@@ -555,7 +630,11 @@ fn restores_player_inventory_and_exact_location_after_server_restart() {
 
     let store = PlayerStore::open(&world.0).unwrap();
     let data = store
-        .load(Uuid::create_offline_player_uuid("Persistent"))
+        .load(
+            Uuid::create_offline_player_uuid("Persistent"),
+            Vec3::ZERO,
+            leaf_core::world::level::game_type::GameType::Creative,
+        )
         .unwrap();
     assert_eq!(data.position, next);
     assert_eq!((data.yaw, data.pitch), (10.0, 30.0));
@@ -575,7 +654,8 @@ fn send_location(client: &mut TcpStream, position: Vec3, yaw: f32, pitch: f32) {
 #[test]
 fn players_see_each_other_and_can_fight_respawn_and_leave() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
+    let server =
+        Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1, Generation::FLAT).unwrap());
     let (mut alice, alice_worker) = connect_server(Arc::clone(&server));
     let alice_id = enter_play(&mut alice, "h0td04ek", 2);
     acknowledge_teleport(&mut alice);
@@ -756,7 +836,8 @@ fn use_block(client: &mut TcpStream, block: BlockPos, sequence: i32) {
 #[test]
 fn players_share_block_edits_and_survival_drops() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
+    let server =
+        Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1, Generation::FLAT).unwrap());
     let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 2);
     acknowledge_teleport(&mut owner);
@@ -1046,7 +1127,8 @@ fn expands_native_maps_and_saves_firework_components() {
 #[test]
 fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
+    let server =
+        Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1, Generation::FLAT).unwrap());
     let (mut owner, owner_worker) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 4);
     acknowledge_teleport(&mut owner);
@@ -1100,7 +1182,8 @@ fn summons_mobs_after_checking_permissions_and_spawns_from_eggs() {
 #[test]
 fn fills_a_thousand_tnt_across_chunk_boundaries_for_both_clients() {
     let world = TestWorld::new();
-    let server = Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1).unwrap());
+    let server =
+        Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1, Generation::FLAT).unwrap());
     let (mut owner, _) = connect_server(Arc::clone(&server));
     let owner_id = enter_play(&mut owner, "h0td04ek", 2);
     acknowledge_teleport(&mut owner);
@@ -1204,6 +1287,7 @@ fn tnt_detonates_for_both_clients_and_primes_an_adjacent_block() {
         Server::new(
             PlayerStore::open(&world.0).unwrap(),
             crate::workers::available_threads(),
+            Generation::FLAT,
         )
         .unwrap(),
     );
