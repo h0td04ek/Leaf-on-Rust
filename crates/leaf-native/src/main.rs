@@ -15,7 +15,9 @@ mod player_data;
 mod recipes;
 mod registries;
 mod session;
+mod simulation;
 mod special_recipes;
+mod ticking;
 mod wire;
 mod world;
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -54,22 +54,21 @@ use leaf_core::util::uuid::Uuid;
 use leaf_core::world::level::{game_type::GameType, LevelKey, RespawnData};
 use leaf_core::world::phys::vec3::Vec3;
 
-use crate::audience::Audience;
 use crate::blocks::Blocks;
 use crate::chunk_stream::{
     client_view_distance, ChunkStream, MAX_VIEW_DISTANCE, SIMULATION_DISTANCE,
 };
 use crate::commands::{Commands, PlayerCommand};
-use crate::drops::Drops;
 use crate::gameplay::{Gameplay, PlayContext};
 use crate::items::Items;
 use crate::maps::Maps;
-use crate::mobs::{MobTracker, Mobs};
+use crate::mobs::MobTracker;
 use crate::operators::{valid_name, Operators, PERMISSION_EVENT};
-use crate::peers::{attack_damage, PeerTracker, Peers, Presence};
+use crate::peers::{attack_damage, PeerTracker, Presence};
 use crate::player_data::PlayerStore;
 use crate::recipes::Recipes;
 use crate::registries::Registries;
+use crate::simulation::Simulation;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, SPAWN_Y};
 
@@ -91,17 +90,11 @@ pub struct Server {
     play_out: PacketIds,
     registries: Registries,
     player_data: PlayerStore,
-    commands: Commands,
-    audience: Audience,
-    peers: Peers,
-    flat_world: FlatWorld,
-    drops: Drops,
     maps: Maps,
-    mobs: Mobs,
+    simulation: Arc<Simulation>,
     sockets: AtomicUsize,
     players: Mutex<HashSet<Uuid>>,
     online: AtomicUsize,
-    next_entity: AtomicI32,
 }
 
 impl Server {
@@ -112,6 +105,10 @@ impl Server {
         let registries = Registries::load();
         let operators = Operators::open(player_data.ops_path())?;
         let maps = Maps::open(player_data.maps_path())?;
+        let simulation = Simulation::start(
+            FlatWorld::new(registries.plains_id),
+            Commands::new(operators),
+        )?;
         Ok(Self {
             handshake: PacketIds::from_protocol(handshake_protocols::serverbound()),
             status_in: PacketIds::from_protocol(status_protocols::serverbound()),
@@ -122,19 +119,13 @@ impl Server {
             configuration_out: PacketIds::from_protocol(configuration_protocols::clientbound()),
             play_in: PacketIds::from_protocol(game_protocols::serverbound_template().bind()),
             play_out: PacketIds::from_protocol(game_protocols::clientbound_template().bind()),
-            flat_world: FlatWorld::new(registries.plains_id),
-            drops: Drops::default(),
             maps,
-            mobs: Mobs::default(),
+            simulation,
             registries,
             player_data,
-            commands: Commands::new(operators),
-            audience: Audience::default(),
-            peers: Peers::default(),
             sockets: AtomicUsize::new(0),
             players: Mutex::new(HashSet::new()),
             online: AtomicUsize::new(0),
-            next_entity: AtomicI32::new(1),
         })
     }
 
@@ -232,16 +223,17 @@ impl Server {
             return Ok(());
         };
 
-        let entity = self.next_entity.fetch_add(1, Ordering::Relaxed);
-        let subscription = self.audience.subscribe(uuid);
-        let mut game = Gameplay::new(entity, player);
+        let entity = self.simulation.next_entity.fetch_add(1, Ordering::Relaxed);
+        let subscription = self.simulation.audience.subscribe(uuid);
+        let mut game = Gameplay::new(entity, player, self.simulation.commands.game_time());
         self.spawn(wire, profile.clone(), entity, view_distance, &game)?;
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
 
-        let presence = self
-            .peers
-            .join(entity, profile.clone(), game.view(), game.player.health);
+        let presence =
+            self.simulation
+                .peers
+                .join(entity, profile.clone(), game.view(), game.player.health);
         let mut saved = Vec::new();
         let result = self.play(
             wire,
@@ -352,7 +344,7 @@ impl Server {
                 false,
             ),
         )?;
-        let snapshot = self.commands.world.lock().unwrap().snapshot();
+        let snapshot = self.simulation.commands.world.lock().unwrap().snapshot();
         snapshot.send(wire, ids)?;
         wire.send(ids, &game.abilities())?;
         let mut entry = PlayerInfoEntry::new_minimal(profile.id, true);
@@ -434,16 +426,16 @@ impl Server {
         let name = &profile.name;
         let uuid = profile.id;
         let context = PlayContext {
-            world: &self.flat_world,
-            drops: &self.drops,
+            world: &self.simulation.terrain,
+            drops: &self.simulation.drops,
             maps: &self.maps,
-            mobs: &self.mobs,
+            mobs: &self.simulation.mobs,
             name,
             player: uuid,
             ids: &self.play_out,
-            audience: &self.audience,
-            commands: &self.commands,
-            entity_ids: &self.next_entity,
+            audience: &self.simulation.audience,
+            commands: &self.simulation.commands,
+            entity_ids: &self.simulation.next_entity,
         };
         let mut chunks =
             ChunkStream::start(game.player.chunk(), view_distance, wire, &self.play_out)?;
@@ -459,7 +451,6 @@ impl Server {
         let mut next_peer_update = Instant::now();
         let mut player_loaded = false;
         let mut permission = None;
-        let mut next_world_refresh = Instant::now();
         let mut next_save = Instant::now() + PLAYER_SAVE_INTERVAL;
         loop {
             let now = Instant::now();
@@ -467,7 +458,7 @@ impl Server {
                 game.close_crafting(wire, &context, true)?;
                 game.set_mode(mode, wire, &self.play_out)?;
                 presence.publish(game.view());
-                self.audience.chat(
+                self.simulation.audience.chat(
                     Component::literal(format!("Game mode set to {}", mode.get_name())),
                     Some(uuid),
                 );
@@ -491,7 +482,7 @@ impl Server {
                         &self.play_out,
                         &ClientboundPlayerCombatKillPacket::new(presence.id, death.clone()),
                     )?;
-                    self.audience.chat(death, None);
+                    self.simulation.audience.chat(death, None);
                 } else {
                     wire.send(
                         &self.play_out,
@@ -508,13 +499,13 @@ impl Server {
                 }
                 next_save = now + PLAYER_SAVE_INTERVAL;
             }
-            let updated_permission = self.commands.for_player(name, |world| {
+            let updated_permission = self.simulation.commands.for_player(name, |world| {
                 let level = world.permission();
                 (permission != Some(level)).then(|| {
                     (
                         level,
                         ClientboundCommandsPacket::from_dispatcher(
-                            &self.commands.dispatcher,
+                            &self.simulation.commands.dispatcher,
                             world,
                         ),
                     )
@@ -531,18 +522,11 @@ impl Server {
                 )?;
                 permission = Some(level);
             }
-            if Instant::now() >= next_world_refresh {
-                self.commands.world.lock().unwrap().refresh(&self.audience);
-                next_world_refresh = Instant::now() + Duration::from_secs(1);
-            }
             let update_peers = now >= next_peer_update;
-            if update_peers {
-                self.mobs.tick(now, &context, &self.peers);
-            }
             subscription.flush(wire, &self.play_out, chunks.loaded())?;
             game.check_crafting(wire, &context)?;
             game.tick(wire, &context, chunks.loaded())?;
-            chunks.send_next(&self.flat_world, wire, &self.play_out)?;
+            chunks.send_next(&self.simulation.terrain, wire, &self.play_out)?;
             if update_peers {
                 presence.publish(game.view());
                 tracker.sync(presence, chunks.loaded(), wire, &self.play_out)?;
@@ -596,35 +580,38 @@ impl Server {
                     body.finish()?;
                     let message = message.trim();
                     if !message.is_empty() && !message.chars().any(char::is_control) {
-                        self.audience
+                        self.simulation
+                            .audience
                             .chat(Component::literal(format!("<{name}> {message}")), None);
                     }
                 }
                 "chat_command" | "chat_command_signed" => {
                     let command = body.string(256)?;
                     if game.player.health > 0.0 {
-                        match self
-                            .commands
-                            .execute(command.trim(), &self.audience, uuid, name)
-                        {
+                        match self.simulation.commands.execute(
+                            command.trim(),
+                            &self.simulation.audience,
+                            uuid,
+                            name,
+                        ) {
                             Some(PlayerCommand::Kit) => {
                                 game.kit(wire, &context)?;
-                                self.audience.chat(
+                                self.simulation.audience.chat(
                                     Component::literal("Flight kit: elytra and firework rockets"),
                                     Some(uuid),
                                 );
                             }
                             Some(PlayerCommand::SetMode(mode, target)) => {
                                 let player = target.as_deref().unwrap_or(name);
-                                if !self.peers.set_mode(player, mode) {
-                                    self.audience.chat(
+                                if !self.simulation.peers.set_mode(player, mode) {
+                                    self.simulation.audience.chat(
                                         Component::literal(format!(
                                             "Player {player} is not online"
                                         )),
                                         Some(uuid),
                                     );
                                 } else if player != name {
-                                    self.audience.chat(
+                                    self.simulation.audience.chat(
                                         Component::literal(format!(
                                             "Set {player}'s game mode to {}",
                                             mode.get_name()
@@ -647,7 +634,10 @@ impl Server {
                                         player.pitch,
                                     )
                                 });
-                                let feedback = match self.mobs.summon(kind, origin, count, &context)
+                                let feedback = match self
+                                    .simulation
+                                    .mobs
+                                    .summon(kind, origin, count, &context)
                                 {
                                     Ok(()) if count == 1 => {
                                         format!("Summoned minecraft:{}", kind.name)
@@ -658,7 +648,9 @@ impl Server {
                                     ),
                                     Err(error) => error.to_owned(),
                                 };
-                                self.audience.chat(Component::literal(feedback), Some(uuid));
+                                self.simulation
+                                    .audience
+                                    .chat(Component::literal(feedback), Some(uuid));
                             }
                             None => {}
                         }
@@ -670,8 +662,8 @@ impl Server {
                     let command = body.string(2048)?;
                     body.finish()?;
                     let request = ServerboundCommandSuggestionPacket::new(transaction, command);
-                    let reply = self.commands.for_player(name, |world| {
-                        request.reply(&self.commands.dispatcher, world)
+                    let reply = self.simulation.commands.for_player(name, |world| {
+                        request.reply(&self.simulation.commands.dispatcher, world)
                     });
                     wire.send(&self.play_out, &reply)?;
                 }
@@ -714,11 +706,11 @@ impl Server {
                         body.fixed::<1>()?;
                         body.finish()?;
                         if tracker.sees(target) {
-                            presence.attack(target, &self.flat_world);
+                            presence.attack(target, &self.simulation.terrain);
                         } else if mob_tracker.sees(target) {
                             let damage =
                                 attack_damage(&game.player.inventory[game.player.selection]);
-                            self.mobs.attack(
+                            self.simulation.mobs.attack(
                                 target,
                                 game.player.position,
                                 game.player.mode,

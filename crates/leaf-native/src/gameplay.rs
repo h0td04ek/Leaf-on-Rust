@@ -48,6 +48,7 @@ use crate::mobs::Mobs;
 use crate::peers::{gliding_packet, View};
 use crate::player_data::PlayerData;
 use crate::recipes::Recipes;
+use crate::simulation::SimulationContext;
 use crate::wire::{invalid, Cursor, PacketIds, Wire};
 use crate::world::{FlatWorld, AIR, SPAWN_Y};
 
@@ -68,6 +69,18 @@ pub struct PlayContext<'a> {
     pub entity_ids: &'a AtomicI32,
 }
 
+impl PlayContext<'_> {
+    pub fn simulation(&self) -> SimulationContext<'_> {
+        SimulationContext {
+            world: self.world,
+            commands: self.commands,
+            audience: self.audience,
+            drops: self.drops,
+            entity_ids: self.entity_ids,
+        }
+    }
+}
+
 pub struct Gameplay {
     pub player: PlayerData,
     pub crafting: Crafting,
@@ -78,13 +91,14 @@ pub struct Gameplay {
     drops: DropTracker,
     mining: Option<(BlockPos, i32)>,
     sneaking: bool,
-    rockets: Vec<(i32, Instant)>,
+    rockets: Vec<(i32, i64)>,
+    last_game_tick: i64,
     last_tick: Instant,
     shown_maps: HashSet<MapId>,
 }
 
 impl Gameplay {
-    pub fn new(entity_id: i32, player: PlayerData) -> Self {
+    pub fn new(entity_id: i32, player: PlayerData, game_tick: i64) -> Self {
         let creative_flying = player.mode == GameType::Spectator;
         Self {
             player,
@@ -97,6 +111,7 @@ impl Gameplay {
             mining: None,
             sneaking: false,
             rockets: vec![],
+            last_game_tick: game_tick,
             last_tick: Instant::now(),
             shown_maps: HashSet::new(),
         }
@@ -722,9 +737,9 @@ impl Gameplay {
                         vec![data(8, 7, item), data(9, 19, Some(self.entity_id as u32))],
                     ),
                 )?;
-                let lifetime =
-                    Duration::from_millis(u64::try_from(10 * (1 + duration)).unwrap_or(20) * 50);
-                self.rockets.push((entity, Instant::now() + lifetime));
+                let lifetime = i64::from(10 * (1 + duration));
+                self.rockets
+                    .push((entity, ctx.commands.game_time() + lifetime));
                 if !self.player.mode.is_creative() {
                     self.player.inventory[slot].shrink(1);
                     self.sync_slot(slot, wire, ctx.ids)?;
@@ -781,7 +796,8 @@ impl Gameplay {
 
     fn spawn_drop(&self, item: ItemStack, pos: Vec3, velocity: Vec3, ctx: &PlayContext<'_>) {
         let id = ctx.entity_ids.fetch_add(1, Ordering::Relaxed);
-        ctx.drops.spawn(id, item, pos, velocity);
+        ctx.drops
+            .spawn(id, item, pos, velocity, ctx.commands.game_time());
     }
 
     pub fn tick(
@@ -794,7 +810,9 @@ impl Gameplay {
             return Ok(());
         }
         self.last_tick = Instant::now();
-        let now = self.last_tick;
+        let now = ctx.commands.game_time();
+        let advanced = self.last_game_tick != now;
+        self.last_game_tick = now;
         for slot in [self.player.selection, OFFHAND] {
             if let Some(id) = map_id(&self.player.inventory[slot]) {
                 if self.shown_maps.insert(id) {
@@ -819,16 +837,18 @@ impl Gameplay {
         }
 
         let mut changed = Vec::new();
-        let collector = if self.player.mode == GameType::Spectator || self.player.health <= 0.0 {
-            0
-        } else {
-            self.entity_id
-        };
+        let collector =
+            if !advanced || self.player.mode == GameType::Spectator || self.player.health <= 0.0 {
+                0
+            } else {
+                self.entity_id
+            };
         self.drops.sync(
             ctx,
             loaded,
             self.player.position,
             collector,
+            now,
             |item| {
                 insert_inventory(&mut self.player.inventory[..36], item, &mut changed);
             },

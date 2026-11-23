@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use leaf_core::core::{block_pos::BlockPos, holder::Holder};
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
@@ -20,13 +19,7 @@ use crate::wire::Wire;
 use crate::world::{chunk, FlatWorld, AIR};
 
 #[derive(Default)]
-pub struct Drops(Mutex<Scene>);
-
-#[derive(Default)]
-struct Scene {
-    last_tick: Option<Instant>,
-    items: Vec<DroppedItem>,
-}
+pub struct Drops(Mutex<Vec<DroppedItem>>);
 
 #[derive(Clone)]
 struct DroppedItem {
@@ -35,33 +28,24 @@ struct DroppedItem {
     motion: PositionMoveRotation,
     on_ground: bool,
     stack: ItemStack,
-    created: Instant,
+    created: i64,
 }
 
 impl Drops {
-    pub fn spawn(&self, id: i32, stack: ItemStack, pos: Vec3, velocity: Vec3) {
-        self.0.lock().unwrap().items.push(DroppedItem {
+    pub fn spawn(&self, id: i32, stack: ItemStack, pos: Vec3, velocity: Vec3, created: i64) {
+        self.0.lock().unwrap().push(DroppedItem {
             id,
             uuid: Uuid::random(),
             motion: PositionMoveRotation::new(pos, velocity, 0.0, 0.0),
             on_ground: false,
             stack,
-            created: Instant::now(),
+            created,
         });
     }
 
-    fn update(scene: &mut Scene, now: Instant, world: &FlatWorld) {
-        if scene
-            .last_tick
-            .is_some_and(|last| now.saturating_duration_since(last) < Duration::from_millis(50))
-        {
-            return;
-        }
-        scene.last_tick = Some(now);
-        scene.items.retain_mut(|item| {
-            if now.saturating_duration_since(item.created) >= Duration::from_secs(300)
-                || item.motion.position.y < -72.0
-            {
+    pub fn update(&self, tick: i64, world: &FlatWorld) {
+        self.0.lock().unwrap().retain_mut(|item| {
+            if tick - item.created >= 6_000 || item.motion.position.y < -72.0 {
                 return false;
             }
             let motion = &mut item.motion;
@@ -94,18 +78,17 @@ impl DropTracker {
         loaded: &HashSet<(i32, i32)>,
         player: Vec3,
         collector: i32,
+        tick: i64,
         mut insert: impl FnMut(&mut ItemStack),
         wire: &mut Wire,
     ) -> io::Result<()> {
-        let now = Instant::now();
         let mut picked_up = Vec::new();
         let visible = {
-            let mut scene = ctx.drops.0.lock().unwrap();
-            Drops::update(&mut scene, now, ctx.world);
-            scene.items.retain_mut(|item| {
+            let mut items = ctx.drops.0.lock().unwrap();
+            items.retain_mut(|item| {
                 let position = item.motion.position;
                 if collector != 0
-                    && now.saturating_duration_since(item.created) >= Duration::from_secs(2)
+                    && tick - item.created >= 40
                     && position.distance_to_sqr(&player.add(0.0, 0.5, 0.0)) < 1.44
                 {
                     let before = item.stack.get_count();
@@ -117,8 +100,7 @@ impl DropTracker {
                 }
                 !item.stack.is_empty()
             });
-            scene
-                .items
+            items
                 .iter()
                 .filter(|item| {
                     let pos = item.motion.position;

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use leaf_core::command::arguments::vanilla::Coordinates;
 use leaf_core::command::brigadier::{
@@ -18,6 +18,8 @@ use leaf_core::network::protocol::game::{
         THUNDER_LEVEL_CHANGE,
     },
     clientbound_set_time_packet::ClientboundSetTimePacket,
+    clientbound_ticking_state_packet::ClientboundTickingStatePacket,
+    clientbound_ticking_step_packet::ClientboundTickingStepPacket,
 };
 use leaf_core::random::{LegacyRandomSource, RandomSource};
 use leaf_core::resources::Identifier;
@@ -35,6 +37,7 @@ use crate::audience::Audience;
 use crate::mob_types::{self, MobType};
 use crate::mobs::{self, COMMAND_LIMIT};
 use crate::operators::{Operators, ALL, GAMEMASTERS, OWNERS};
+use crate::ticking::{Action as TickAction, Clock, TickState, ADMIN_PERMISSION, MAX_RATE};
 use crate::wire::{PacketIds, Wire};
 
 const SEED: i64 = 0;
@@ -66,7 +69,7 @@ impl Commands {
                 CommandNode::literal("help").executes(|source: &mut CommandWorld, _| {
                     source.send_success(
                         Component::literal(
-                            "/help, /kit. Operators: /gamemode, /summon, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
+                            "/help, /kit. Operators: /gamemode, /summon, /tick, /time, /weather, /difficulty, /seed, /gamerule, /op, /deop",
                         ),
                         false,
                     );
@@ -123,6 +126,7 @@ impl Commands {
             )
             .expect("register gamemode target");
         register_summon(&mut dispatcher);
+        register_tick(&mut dispatcher);
         for (command, grant) in [("op", true), ("deop", false)] {
             let root = dispatcher
                 .add_node(
@@ -160,6 +164,10 @@ impl Commands {
             dispatcher,
             world: std::sync::Mutex::new(CommandWorld::new(features, operators)),
         }
+    }
+
+    pub fn game_time(&self) -> i64 {
+        self.world.lock().unwrap().game_time()
     }
 
     pub fn for_player<T>(&self, name: &str, run: impl FnOnce(&CommandWorld) -> T) -> T {
@@ -274,8 +282,92 @@ fn resolve_summon(world: &mut CommandWorld, context: &CommandContext) -> i32 {
     1
 }
 
+fn register_tick(dispatcher: &mut CommandDispatcher<CommandWorld>) {
+    let root = dispatcher
+        .add_node(
+            dispatcher.root(),
+            CommandNode::literal("tick")
+                .requires(|source: &CommandWorld| source.has_permission(ADMIN_PERMISSION))
+                .executes(|source: &mut CommandWorld, _| {
+                    source.run_tick_command(TickAction::Query)
+                }),
+        )
+        .unwrap();
+    for (name, action) in [
+        ("query", TickAction::Query),
+        ("freeze", TickAction::Freeze(true)),
+        ("unfreeze", TickAction::Freeze(false)),
+    ] {
+        dispatcher
+            .add_node(
+                root,
+                CommandNode::literal(name)
+                    .executes(move |source: &mut CommandWorld, _| source.run_tick_command(action)),
+            )
+            .unwrap();
+    }
+    let rate = dispatcher
+        .add_node(root, CommandNode::literal("rate"))
+        .unwrap();
+    dispatcher
+        .add_node(
+            rate,
+            CommandNode::argument(
+                "rate",
+                ArgumentType::Float {
+                    min: 1.0,
+                    max: MAX_RATE,
+                },
+            )
+            .executes(|source: &mut CommandWorld, context| {
+                let Some(ArgumentValue::Float(rate)) = context.argument("rate") else {
+                    unreachable!("registered tick rate");
+                };
+                source.run_tick_command(TickAction::Rate(*rate))
+            }),
+        )
+        .unwrap();
+    let step = dispatcher
+        .add_node(
+            root,
+            CommandNode::literal("step").executes(|source: &mut CommandWorld, _| {
+                source.run_tick_command(TickAction::Step(1))
+            }),
+        )
+        .unwrap();
+    let sprint = dispatcher
+        .add_node(root, CommandNode::literal("sprint"))
+        .unwrap();
+    let modes: [(_, fn(i32) -> TickAction, _); 2] = [
+        (step, TickAction::Step, TickAction::StopStep),
+        (sprint, TickAction::Sprint, TickAction::StopSprint),
+    ];
+    for (parent, action, stop) in modes {
+        dispatcher
+            .add_node(
+                parent,
+                CommandNode::literal("stop")
+                    .executes(move |source: &mut CommandWorld, _| source.run_tick_command(stop)),
+            )
+            .unwrap();
+        dispatcher
+            .add_node(
+                parent,
+                CommandNode::argument("time", ArgumentType::Time { min: 1 }).executes(
+                    move |source: &mut CommandWorld, context| {
+                        let Some(ArgumentValue::Integer(ticks)) = context.argument("time") else {
+                            unreachable!("registered tick duration");
+                        };
+                        source.run_tick_command(action(*ticks))
+                    },
+                ),
+            )
+            .unwrap();
+    }
+}
+
 pub struct CommandWorld {
-    started: Instant,
+    clock: Clock,
     operators: Operators,
     permission: u8,
     day_start: i64,
@@ -292,7 +384,7 @@ pub struct CommandWorld {
 impl CommandWorld {
     fn new(features: FeatureFlagSet, operators: Operators) -> Self {
         Self {
-            started: Instant::now(),
+            clock: Clock::new(Instant::now()),
             operators,
             permission: ALL,
             day_start: 0,
@@ -309,6 +401,46 @@ impl CommandWorld {
             difficulty: Difficulty::Peaceful,
             feedback: vec![],
             action: None,
+        }
+    }
+
+    fn run_tick_command(&mut self, action: TickAction) -> i32 {
+        let before = self.clock.state();
+        let (message, result) = self.clock.execute(action, Instant::now());
+        self.send_success(
+            Component::literal(message),
+            result != 0 && !matches!(action, TickAction::Query) && before != self.clock.state(),
+        );
+        result
+    }
+
+    pub fn poll_tick(
+        &mut self,
+        now: Instant,
+        audience: &Audience,
+    ) -> Result<(i64, bool, mobs::Rules), Duration> {
+        let (tick, finished_step) = self.clock.poll(now)?;
+        self.refresh(audience);
+        Ok((tick, finished_step, self.mob_rules()))
+    }
+
+    pub fn complete_tick(
+        &mut self,
+        elapsed: Duration,
+        now: Instant,
+        finished_step: bool,
+        audience: &Audience,
+    ) {
+        let before = self.snapshot();
+        if let Some(summary) = self.clock.complete(elapsed, now) {
+            let after = self.snapshot();
+            after.broadcast_changes(before, audience);
+            if after.tick_state.frozen == before.tick_state.frozen {
+                audience.broadcast(after.time, None);
+            }
+            audience.chat(Component::literal(summary), None);
+        } else if finished_step {
+            audience.broadcast(self.snapshot().time, None);
         }
     }
 
@@ -338,6 +470,7 @@ impl CommandWorld {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             time: ClientboundSetTimePacket::new(self.game_time(), self.day_time(), self.daylight()),
+            tick_state: self.clock.state(),
             difficulty: self.difficulty,
             rain: self.weather.raining,
             thunder: self.weather.thundering,
@@ -384,7 +517,7 @@ impl WorldCommandSource for CommandWorld {
         self.day_time().div_euclid(24_000)
     }
     fn game_time(&self) -> i64 {
-        (self.started.elapsed().as_millis() / 50) as i64
+        self.clock.time()
     }
     fn change_time(&mut self, change: TimeChange) {
         self.day_value = match change {
@@ -436,6 +569,7 @@ impl GameRuleCommandSource for CommandWorld {
 #[derive(Clone, Copy)]
 pub struct Snapshot {
     time: ClientboundSetTimePacket,
+    tick_state: TickState,
     difficulty: Difficulty,
     rain: bool,
     thunder: bool,
@@ -445,6 +579,13 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn send(self, wire: &mut Wire, ids: &PacketIds) -> std::io::Result<()> {
         wire.send(ids, &self.time)?;
+        wire.send(ids, &self.ticking_state_packet())?;
+        if self.tick_state.steps > 0 {
+            wire.send(
+                ids,
+                &ClientboundTickingStepPacket::new(self.tick_state.steps),
+            )?;
+        }
         wire.send(
             ids,
             &ClientboundChangeDifficultyPacket::new(self.difficulty, false),
@@ -453,6 +594,10 @@ impl Snapshot {
             wire.send(ids, &packet)?;
         }
         Ok(())
+    }
+
+    fn ticking_state_packet(self) -> ClientboundTickingStatePacket {
+        ClientboundTickingStatePacket::new(self.tick_state.rate, self.tick_state.frozen)
     }
 
     fn weather_packets(self) -> [ClientboundGameEventPacket; 3] {
@@ -472,7 +617,20 @@ impl Snapshot {
     }
 
     fn broadcast_changes(self, before: Self, audience: &Audience) {
-        if self.day_base != before.day_base || self.time.tick_day_time != before.time.tick_day_time
+        let state_changed = self.tick_state.rate != before.tick_state.rate
+            || self.tick_state.frozen != before.tick_state.frozen;
+        if state_changed {
+            audience.broadcast(self.ticking_state_packet(), None);
+        }
+        if self.tick_state.steps != before.tick_state.steps {
+            audience.broadcast(
+                ClientboundTickingStepPacket::new(self.tick_state.steps),
+                None,
+            );
+        }
+        if state_changed
+            || self.day_base != before.day_base
+            || self.time.tick_day_time != before.time.tick_day_time
         {
             audience.broadcast(self.time, None);
         }

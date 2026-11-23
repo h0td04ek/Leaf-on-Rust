@@ -231,8 +231,14 @@ fn native_play_handles_chunks_chat_commands_drops_and_firework_boost() {
         (suggestions.read_var_int(), suggestions.read_var_int()),
         (1, 2)
     );
-    assert_eq!(suggestions.read_var_int(), 1);
-    assert_eq!(suggestions.read_utf().unwrap(), "time");
+    let names = (0..suggestions.read_var_int())
+        .map(|_| {
+            let name = suggestions.read_utf().unwrap();
+            assert!(!suggestions.read_bool());
+            name
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["tick", "time"]);
     send(&mut client, 6, |buf| {
         buf.write_utf("time set night").unwrap();
     });
@@ -1255,4 +1261,96 @@ fn sends_mobs_in_all_loaded_chunks_and_clears_the_edge_on_view_shrink() {
     assert!(removed, "unloading chunk 32 must remove its pig");
     drop(client);
     assert!(worker.join().unwrap().is_err());
+}
+
+#[test]
+fn tick_commands_change_the_clock_and_pause_the_tnt_fuse() {
+    let world = TestWorld::new();
+    let (mut client, worker) = connect(&world);
+    enter_play(&mut client, "h0td04ek", 2);
+    acknowledge_teleport(&mut client);
+
+    command(&mut client, "gamerule spawn_mobs false");
+    multiplayer_packet(&mut client, 119);
+    command(&mut client, "tick rate 1000");
+    let mut rate = multiplayer_packet(&mut client, 125);
+    if rate.read_float() == 20.0 {
+        rate = multiplayer_packet(&mut client, 125);
+        assert_eq!(rate.read_float(), 1000.0);
+    }
+    assert!(!rate.read_bool());
+    multiplayer_packet(&mut client, 119);
+
+    command(&mut client, "tick freeze");
+    let mut frozen = multiplayer_packet(&mut client, 125);
+    assert_eq!(frozen.read_float(), 1000.0);
+    assert!(frozen.read_bool());
+    let frozen_tick = multiplayer_packet(&mut client, 111).read_long();
+    multiplayer_packet(&mut client, 119);
+
+    command(&mut client, "summon minecraft:tnt ~2 ~ ~");
+    let tnt_type = crate::mob_types::named("tnt").unwrap().id;
+    let tnt = spawned(&mut client, tnt_type);
+    let mut data = multiplayer_packet(&mut client, 97);
+    assert_eq!(data.read_var_int(), tnt);
+    assert_eq!(
+        (
+            data.read_unsigned_byte(),
+            data.read_var_int(),
+            data.read_var_int()
+        ),
+        (8, 1, 80)
+    );
+
+    command(&mut client, "tick sprint 79t");
+    let mut resumed = multiplayer_packet(&mut client, 125);
+    assert_eq!(resumed.read_float(), 1000.0);
+    assert!(!resumed.read_bool());
+    let mut finished = false;
+    let mut stepped = false;
+    for _ in 0..400 {
+        let (id, mut body) = receive(&mut client);
+        assert_ne!(id, 36, "TNT exploded before 80 world ticks had elapsed");
+        if id == 125 {
+            assert_eq!(body.read_float(), 1000.0);
+            finished = body.read_bool();
+        }
+        if id == 111 && finished {
+            assert_eq!(body.read_long(), frozen_tick + 79);
+            stepped = true;
+            break;
+        }
+    }
+    assert!(stepped);
+
+    command(&mut client, "tick step");
+    assert_eq!(multiplayer_packet(&mut client, 126).read_var_int(), 1);
+    let explosion =
+        ClientboundExplodePacket::stream_codec().decode(&mut multiplayer_packet(&mut client, 36));
+    assert_eq!(explosion.radius, 4.0);
+    assert_eq!(
+        multiplayer_packet(&mut client, 111).read_long(),
+        frozen_tick + 80
+    );
+
+    command(&mut client, "tick unfreeze");
+    let mut running = multiplayer_packet(&mut client, 125);
+    assert_eq!(running.read_float(), 1000.0);
+    assert!(!running.read_bool());
+    command(&mut client, "tick query");
+    for _ in 0..10 {
+        let reply = multiplayer_packet(&mut client, 119)
+            .read_nbt()
+            .unwrap()
+            .unwrap();
+        if reply
+            .as_string()
+            .is_some_and(|text| text.contains("1000.0 TPS"))
+        {
+            drop(client);
+            assert!(worker.join().unwrap().is_err());
+            return;
+        }
+    }
+    panic!("tick query did not report the configured rate");
 }

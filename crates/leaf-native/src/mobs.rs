@@ -7,7 +7,7 @@ use tracking::SentMob;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use leaf_core::core::{
     block_pos::BlockPos, holder::Holder, particles::particle_options::ParticleOptions,
@@ -29,17 +29,17 @@ use crate::gameplay::PlayContext;
 use crate::items::{named_id, stack};
 use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, MobTarget, Peers};
+use crate::simulation::SimulationContext;
 use crate::world::{chunk, FlatWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
-pub const FUSE: Duration = Duration::from_secs(4);
+const FUSE_TICKS: i64 = 80;
 const WORLD_LIMIT: usize = 60_000;
 const TNT_LIMIT: usize = 256;
 const SPAWNS_PER_TICK: usize = 256;
 const SIMULATED_MOBS_PER_PLAYER: usize = 192;
 const TRACKED_ADDITIONS_PER_TICK: usize = 512;
 const NATURAL_LIMIT: usize = 32;
-const TICK: Duration = Duration::from_millis(50);
 
 type Chunk = (i32, i32);
 
@@ -64,9 +64,7 @@ impl Default for Mobs {
             queued: 0,
             queued_tnt: 0,
             natural: [0; 2],
-            last_tick: None,
-            next_natural: Instant::now() + Duration::from_secs(3),
-            tick: 0,
+            next_natural: 60,
             random: LegacyRandomSource::new(94309),
         }))
     }
@@ -81,9 +79,7 @@ struct Scene {
     queued: usize,
     queued_tnt: usize,
     natural: [usize; 2],
-    last_tick: Option<Instant>,
-    next_natural: Instant,
-    tick: u32,
+    next_natural: i64,
     random: LegacyRandomSource,
 }
 
@@ -109,10 +105,10 @@ struct Mob {
     natural: bool,
     on_ground: bool,
     hurt: u32,
-    last_hurt: Option<Instant>,
-    next_attack: Option<Instant>,
-    dying: Option<Instant>,
-    fuse: Option<Instant>,
+    last_hurt: Option<i64>,
+    next_attack: Option<i64>,
+    dying: Option<i64>,
+    fuse: Option<i64>,
 }
 
 impl Mobs {
@@ -137,7 +133,7 @@ impl Mobs {
             return Err("Too many primed TNT entities");
         }
         if count == 1 {
-            let fuse = (kind.name == "tnt").then(|| Instant::now() + FUSE);
+            let fuse = (kind.name == "tnt").then(|| ctx.commands.game_time() + FUSE_TICKS);
             scene.add(kind, position, false, fuse, ctx.entity_ids);
         } else {
             scene.batches.push_back(Batch {
@@ -171,7 +167,11 @@ impl Mobs {
         if Blocks::vanilla().get(state).name == "tnt"
             && ctx.world.break_block(position, state, ctx.audience)
         {
-            scene.prime(position, Instant::now() + FUSE, ctx);
+            scene.prime(
+                position,
+                ctx.commands.game_time() + FUSE_TICKS,
+                &ctx.simulation(),
+            );
             return true;
         }
         false
@@ -212,25 +212,16 @@ impl Mobs {
             .normalize()
             .scale(0.28)
             .add(0.0, 0.24, 0.0);
-        if mob.damage(damage, push, Instant::now(), ctx) {
+        if mob.damage(damage, push, ctx.commands.game_time(), &ctx.simulation()) {
             scene.mark_changed(at_chunk(target));
         }
     }
 
-    pub fn tick(&self, now: Instant, ctx: &PlayContext<'_>, peers: &Peers) {
-        let rules = ctx.commands.world.lock().unwrap().mob_rules();
+    pub fn tick(&self, now: i64, rules: &Rules, ctx: &SimulationContext<'_>, peers: &Peers) {
         let mut scene = self.0.lock().unwrap();
-        if scene
-            .last_tick
-            .is_some_and(|last| now.saturating_duration_since(last) < TICK)
-        {
-            return;
-        }
-        scene.last_tick = Some(now);
-        scene.tick = scene.tick.wrapping_add(1);
         let players = peers.mob_targets();
         scene.spawn_queued(now, ctx);
-        scene.spawn_naturally(now, &players, &rules, ctx);
+        scene.spawn_naturally(now, &players, rules, ctx);
 
         let mut active = scene.explosives.clone();
         let mut explosions = Vec::new();
@@ -243,7 +234,7 @@ impl Mobs {
             );
         }
         let mut removed = Vec::new();
-        let tick = scene.tick;
+        let tick = now as u32;
         for id in active {
             let Some(mob) = scene.entities.get_mut(&id) else {
                 continue;
@@ -276,7 +267,7 @@ impl Mobs {
             scene.remove(id);
         }
         for center in explosions {
-            scene.explode(center, now, &rules, ctx, peers);
+            scene.explode(center, now, rules, ctx, peers);
         }
     }
 }
@@ -287,7 +278,7 @@ impl Scene {
         kind: &'static MobType,
         position: Vec3,
         natural: bool,
-        fuse: Option<Instant>,
+        fuse: Option<i64>,
         ids: &AtomicI32,
     ) -> i32 {
         let id = ids.fetch_add(1, Ordering::Relaxed);
@@ -322,7 +313,7 @@ impl Scene {
         id
     }
 
-    fn prime(&mut self, position: BlockPos, end: Instant, ctx: &PlayContext<'_>) {
+    fn prime(&mut self, position: BlockPos, end: i64, ctx: &SimulationContext<'_>) {
         let center = Vec3::new(
             f64::from(position.x) + 0.5,
             f64::from(position.y),
@@ -418,7 +409,7 @@ impl Scene {
         result
     }
 
-    fn spawn_queued(&mut self, now: Instant, ctx: &PlayContext<'_>) {
+    fn spawn_queued(&mut self, now: i64, ctx: &SimulationContext<'_>) {
         for _ in 0..SPAWNS_PER_TICK {
             let Some(mut batch) = self.batches.pop_front() else {
                 break;
@@ -431,7 +422,7 @@ impl Scene {
                 batch.origin.y,
                 batch.origin.z.clamp(-block_bound, block_bound) + f64::from(z) * 2.0,
             );
-            let fuse = (batch.kind.name == "tnt").then(|| now + FUSE);
+            let fuse = (batch.kind.name == "tnt").then(|| now + FUSE_TICKS);
             let position = if fuse.is_none()
                 && !batch.kind.aquatic
                 && !ctx.world.has_room(position, batch.kind.height, false)
@@ -455,15 +446,15 @@ impl Scene {
 
     fn spawn_naturally(
         &mut self,
-        now: Instant,
+        now: i64,
         players: &[MobTarget],
         rules: &Rules,
-        ctx: &PlayContext<'_>,
+        ctx: &SimulationContext<'_>,
     ) {
         if now < self.next_natural {
             return;
         }
-        self.next_natural = now + Duration::from_secs(3);
+        self.next_natural = now + 60;
         let discard = self
             .entities
             .iter()
@@ -519,9 +510,9 @@ impl Scene {
     fn explode(
         &mut self,
         center: Vec3,
-        now: Instant,
+        now: i64,
         rules: &Rules,
-        ctx: &PlayContext<'_>,
+        ctx: &SimulationContext<'_>,
         peers: &Peers,
     ) {
         for target in peers
@@ -530,7 +521,13 @@ impl Scene {
             .filter(|target| target.vulnerable)
         {
             if let Some((damage, velocity)) = blast_hit(center, target.position, ctx.world) {
-                peers.hurt(target.id, damage, velocity, "explosion".into(), now);
+                peers.hurt(
+                    target.id,
+                    damage,
+                    velocity,
+                    "explosion".into(),
+                    Instant::now(),
+                );
             }
         }
         for (id, mob) in self.nearby(center, 8.0, usize::MAX) {
@@ -554,7 +551,7 @@ impl Scene {
             let block = blocks.get(state);
             if block.name == "tnt" && self.explosives.len() + self.queued_tnt < TNT_LIMIT {
                 let ticks = 10 + self.random.next_int_bound(20);
-                self.prime(pos, now + TICK * ticks as u32, ctx);
+                self.prime(pos, now + i64::from(ticks), ctx);
             } else if rules.block_drops
                 && (!rules.decay || self.random.next_int_bound(4) == 0)
                 && block.property(state, "half") != Some("upper")
@@ -566,7 +563,7 @@ impl Scene {
                         f64::from(pos.y) + 0.5,
                         f64::from(pos.z) + 0.5,
                     );
-                    spawn_item(ctx, item, center);
+                    spawn_item(ctx, item, center, now);
                 }
             }
         }
@@ -592,12 +589,14 @@ impl Scene {
 }
 
 impl Mob {
-    fn damage(&mut self, amount: f32, velocity: Vec3, now: Instant, ctx: &PlayContext<'_>) -> bool {
-        if self.dying.is_some()
-            || self.last_hurt.is_some_and(|last| {
-                now.saturating_duration_since(last) < Duration::from_millis(500)
-            })
-        {
+    fn damage(
+        &mut self,
+        amount: f32,
+        velocity: Vec3,
+        now: i64,
+        ctx: &SimulationContext<'_>,
+    ) -> bool {
+        if self.dying.is_some() || self.last_hurt.is_some_and(|last| now - last < 10) {
             return false;
         }
         self.last_hurt = Some(now);
@@ -605,7 +604,7 @@ impl Mob {
         self.motion.delta_movement = velocity;
         self.hurt = self.hurt.wrapping_add(1);
         if self.health == 0.0 {
-            self.dying = Some(now + Duration::from_secs(1));
+            self.dying = Some(now + 20);
             let item = match self.kind.name {
                 "pig" => Some("porkchop"),
                 "cow" => Some("beef"),
@@ -617,7 +616,7 @@ impl Mob {
             };
             if let Some(item) = item {
                 if ctx.commands.world.lock().unwrap().mob_drops() {
-                    spawn_item(ctx, named_id(item), self.motion.position);
+                    spawn_item(ctx, named_id(item), self.motion.position, now);
                 }
             }
         }
@@ -628,7 +627,7 @@ impl Mob {
         &mut self,
         id: i32,
         tick: u32,
-        now: Instant,
+        now: i64,
         players: &[MobTarget],
         peers: &Peers,
         world: &FlatWorld,
@@ -670,13 +669,13 @@ impl Mob {
                         target.position.add(0.0, 1.0, 0.0),
                     )
                 {
-                    self.next_attack = Some(now + Duration::from_secs(1));
+                    self.next_attack = Some(now + 20);
                     peers.hurt(
                         target.id,
                         3.0,
                         heading.scale(2.0).add(0.0, 0.25, 0.0),
                         self.kind.name.into(),
-                        now,
+                        Instant::now(),
                     );
                 }
             } else if phase % 120 < 32 && self.on_ground {
@@ -716,12 +715,13 @@ impl Mob {
     }
 }
 
-fn spawn_item(ctx: &PlayContext<'_>, item: i32, position: Vec3) {
+fn spawn_item(ctx: &SimulationContext<'_>, item: i32, position: Vec3, tick: i64) {
     ctx.drops.spawn(
         ctx.entity_ids.fetch_add(1, Ordering::Relaxed),
         stack(item, 1),
         position,
         Vec3::ZERO,
+        tick,
     );
 }
 
@@ -801,11 +801,11 @@ mod tests {
         mobs.summon(pig, origin, 50_000, &ctx).unwrap();
         let mut scene = mobs.0.lock().unwrap();
         assert_eq!(scene.entities.len(), 0);
-        let now = Instant::now();
-        scene.spawn_queued(now, &ctx);
+        let now = 0;
+        scene.spawn_queued(now, &ctx.simulation());
         assert_eq!(scene.entities.len(), SPAWNS_PER_TICK);
         while scene.queued != 0 {
-            scene.spawn_queued(now, &ctx);
+            scene.spawn_queued(now, &ctx.simulation());
         }
         assert_eq!(scene.entities.len(), 50_000);
         assert!(scene.entities.values().all(|mob| mob.kind.id == pig.id));

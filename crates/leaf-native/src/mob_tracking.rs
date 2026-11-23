@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::time::Instant;
 
 use leaf_core::core::holder::Holder;
 use leaf_core::entity::position_move_rotation::PositionMoveRotation;
@@ -18,7 +17,7 @@ use leaf_core::world::phys::vec3::Vec3;
 use crate::gameplay::PlayContext;
 use crate::wire::{PacketIds, Wire};
 
-use super::{at_chunk, Chunk, Mob, Scene, TICK, TRACKED_ADDITIONS_PER_TICK};
+use super::{at_chunk, Chunk, Mob, Scene, TRACKED_ADDITIONS_PER_TICK};
 
 #[derive(Default)]
 pub struct MobTracker {
@@ -78,7 +77,7 @@ impl MobTracker {
         wire: &mut Wire,
     ) -> io::Result<()> {
         let changes = self.collect(&ctx.mobs.0.lock().unwrap(), loaded, at_chunk(position));
-        changes.send(wire, ctx.ids)
+        changes.send(wire, ctx.ids, ctx.commands.game_time())
     }
 
     pub(super) fn collect(
@@ -207,8 +206,7 @@ impl MobTracker {
 }
 
 impl Changes {
-    fn send(self, wire: &mut Wire, ids: &PacketIds) -> io::Result<()> {
-        let now = Instant::now();
+    fn send(self, wire: &mut Wire, ids: &PacketIds, now: i64) -> io::Result<()> {
         send_removals(&self.removed, wire, ids)?;
         for (id, mob) in self.added {
             let p = mob.motion.position;
@@ -229,8 +227,7 @@ impl Changes {
                 ),
             )?;
             if let Some(fuse) = mob.fuse {
-                let ticks = (fuse.saturating_duration_since(now).as_millis() / TICK.as_millis())
-                    .max(1) as i32;
+                let ticks = (fuse - now).max(1) as i32;
                 let value = DataValue {
                     id: 8,
                     serializer: 1,
