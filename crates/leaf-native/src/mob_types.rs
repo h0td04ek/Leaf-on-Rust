@@ -14,6 +14,12 @@ pub struct MobType {
     pub aquatic: bool,
 }
 
+impl MobType {
+    pub fn is_pushed_by_fluid(&self) -> bool {
+        !self.aquatic && !matches!(self.name, "axolotl" | "turtle" | "zombie_nautilus")
+    }
+}
+
 struct Registry {
     names: HashMap<&'static str, MobType>,
     eggs: HashMap<i32, &'static str>,

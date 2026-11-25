@@ -13,7 +13,7 @@ use crate::blocks::Blocks;
 
 use super::{
     broadcast_blocks, chunk, fluid_faces, set_state, state_at, update, BlockView, Chunk, Edits,
-    NativeWorld, AIR,
+    NativeWorld, WorldType, AIR,
 };
 
 const MAX_FLUID_TICKS: usize = 1024;
@@ -38,6 +38,9 @@ struct Liquid {
 
 impl Liquid {
     fn at(state: i32) -> Option<Self> {
+        if state == AIR {
+            return None;
+        }
         if fluid_faces::waterlogged(state) {
             return Some(Self {
                 fluid: Fluid::Water,
@@ -51,6 +54,10 @@ impl Liquid {
                 let level = state - source;
                 (0..16).contains(&level).then_some(Self { fluid, level })
             })
+    }
+
+    fn amount(self) -> i32 {
+        8 - self.distance()
     }
 
     fn distance(self) -> i32 {
@@ -610,23 +617,114 @@ impl BlockView {
     pub fn touching_fluids(&self, bounds: Aabb) -> (bool, bool) {
         let mut water = false;
         let mut lava = false;
+        self.visit_fluids(bounds, |_, liquid, _| match liquid.fluid {
+            Fluid::Water => water = true,
+            Fluid::Lava => lava = true,
+        });
+        (water, lava)
+    }
+
+    pub fn push_by_fluid(&self, bounds: Aabb, mut velocity: Vec3) -> Vec3 {
+        let mut water = Current::default();
+        let mut lava = Current::default();
+        self.visit_fluids(bounds, |pos, liquid, depth| {
+            let current = match liquid.fluid {
+                Fluid::Water => &mut water,
+                Fluid::Lava => &mut lava,
+            };
+            current.depth = current.depth.max(depth);
+            let scale = if current.depth < 0.4 {
+                current.depth
+            } else {
+                1.0
+            };
+            current.direction = current
+                .direction
+                .add_vec(&self.flow_at(pos, liquid).scale(scale));
+            current.cells += 1;
+        });
+        for (current, strength) in [(water, 0.014), (lava, 0.0023333333333333335)] {
+            if current.cells == 0 || current.direction == Vec3::ZERO {
+                continue;
+            }
+            // Non-player entities normalize the average before applying drag.
+            let direction = current
+                .direction
+                .scale(1.0 / f64::from(current.cells))
+                .normalize();
+            let strength = if velocity.x.abs() < 0.003 && velocity.z.abs() < 0.003 {
+                f64::max(strength, 0.0045)
+            } else {
+                strength
+            };
+            velocity = velocity.add_vec(&direction.scale(strength));
+        }
+        velocity
+    }
+
+    fn visit_fluids(&self, bounds: Aabb, mut visit: impl FnMut(BlockPos, Liquid, f64)) {
+        let flat = self.1.generation().world_type == WorldType::Flat;
         for x in bounds.min_x.floor() as i32..bounds.max_x.ceil() as i32 {
             for z in bounds.min_z.floor() as i32..bounds.max_z.ceil() as i32 {
+                let coord = (x >> 4, z >> 4);
+                let changes = self.0.get(&coord);
+                // The built-in flat terrain has no liquids outside edited chunks.
+                if flat && changes.is_none() {
+                    continue;
+                }
+                let generated = self.1.chunk(coord);
                 for y in bounds.min_y.floor() as i32..bounds.max_y.ceil() as i32 {
                     let pos = BlockPos::new(x, y, z);
-                    let Some(liquid) = Liquid::at(self.block(pos)) else {
-                        continue;
-                    };
-                    if bounds.min_y < self.liquid_top(pos, liquid) {
-                        match liquid.fluid {
-                            Fluid::Water => water = true,
-                            Fluid::Lava => lava = true,
+                    let state = super::block_at(changes.map(Arc::as_ref), &generated, pos);
+                    if let Some(liquid) = Liquid::at(state) {
+                        let depth = self.liquid_top(pos, liquid) - bounds.min_y;
+                        if depth >= 0.0 {
+                            visit(pos, liquid, depth);
                         }
                     }
                 }
             }
         }
-        (water, lava)
+    }
+
+    fn flow_at(&self, pos: BlockPos, liquid: Liquid) -> Vec3 {
+        let mut flow = Vec3::ZERO;
+        for direction in HORIZONTAL {
+            let neighbor = pos.relative(direction);
+            let state = self.block(neighbor);
+            let difference = match Liquid::at(state) {
+                Some(other) if other.fluid == liquid.fluid => liquid.amount() - other.amount(),
+                None if !fluid_faces::blocks_motion(state) => {
+                    let below = self.block(neighbor.relative(Direction::DOWN));
+                    Liquid::at(below)
+                        .filter(|other| other.fluid == liquid.fluid)
+                        .map_or(0, |other| liquid.amount() + 8 - other.amount())
+                }
+                _ => 0,
+            };
+            flow = flow.add(
+                f64::from(direction.get_step_x() * difference),
+                0.0,
+                f64::from(direction.get_step_z() * difference),
+            );
+        }
+        let flow = flow.normalize();
+        if liquid.level >= 8
+            && HORIZONTAL.into_iter().any(|direction| {
+                let side = pos.relative(direction);
+                [side, side.relative(Direction::UP)]
+                    .into_iter()
+                    .any(|neighbor| {
+                        let state = self.block(neighbor);
+                        fluid_faces::supports_falling_current(state, direction)
+                            && Liquid::at(state).is_none_or(|other| other.fluid != liquid.fluid)
+                    })
+            })
+        {
+            flow.add(0.0, -6.0, 0.0).normalize()
+        } else {
+            flow
+        }
     }
 
     fn liquid_top(&self, pos: BlockPos, liquid: Liquid) -> f64 {
@@ -635,10 +733,17 @@ impl BlockView {
         {
             1.0
         } else {
-            f64::from(8 - liquid.distance()) / 9.0
+            f64::from(liquid.amount()) / 9.0
         };
         f64::from(pos.y) + height
     }
+}
+
+#[derive(Default)]
+struct Current {
+    direction: Vec3,
+    depth: f64,
+    cells: u32,
 }
 
 pub enum BucketHit {
@@ -708,6 +813,51 @@ mod tests {
         water_sources: true,
         lava_sources: false,
     };
+
+    #[test]
+    fn current_follows_fluid_gradients_drops_and_waterfall_walls() {
+        let world = NativeWorld::new(0);
+        let audience = Audience::default();
+        let put = |pos, state| {
+            world
+                .fill(pos, pos, state, crate::world::FillMode::Keep, 1, &audience)
+                .unwrap();
+        };
+        let pool = BlockPos::new(0, 16, 0);
+        put(pool, Fluid::Water.state(0));
+
+        let stream = BlockPos::new(8, 16, 0);
+        put(stream.offset(-1, 0, 0), Fluid::Water.state(0));
+        put(stream, Fluid::Water.state(1));
+        put(stream.offset(1, 0, 0), Fluid::Water.state(2));
+
+        let edge = BlockPos::new(15, 18, 0);
+        put(edge, Fluid::Water.state(0));
+        put(edge.offset(1, -1, 0), Fluid::Water.state(8));
+
+        let falls = BlockPos::new(24, 18, 0);
+        put(falls, Fluid::Water.state(8));
+        put(falls.offset(0, 1, 1), 1);
+
+        let lava = BlockPos::new(32, 16, 0);
+        put(lava.offset(-1, 0, 0), Fluid::Lava.state(0));
+        put(lava, Fluid::Lava.state(2));
+
+        let view = world.snapshot();
+        let push = |pos: BlockPos, initial| {
+            view.push_by_fluid(
+                crate::world::entity_bounds(pos.get_bottom_center(), 0.25, 0.25),
+                initial,
+            )
+        };
+        assert_eq!(push(pool, Vec3::ZERO), Vec3::ZERO);
+        assert_eq!(push(stream, Vec3::ZERO), Vec3::new(0.014, 0.0, 0.0));
+        assert_eq!(push(edge, Vec3::ZERO), Vec3::new(0.014, 0.0, 0.0));
+        assert_eq!(push(falls, Vec3::ZERO), Vec3::new(0.0, -0.014, 0.0));
+        assert_eq!(push(lava, Vec3::ZERO), Vec3::new(0.0045, 0.0, 0.0));
+        let moving = push(lava, Vec3::new(0.01, 0.0, 0.0));
+        assert!((moving.x - 0.012333333333333334).abs() < 1e-10);
+    }
 
     #[test]
     fn falling_water_spreads_and_drains_after_removing_the_source() {

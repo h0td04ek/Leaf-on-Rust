@@ -31,7 +31,7 @@ use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, clear_sight_with, MobTarget, Peers};
 use crate::simulation::SimulationContext;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, Fluid, NativeWorld};
+use crate::world::{chunk, entity_bounds, BlockView, Fluid, NativeWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
 const FUSE_TICKS: i64 = 80;
@@ -773,34 +773,34 @@ impl Mob {
                 velocity.z = walk.z;
             }
         }
+        let bounds = entity_bounds(position, self.kind.width, self.kind.height);
+        if self.kind.is_pushed_by_fluid() {
+            velocity = world.push_by_fluid(bounds, velocity);
+        }
         if self.on_ground
             && velocity == Vec3::ZERO
             && position.y.fract() == 0.0
             && !self.kind.aquatic
             && !self.kind.flying
-            && !world.has_room(position.add(0.0, -0.04, 0.0), self.kind.height, false)
+            && !world.has_movement_room(bounds.offset_y(-0.04), false)
         {
             return attack;
         }
-        let next = position.add(velocity.x, 0.0, velocity.z);
         let swim = self.kind.aquatic && world.has_room(position, self.kind.height, true);
-        let mut next = if world.has_room(next, self.kind.height, swim) {
-            next
-        } else {
-            position
-        };
+        velocity = world.clip_horizontal(bounds, velocity, swim);
+        let mut next = position.add(velocity.x, 0.0, velocity.z);
         if !self.kind.flying && !swim {
             velocity.y = (velocity.y - 0.04).max(-0.9);
         }
         let vertical = next.add(0.0, velocity.y, 0.0);
         self.on_ground = false;
-        if world.has_room(vertical, self.kind.height, swim) {
+        if world.has_movement_room(bounds.move_vec(&vertical.subtract_vec(&position)), swim) {
             next = vertical;
         } else {
             if velocity.y <= 0.0 {
                 let block = BlockPos::containing_vec3(&vertical);
                 let floor = Vec3::new(next.x, f64::from(block.y + 1), next.z);
-                if world.has_room(floor, self.kind.height, swim) {
+                if world.has_movement_room(bounds.move_vec(&floor.subtract_vec(&position)), swim) {
                     next = floor;
                 }
                 self.on_ground = true;
@@ -931,6 +931,48 @@ mod tests {
     use crate::operators::Operators;
     use crate::tests::TestWorld;
     use crate::wire::PacketIds;
+
+    #[test]
+    fn current_moves_land_mobs_and_primed_tnt_without_pushing_through_banks() {
+        let world = NativeWorld::new(0);
+        let audience = Audience::default();
+        let water = Blocks::vanilla().named("water").unwrap();
+        for (x, state) in [
+            (-1, water.default),
+            (0, water.state(water.default, &[("level", "1")])),
+            (1, 1),
+        ] {
+            let pos = BlockPos::new(x, 16, 0);
+            world
+                .fill(pos, pos, state, crate::world::FillMode::Keep, 1, &audience)
+                .unwrap();
+        }
+        let world = world.snapshot();
+        let mobs = Mobs::default();
+        let mut scene = mobs.0.write().unwrap();
+        let ids = AtomicI32::new(1);
+        for (name, fuse) in [("pig", None), ("tnt", Some(80))] {
+            let kind = mob_types::named(name).unwrap();
+            let origin = Vec3::new(0.45, 16.0, 0.5);
+            let id = scene.add(kind, origin, false, fuse, &ids);
+            let entity = scene.entities.get_mut(&id).unwrap();
+            entity.motion.delta_movement = Vec3::ZERO;
+            entity.step(id, 50, &[], &world);
+            assert!(entity.motion.position.x > origin.x, "{name}");
+            assert_eq!(entity.motion.position.y, origin.y);
+            let bank = Vec3::new(1.0 - kind.width / 2.0, 16.0, 0.5);
+            entity.motion.position = bank;
+            entity.motion.delta_movement = Vec3::ZERO;
+            entity.step(id, 51, &[], &world);
+            assert_eq!(entity.motion.position, bank, "{name}");
+        }
+
+        let origin = Vec3::new(0.45, 16.25, 0.5);
+        let fish = scene.add(mob_types::named("cod").unwrap(), origin, false, None, &ids);
+        let fish_mob = scene.entities.get_mut(&fish).unwrap();
+        fish_mob.step(fish, 50, &[], &world);
+        assert_eq!(fish_mob.motion.position, origin);
+    }
 
     #[test]
     fn mob_step_results_are_independent_of_worker_count() {

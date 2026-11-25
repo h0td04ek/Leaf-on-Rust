@@ -1,4 +1,4 @@
-# Java 1.21.11 protocol 774 collision face rectangles projected to (u,v). State records in fluid-state-faces-774.bin contain flags and six face IDs in direction order. Flags 1 accepts a water source, 2 contains water.
+# Java 1.21.11 protocol 774 collision face rectangles projected to (u,v). State records in fluid-state-faces-774.bin contain flags and six face IDs in direction order. Flag bits 0 and 1 mark waterloggable and waterlogged states. Bit 2 marks blocksMotion. Bits 3 through 6 mark sturdy faces for falling currents in north, south, west, east order.
 0
 1 0,0,1,1
 2 0,0,0.1875,0.1875 0.8125,0,1,0.1875

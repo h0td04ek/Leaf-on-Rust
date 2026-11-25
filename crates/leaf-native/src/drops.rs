@@ -19,9 +19,10 @@ use crate::gameplay::{item_data, PlayContext};
 use crate::items::ITEM_ENTITY;
 use crate::wire::Wire;
 use crate::workers::Workers;
-use crate::world::{chunk, BlockView, Fluid, NativeWorld};
+use crate::world::{chunk, entity_bounds, BlockView, Fluid, NativeWorld};
 
 const DROP_WORK_BATCH: usize = 256;
+const ITEM_SIZE: f64 = 0.25;
 
 #[derive(Clone, Copy)]
 pub enum PickupDelay {
@@ -123,6 +124,9 @@ fn step_drop(
     if tick - created >= 6_000 || motion.position.y < -72.0 {
         return None;
     }
+    let bounds = entity_bounds(motion.position, ITEM_SIZE, ITEM_SIZE);
+    let velocity = world.push_by_fluid(bounds, motion.delta_movement);
+    motion.delta_movement = world.clip_horizontal(bounds, velocity, false);
     let buoyant = world.fluid_at(motion.position.add(0.0, 0.11, 0.0)) == Some(Fluid::Water);
     if buoyant {
         let lift = if motion.delta_movement.y < 0.06 {
@@ -279,17 +283,32 @@ mod tests {
     use crate::world::FillMode;
 
     #[test]
-    fn dropped_items_rise_in_water_instead_of_sinking() {
+    fn dropped_items_rise_in_water_and_follow_current_until_the_bank() {
         let world = NativeWorld::new(0);
-        let water = Blocks::vanilla().named("water").unwrap().default;
+        let water = Blocks::vanilla().named("water").unwrap();
         let pos = BlockPos::new(0, 16, 0);
-        world
-            .fill(pos, pos, water, FillMode::Keep, 1, &Audience::default())
-            .unwrap();
+        let audience = Audience::default();
+        for (block, state) in [
+            (pos.offset(-1, 0, 0), water.default),
+            (pos, water.state(water.default, &[("level", "1")])),
+            (pos.offset(1, 0, 0), 1),
+        ] {
+            world
+                .fill(block, block, state, FillMode::Keep, 1, &audience)
+                .unwrap();
+        }
         let position = pos.get_bottom_center().add(0.0, 0.2, 0.0);
         let motion = PositionMoveRotation::new(position, Vec3::ZERO, 0.0, 0.0);
-        let (updated, grounded) = step_drop(1, 0, motion, &world.snapshot()).unwrap();
+        let world = world.snapshot();
+        let (updated, grounded) = step_drop(1, 0, motion, &world).unwrap();
+        assert!(updated.position.x > position.x);
         assert!(updated.position.y > position.y);
         assert!(!grounded);
+
+        let bank = Vec3::new(0.875, position.y, position.z);
+        let motion = PositionMoveRotation::new(bank, Vec3::ZERO, 0.0, 0.0);
+        let (updated, _) = step_drop(1, 0, motion, &world).unwrap();
+        assert_eq!(updated.position.x, bank.x);
+        assert!(updated.position.y > bank.y);
     }
 }

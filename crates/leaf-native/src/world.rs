@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use leaf_core::core::{block_pos::BlockPos, direction::Direction, section_pos::SectionPos};
-use leaf_core::world::phys::vec3::Vec3;
+use leaf_core::world::phys::{aabb::Aabb, vec3::Vec3};
 use std::io;
 
 use leaf_core::util::uuid::Uuid;
@@ -660,6 +660,58 @@ impl BlockView {
     pub fn has_room(&self, position: Vec3, height: f64, aquatic: bool) -> bool {
         has_room(&self.0, &self.1, position, height, aquatic)
     }
+
+    pub fn clip_horizontal(&self, bounds: Aabb, mut motion: Vec3, water_only: bool) -> Vec3 {
+        let mut shifted = bounds.move_xyz(motion.x, 0.0, 0.0);
+        if motion.x != 0.0 && !self.has_movement_room(shifted, water_only) {
+            motion.x = 0.0;
+            shifted = bounds;
+        }
+        if motion.z != 0.0
+            && !self.has_movement_room(shifted.move_xyz(0.0, 0.0, motion.z), water_only)
+        {
+            motion.z = 0.0;
+        }
+        motion
+    }
+
+    pub fn has_movement_room(&self, bounds: Aabb, water_only: bool) -> bool {
+        let bottom = bounds.min_y.floor() as i32;
+        let top = bounds.max_y.ceil() as i32;
+        if bottom < MIN_Y || top > MIN_Y + SECTIONS as i32 * 16 {
+            return false;
+        }
+        let blocks = Blocks::vanilla();
+        (bounds.min_x.floor() as i32..bounds.max_x.ceil() as i32).all(|x| {
+            (bounds.min_z.floor() as i32..bounds.max_z.ceil() as i32).all(|z| {
+                let coord = (x >> 4, z >> 4);
+                let edits = self.0.get(&coord).map(Arc::as_ref);
+                let generated = self.1.chunk(coord);
+                (bottom..top).all(|y| {
+                    let state = block_at(edits, &generated, BlockPos::new(x, y, z));
+                    if water_only {
+                        blocks.get(state).name == "water"
+                    } else {
+                        state == AIR || blocks.get(state).replaceable
+                    }
+                })
+            })
+        })
+    }
+}
+
+/// The inset keeps a body resting exactly on a face outside the adjacent block.
+pub fn entity_bounds(position: Vec3, width: f64, height: f64) -> Aabb {
+    let half = width / 2.0;
+    Aabb::new(
+        position.x - half,
+        position.y,
+        position.z - half,
+        position.x + half,
+        position.y + height,
+        position.z + half,
+    )
+    .deflate_all(0.001)
 }
 
 fn has_room(

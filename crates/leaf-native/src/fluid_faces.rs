@@ -18,6 +18,14 @@ pub(super) fn waterlogged(state: i32) -> bool {
     flags(state) & 2 != 0
 }
 
+pub(super) fn blocks_motion(state: i32) -> bool {
+    flags(state) & 4 != 0
+}
+
+pub(super) fn supports_falling_current(state: i32, direction: Direction) -> bool {
+    flags(state) & (1 << (direction.get_3d_data_value() + 1)) != 0
+}
+
 fn flags(state: i32) -> u8 {
     STATES[state as usize * STATE_BYTES]
 }

@@ -24,16 +24,12 @@ use leaf_core::network::protocol::game::{
 };
 use leaf_core::network::syncher::synched_entity_data::DataValue;
 use leaf_core::util::{mth, uuid::Uuid};
-use leaf_core::world::{
-    item::item_stack::ItemStack,
-    level::game_type::GameType,
-    phys::{aabb::Aabb, vec3::Vec3},
-};
+use leaf_core::world::{item::item_stack::ItemStack, level::game_type::GameType, phys::vec3::Vec3};
 
 use crate::mining::enchantment_level;
 use crate::player_environment::{Environment, Hazards, Rules};
 use crate::wire::{PacketIds, Wire};
-use crate::world::{Fluid, NativeWorld, AIR};
+use crate::world::{entity_bounds, Fluid, NativeWorld, AIR};
 
 const PLAYER_ENTITY_TYPE: i32 = 155; // Minecraft Java 1.21.11 entity_type registry.
 const ATTACK_COOLDOWN: Duration = Duration::from_millis(500);
@@ -137,14 +133,7 @@ impl Peers {
             } else {
                 0
             };
-            let (in_water, in_lava) = blocks.touching_fluids(Aabb::new(
-                position.x - 0.299,
-                position.y + 0.001,
-                position.z - 0.299,
-                position.x + 0.299,
-                position.y + height - 0.001,
-                position.z + 0.299,
-            ));
+            let (in_water, in_lava) = blocks.touching_fluids(entity_bounds(position, 0.6, height));
             let hazard = online
                 .hazards
                 .tick(underwater, in_water, in_lava, respiration, rules);
