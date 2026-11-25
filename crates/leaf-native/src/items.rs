@@ -6,9 +6,11 @@ use leaf_core::core::component::data_component_type::data_component_type_by_iden
 use leaf_core::core::component::data_components::crafting_registry_len;
 use leaf_core::core::component::{DataComponentMap, DataComponentPatch};
 use leaf_core::core::holder::Holder;
-use leaf_core::resources::Identifier;
+use leaf_core::resources::{Identifier, ResourceKey};
+use leaf_core::tags::TagKey;
 use leaf_core::world::effect::mob_effect_instance::{MobEffectDetails, MobEffectInstance};
 use leaf_core::world::item::component::{
+    damage_resistant::DamageResistant,
     dyed_item_color::DyedItemColor,
     firework_explosion::{FireworkExplosion, FireworkExplosionShape},
     fireworks::Fireworks,
@@ -38,6 +40,12 @@ const BANNER_PATTERNS: i32 = 70;
 const BASE_COLOR: i32 = 71;
 const FIREWORKS: i32 = 67;
 
+pub fn fire_resistant(stack: &ItemStack) -> bool {
+    stack
+        .get_component::<DamageResistant>(&Identifier::minecraft("damage_resistant"))
+        .is_some_and(|resistant| resistant.types.location() == &Identifier::minecraft("is_fire"))
+}
+
 pub struct Items {
     maxima: Vec<i32>,
     damageables: HashMap<i32, i32>,
@@ -65,6 +73,9 @@ impl Items {
                 data_component_type_by_identifier(&Identifier::minecraft("max_damage")).unwrap();
             let fireworks =
                 data_component_type_by_identifier(&Identifier::minecraft("fireworks")).unwrap();
+            let damage_resistant =
+                data_component_type_by_identifier(&Identifier::minecraft("damage_resistant"))
+                    .unwrap();
             for line in include_str!("../data/items-774.txt").lines().skip(1) {
                 let mut fields = line.split_ascii_whitespace();
                 let id = fields.next().unwrap().parse::<i32>().unwrap();
@@ -82,6 +93,20 @@ impl Items {
                 }
                 if id == FIREWORK {
                     defaults.set(&fireworks, Fireworks::new(1, vec![]));
+                }
+                // Skip the preview block state.
+                if let Some(tag) = fields.nth(1) {
+                    defaults.set(
+                        &damage_resistant,
+                        DamageResistant {
+                            types: TagKey::create(
+                                ResourceKey::create_registry_key(Identifier::minecraft(
+                                    "damage_type",
+                                )),
+                                Identifier::minecraft(tag),
+                            ),
+                        },
+                    );
                 }
                 let actual = item::register_item_with_components(
                     item::Item::new(Identifier::minecraft(name)),

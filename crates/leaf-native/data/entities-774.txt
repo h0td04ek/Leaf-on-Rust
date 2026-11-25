@@ -1,93 +1,93 @@
-# protocol id, entity path, egg item id (-1 if unavailable), health, height, width, category
-2 allay 1163 20.0000 0.6000 0.35 creature
-4 armadillo 1141 12.0000 0.6500 0.7 creature
-5 armor_stand -1 20.0000 1.9750 0.5 misc
-7 axolotl 1151 14.0000 0.4200 0.75 axolotls
-10 bat 1142 6.0000 0.9000 0.5 ambient
-11 bee 1143 10.0000 0.6000 0.7 creature
-14 blaze 1203 20.0000 1.8000 0.6 monster
-16 bogged 1172 16.0000 1.9900 0.6 monster
-17 breeze 1188 30.0000 1.7700 0.6 monster
-19 camel 1134 32.0000 2.3750 1.7 creature
-20 camel_husk 1173 32.0000 2.3750 1.7 monster
-21 cat 1138 10.0000 0.7000 0.6 creature
-22 cave_spider 1186 12.0000 0.5000 0.7 monster
-26 chicken 1130 4.0000 0.7000 0.4 creature
-27 cod 1152 3.0000 0.3000 0.5 water_ambient
-28 copper_golem 1166 12.0000 0.9800 0.49 misc
-30 cow 1131 10.0000 1.4000 0.9 creature
-31 creaking 1189 1.0000 2.7000 0.9 monster
-32 creeper 1190 20.0000 1.7000 0.6 monster
-35 dolphin 1153 10.0000 0.6000 0.9 water_creature
-36 donkey 1135 53.0000 1.5000 1.3964844 creature
-38 drowned 1174 20.0000 1.9500 0.6 monster
-40 elder_guardian 1191 80.0000 1.9975 1.9975 monster
-41 enderman 1214 40.0000 2.9000 0.6 monster
-42 endermite 1215 8.0000 0.3000 0.4 monster
-43 ender_dragon 1213 200.0000 8.0000 16.0 monster
-46 evoker 1198 24.0000 1.9500 0.6 monster
-54 fox 1144 10.0000 0.7000 0.6 creature
-55 frog 1154 10.0000 0.5000 0.5 creature
-57 ghast 1204 10.0000 4.0000 4.0 monster
-58 happy_ghast 1205 20.0000 4.0000 4.0 creature
-59 giant -1 100.0000 12.0000 3.6 monster
-61 glow_squid 1155 10.0000 0.8000 0.8 underground_water_creature
-62 goat 1145 10.0000 1.3000 0.9 creature
-63 guardian 1192 30.0000 0.8500 0.85 monster
-64 hoglin 1206 40.0000 1.4000 1.3964844 monster
-66 horse 1136 53.0000 1.6000 1.3964844 creature
-67 husk 1175 20.0000 1.9500 0.6 monster
-68 illusioner -1 32.0000 1.9500 0.6 monster
-70 iron_golem 1167 100.0000 2.7000 1.4 misc
-78 llama 1146 53.0000 1.8700 0.9 creature
-80 magma_cube 1207 20.0000 0.5200 0.52 monster
-83 mannequin -1 20.0000 1.8000 0.6 misc
-86 mooshroom 1164 10.0000 1.4000 0.9 creature
-87 mule 1137 53.0000 1.6000 1.3964844 creature
-88 nautilus 1156 15.0000 0.9500 0.875 water_creature
-91 ocelot 1147 10.0000 0.7000 0.6 creature
-96 panda 1148 20.0000 1.2500 1.3 creature
-97 parched 1176 16.0000 1.9900 0.6 monster
-98 parrot 1139 6.0000 0.9000 0.5 creature
-99 phantom 1193 20.0000 0.5000 0.9 monster
-100 pig 1132 10.0000 0.9000 0.9 creature
-101 piglin 1208 16.0000 1.9500 0.6 monster
-102 piglin_brute 1209 50.0000 1.9500 0.6 monster
-103 pillager 1199 24.0000 1.9500 0.6 monster
-104 polar_bear 1149 30.0000 1.4000 1.4 creature
-107 pufferfish 1157 3.0000 0.7000 0.7 water_ambient
-108 rabbit 1150 3.0000 0.5000 0.4 creature
-109 ravager 1200 100.0000 2.2000 1.95 monster
-110 salmon 1158 3.0000 0.4000 0.7 water_ambient
-111 sheep 1133 8.0000 1.3000 0.9 creature
-112 shulker 1216 30.0000 1.0000 1.0 monster
-114 silverfish 1194 8.0000 0.3000 0.4 monster
-115 skeleton 1177 20.0000 1.9900 0.6 monster
-116 skeleton_horse 1178 15.0000 1.6000 1.3964844 creature
-117 slime 1195 20.0000 0.5200 0.52 monster
-119 sniffer 1165 14.0000 1.7500 1.9 creature
-121 snow_golem 1168 4.0000 1.9000 0.7 misc
-124 spider 1187 16.0000 0.9000 1.4 monster
-127 squid 1159 10.0000 0.8000 0.8 water_creature
-128 stray 1179 20.0000 1.9900 0.6 monster
-129 strider 1210 20.0000 1.7000 0.9 creature
-130 tadpole 1160 6.0000 0.3000 0.4 creature
-134 trader_llama 1169 53.0000 1.8700 0.9 creature
-136 tropical_fish 1161 3.0000 0.4000 0.5 water_ambient
-137 turtle 1162 30.0000 0.4000 1.2 creature
-138 vex 1202 14.0000 0.8000 0.4 monster
-139 villager 1170 20.0000 1.9500 0.6 misc
-140 vindicator 1201 24.0000 1.9500 0.6 monster
-141 wandering_trader 1171 20.0000 1.9500 0.6 creature
-142 warden 1196 500.0000 2.9000 0.9 monster
-144 witch 1197 26.0000 1.9500 0.6 monster
-145 wither 1180 300.0000 3.5000 0.9 monster
-146 wither_skeleton 1181 20.0000 2.4000 0.7 monster
-148 wolf 1140 8.0000 0.8500 0.6 creature
-149 zoglin 1211 40.0000 1.4000 1.3964844 monster
-150 zombie 1182 20.0000 1.9500 0.6 monster
-151 zombie_horse 1183 25.0000 1.6000 1.3964844 monster
-152 zombie_nautilus 1184 15.0000 0.9500 0.875 monster
-153 zombie_villager 1185 20.0000 1.9500 0.6 monster
-154 zombified_piglin 1212 20.0000 1.9500 0.6 monster
-132 tnt -1 0 0.98 0.98 misc
+# protocol id, entity path, egg item id (-1 if unavailable), health, height, width, category, fire immune (0/1)
+2 allay 1163 20.0000 0.6000 0.35 creature 0
+4 armadillo 1141 12.0000 0.6500 0.7 creature 0
+5 armor_stand -1 20.0000 1.9750 0.5 misc 0
+7 axolotl 1151 14.0000 0.4200 0.75 axolotls 0
+10 bat 1142 6.0000 0.9000 0.5 ambient 0
+11 bee 1143 10.0000 0.6000 0.7 creature 0
+14 blaze 1203 20.0000 1.8000 0.6 monster 1
+16 bogged 1172 16.0000 1.9900 0.6 monster 0
+17 breeze 1188 30.0000 1.7700 0.6 monster 0
+19 camel 1134 32.0000 2.3750 1.7 creature 0
+20 camel_husk 1173 32.0000 2.3750 1.7 monster 0
+21 cat 1138 10.0000 0.7000 0.6 creature 0
+22 cave_spider 1186 12.0000 0.5000 0.7 monster 0
+26 chicken 1130 4.0000 0.7000 0.4 creature 0
+27 cod 1152 3.0000 0.3000 0.5 water_ambient 0
+28 copper_golem 1166 12.0000 0.9800 0.49 misc 0
+30 cow 1131 10.0000 1.4000 0.9 creature 0
+31 creaking 1189 1.0000 2.7000 0.9 monster 0
+32 creeper 1190 20.0000 1.7000 0.6 monster 0
+35 dolphin 1153 10.0000 0.6000 0.9 water_creature 0
+36 donkey 1135 53.0000 1.5000 1.3964844 creature 0
+38 drowned 1174 20.0000 1.9500 0.6 monster 0
+40 elder_guardian 1191 80.0000 1.9975 1.9975 monster 0
+41 enderman 1214 40.0000 2.9000 0.6 monster 0
+42 endermite 1215 8.0000 0.3000 0.4 monster 0
+43 ender_dragon 1213 200.0000 8.0000 16.0 monster 1
+46 evoker 1198 24.0000 1.9500 0.6 monster 0
+54 fox 1144 10.0000 0.7000 0.6 creature 0
+55 frog 1154 10.0000 0.5000 0.5 creature 0
+57 ghast 1204 10.0000 4.0000 4.0 monster 1
+58 happy_ghast 1205 20.0000 4.0000 4.0 creature 0
+59 giant -1 100.0000 12.0000 3.6 monster 0
+61 glow_squid 1155 10.0000 0.8000 0.8 underground_water_creature 0
+62 goat 1145 10.0000 1.3000 0.9 creature 0
+63 guardian 1192 30.0000 0.8500 0.85 monster 0
+64 hoglin 1206 40.0000 1.4000 1.3964844 monster 0
+66 horse 1136 53.0000 1.6000 1.3964844 creature 0
+67 husk 1175 20.0000 1.9500 0.6 monster 0
+68 illusioner -1 32.0000 1.9500 0.6 monster 0
+70 iron_golem 1167 100.0000 2.7000 1.4 misc 0
+78 llama 1146 53.0000 1.8700 0.9 creature 0
+80 magma_cube 1207 20.0000 0.5200 0.52 monster 1
+83 mannequin -1 20.0000 1.8000 0.6 misc 0
+86 mooshroom 1164 10.0000 1.4000 0.9 creature 0
+87 mule 1137 53.0000 1.6000 1.3964844 creature 0
+88 nautilus 1156 15.0000 0.9500 0.875 water_creature 0
+91 ocelot 1147 10.0000 0.7000 0.6 creature 0
+96 panda 1148 20.0000 1.2500 1.3 creature 0
+97 parched 1176 16.0000 1.9900 0.6 monster 0
+98 parrot 1139 6.0000 0.9000 0.5 creature 0
+99 phantom 1193 20.0000 0.5000 0.9 monster 0
+100 pig 1132 10.0000 0.9000 0.9 creature 0
+101 piglin 1208 16.0000 1.9500 0.6 monster 0
+102 piglin_brute 1209 50.0000 1.9500 0.6 monster 0
+103 pillager 1199 24.0000 1.9500 0.6 monster 0
+104 polar_bear 1149 30.0000 1.4000 1.4 creature 0
+107 pufferfish 1157 3.0000 0.7000 0.7 water_ambient 0
+108 rabbit 1150 3.0000 0.5000 0.4 creature 0
+109 ravager 1200 100.0000 2.2000 1.95 monster 0
+110 salmon 1158 3.0000 0.4000 0.7 water_ambient 0
+111 sheep 1133 8.0000 1.3000 0.9 creature 0
+112 shulker 1216 30.0000 1.0000 1.0 monster 1
+114 silverfish 1194 8.0000 0.3000 0.4 monster 0
+115 skeleton 1177 20.0000 1.9900 0.6 monster 0
+116 skeleton_horse 1178 15.0000 1.6000 1.3964844 creature 0
+117 slime 1195 20.0000 0.5200 0.52 monster 0
+119 sniffer 1165 14.0000 1.7500 1.9 creature 0
+121 snow_golem 1168 4.0000 1.9000 0.7 misc 0
+124 spider 1187 16.0000 0.9000 1.4 monster 0
+127 squid 1159 10.0000 0.8000 0.8 water_creature 0
+128 stray 1179 20.0000 1.9900 0.6 monster 0
+129 strider 1210 20.0000 1.7000 0.9 creature 1
+130 tadpole 1160 6.0000 0.3000 0.4 creature 0
+134 trader_llama 1169 53.0000 1.8700 0.9 creature 0
+136 tropical_fish 1161 3.0000 0.4000 0.5 water_ambient 0
+137 turtle 1162 30.0000 0.4000 1.2 creature 0
+138 vex 1202 14.0000 0.8000 0.4 monster 1
+139 villager 1170 20.0000 1.9500 0.6 misc 0
+140 vindicator 1201 24.0000 1.9500 0.6 monster 0
+141 wandering_trader 1171 20.0000 1.9500 0.6 creature 0
+142 warden 1196 500.0000 2.9000 0.9 monster 1
+144 witch 1197 26.0000 1.9500 0.6 monster 0
+145 wither 1180 300.0000 3.5000 0.9 monster 1
+146 wither_skeleton 1181 20.0000 2.4000 0.7 monster 1
+148 wolf 1140 8.0000 0.8500 0.6 creature 0
+149 zoglin 1211 40.0000 1.4000 1.3964844 monster 1
+150 zombie 1182 20.0000 1.9500 0.6 monster 0
+151 zombie_horse 1183 25.0000 1.6000 1.3964844 monster 0
+152 zombie_nautilus 1184 15.0000 0.9500 0.875 monster 0
+153 zombie_villager 1185 20.0000 1.9500 0.6 monster 0
+154 zombified_piglin 1212 20.0000 1.9500 0.6 monster 1
+132 tnt -1 0 0.98 0.98 misc 1

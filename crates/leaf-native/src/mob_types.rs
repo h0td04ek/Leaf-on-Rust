@@ -12,6 +12,7 @@ pub struct MobType {
     pub hostile: bool,
     pub flying: bool,
     pub aquatic: bool,
+    pub fire_immune: bool,
 }
 
 impl MobType {
@@ -41,6 +42,7 @@ fn registry() -> &'static Registry {
             let height = fields.next().unwrap().parse().unwrap();
             let width = fields.next().unwrap().parse().unwrap();
             let category = fields.next().unwrap();
+            let fire_immune = fields.next().unwrap() == "1";
             let flying = matches!(
                 name,
                 "allay"
@@ -69,6 +71,7 @@ fn registry() -> &'static Registry {
                     hostile: category == "monster",
                     flying,
                     aquatic,
+                    fire_immune,
                 },
             );
             if egg >= 0 {

@@ -1222,8 +1222,16 @@ fn is_bucket(item: i32) -> bool {
     .contains(&item)
 }
 
-pub fn item_data(id: i32, item: ItemStack) -> ClientboundSetEntityDataPacket {
-    ClientboundSetEntityDataPacket::new(id, vec![data(8, 7, item)])
+pub fn item_data(
+    id: i32,
+    item: ItemStack,
+    burning: Option<bool>,
+) -> ClientboundSetEntityDataPacket {
+    let mut values = vec![data(8, 7, item)];
+    if let Some(burning) = burning {
+        values.push(flags(false, burning));
+    }
+    ClientboundSetEntityDataPacket::new(id, values)
 }
 
 fn data(id: i32, serializer: i32, value: impl Send + Sync + 'static) -> DataValue {

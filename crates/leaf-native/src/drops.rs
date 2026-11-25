@@ -16,7 +16,8 @@ use leaf_core::world::{item::item_stack::ItemStack, phys::vec3::Vec3};
 use crate::audience::Subscription;
 use crate::blocks::Blocks;
 use crate::gameplay::{item_data, PlayContext};
-use crate::items::ITEM_ENTITY;
+use crate::items::{fire_resistant, ITEM_ENTITY};
+use crate::player_environment::LAVA_FIRE_TICKS;
 use crate::wire::Wire;
 use crate::workers::Workers;
 use crate::world::{chunk, entity_bounds, BlockView, Fluid, NativeWorld};
@@ -46,11 +47,35 @@ pub struct Drops(Mutex<Vec<DroppedItem>>);
 struct DroppedItem {
     id: i32,
     uuid: Uuid,
-    motion: PositionMoveRotation,
-    on_ground: bool,
+    physics: DropPhysics,
     stack: ItemStack,
     created: i64,
     pickup_at: i64,
+}
+
+#[derive(Clone, Copy)]
+struct DropPhysics {
+    motion: PositionMoveRotation,
+    on_ground: bool,
+    health: u8,
+    fire_ticks: u16,
+    fire_resistant: bool,
+}
+
+impl DropPhysics {
+    fn new(pos: Vec3, velocity: Vec3, fire_resistant: bool) -> Self {
+        Self {
+            motion: PositionMoveRotation::new(pos, velocity, 0.0, 0.0),
+            on_ground: false,
+            health: 5,
+            fire_ticks: 0,
+            fire_resistant,
+        }
+    }
+
+    fn burning(&self) -> bool {
+        self.fire_ticks > 0
+    }
 }
 
 impl Drops {
@@ -66,8 +91,7 @@ impl Drops {
         self.0.lock().unwrap().push(DroppedItem {
             id,
             uuid: Uuid::random(),
-            motion: PositionMoveRotation::new(pos, velocity, 0.0, 0.0),
-            on_ground: false,
+            physics: DropPhysics::new(pos, velocity, fire_resistant(&stack)),
             stack,
             created,
             pickup_at: created + delay.ticks(),
@@ -83,7 +107,7 @@ impl Drops {
         if workers.can_split(items.len(), DROP_WORK_BATCH) {
             let inputs = items
                 .iter()
-                .map(|item| (item.motion, item.created))
+                .map(|item| (item.physics, item.created))
                 .collect::<Vec<_>>();
             let mut updates = workers
                 .map_ranges(inputs.len(), DROP_WORK_BATCH, move |range| {
@@ -97,17 +121,16 @@ impl Drops {
             items.retain_mut(|item| item.apply_motion(updates.next().unwrap()));
         } else {
             items.retain_mut(|item| {
-                item.apply_motion(step_drop(tick, item.created, item.motion, &world))
+                item.apply_motion(step_drop(tick, item.created, item.physics, &world))
             });
         }
     }
 }
 
 impl DroppedItem {
-    fn apply_motion(&mut self, update: Option<(PositionMoveRotation, bool)>) -> bool {
-        if let Some((motion, on_ground)) = update {
-            self.motion = motion;
-            self.on_ground = on_ground;
+    fn apply_motion(&mut self, update: Option<DropPhysics>) -> bool {
+        if let Some(physics) = update {
+            self.physics = physics;
             true
         } else {
             false
@@ -118,17 +141,38 @@ impl DroppedItem {
 fn step_drop(
     tick: i64,
     created: i64,
-    mut motion: PositionMoveRotation,
+    mut physics: DropPhysics,
     world: &BlockView,
-) -> Option<(PositionMoveRotation, bool)> {
+) -> Option<DropPhysics> {
+    let motion = &mut physics.motion;
     if tick - created >= 6_000 || motion.position.y < -72.0 {
         return None;
     }
     let bounds = entity_bounds(motion.position, ITEM_SIZE, ITEM_SIZE);
-    let velocity = world.push_by_fluid(bounds, motion.delta_movement);
-    motion.delta_movement = world.clip_horizontal(bounds, velocity, false);
-    let buoyant = world.fluid_at(motion.position.add(0.0, 0.11, 0.0)) == Some(Fluid::Water);
-    if buoyant {
+    let current = world.push_by_fluid(bounds, motion.delta_movement);
+    if !physics.fire_resistant {
+        if current.in_lava {
+            physics.health = physics.health.saturating_sub(4);
+            physics.fire_ticks = LAVA_FIRE_TICKS;
+        } else if current.in_water {
+            physics.fire_ticks = 0;
+        } else if physics.fire_ticks > 0 {
+            if physics.fire_ticks % 20 == 0 {
+                physics.health = physics.health.saturating_sub(1);
+            }
+            physics.fire_ticks -= 1;
+        }
+        if physics.health == 0 {
+            return None;
+        }
+    }
+    motion.delta_movement = world.clip_horizontal(bounds, current.velocity, false);
+    let fluid_drag = match world.fluid_at(motion.position.add(0.0, 0.11, 0.0)) {
+        Some(Fluid::Water) => Some(0.99),
+        Some(Fluid::Lava) => Some(0.95),
+        None => None,
+    };
+    if let Some(drag) = fluid_drag {
         let lift = if motion.delta_movement.y < 0.06 {
             0.0005
         } else {
@@ -136,27 +180,27 @@ fn step_drop(
         };
         motion.delta_movement = motion
             .delta_movement
-            .multiply(0.99, 1.0, 0.99)
+            .multiply(drag, 1.0, drag)
             .add(0.0, lift, 0.0);
     }
     let next = motion.position.add_vec(&motion.delta_movement);
     let block = block_at(next.add(0.0, -0.01, 0.0));
-    let on_ground =
+    physics.on_ground =
         motion.delta_movement.y <= 0.0 && !Blocks::vanilla().get(world.block(block)).replaceable;
-    if on_ground {
+    if physics.on_ground {
         motion.position = Vec3::new(next.x, f64::from(block.y + 1), next.z);
         motion.delta_movement = Vec3::ZERO;
     } else {
         motion.position = next;
-        if !buoyant {
+        if fluid_drag.is_none() {
             motion.delta_movement = motion.delta_movement.add(0.0, -0.04, 0.0).scale(0.98);
         }
     }
-    Some((motion, on_ground))
+    Some(physics)
 }
 
 #[derive(Default)]
-pub struct DropTracker(HashMap<i32, (PositionMoveRotation, i32)>);
+pub struct DropTracker(HashMap<i32, (PositionMoveRotation, i32, bool)>);
 
 impl DropTracker {
     pub fn sync(
@@ -174,7 +218,7 @@ impl DropTracker {
         let visible = {
             let mut items = ctx.drops.0.lock().unwrap();
             items.retain_mut(|item| {
-                let position = item.motion.position;
+                let position = item.physics.motion.position;
                 let relative = player.vector_to(&position);
                 if collector != 0
                     && tick >= item.pickup_at
@@ -194,7 +238,7 @@ impl DropTracker {
             items
                 .iter()
                 .filter(|item| {
-                    let pos = item.motion.position;
+                    let pos = item.physics.motion.position;
                     loaded.contains(&chunk(block_at(pos)))
                         && player.distance_to_sqr(&pos) <= 64.0 * 64.0
                 })
@@ -214,22 +258,25 @@ impl DropTracker {
 
         let mut previous = std::mem::take(&mut self.0);
         for item in visible {
-            let pos = item.motion.position;
+            let motion = item.physics.motion;
+            let pos = motion.position;
+            let burning = item.physics.burning();
             let count = item.stack.get_count();
             match previous.remove(&item.id) {
-                Some((motion, old_count)) => {
-                    if motion != item.motion {
+                Some((old_motion, old_count, was_burning)) => {
+                    if old_motion != motion {
                         wire.send(
                             ctx.ids,
                             &ClientboundEntityPositionSyncPacket::new(
                                 item.id,
-                                item.motion,
-                                item.on_ground,
+                                motion,
+                                item.physics.on_ground,
                             ),
                         )?;
                     }
-                    if count != old_count {
-                        wire.send(ctx.ids, &item_data(item.id, item.stack))?;
+                    if count != old_count || burning != was_burning {
+                        let flags = (burning != was_burning).then_some(burning);
+                        wire.send(ctx.ids, &item_data(item.id, item.stack, flags))?;
                     }
                 }
                 None => {
@@ -242,17 +289,20 @@ impl DropTracker {
                             pos.x,
                             pos.y,
                             pos.z,
-                            item.motion.delta_movement,
+                            motion.delta_movement,
                             0.0,
                             0.0,
                             0.0,
                             0,
                         ),
                     )?;
-                    wire.send(ctx.ids, &item_data(item.id, item.stack))?;
+                    wire.send(
+                        ctx.ids,
+                        &item_data(item.id, item.stack, burning.then_some(true)),
+                    )?;
                 }
             }
-            self.0.insert(item.id, (item.motion, count));
+            self.0.insert(item.id, (motion, count, burning));
         }
         if !previous.is_empty() {
             wire.send(
@@ -283,6 +333,44 @@ mod tests {
     use crate::world::FillMode;
 
     #[test]
+    fn ordinary_drops_burn_but_netherite_floats_in_lava() {
+        use crate::items::{named_id, stack, Items};
+
+        Items::vanilla();
+        let world = NativeWorld::new(0);
+        let pos = BlockPos::new(0, 16, 0);
+        let position = pos.get_bottom_center().add(0.0, 0.2, 0.0);
+        let lava = Blocks::vanilla().named("lava").unwrap().default;
+        world
+            .fill(pos, pos, lava, FillMode::Keep, 1, &Audience::default())
+            .unwrap();
+        let drops = Drops::default();
+        for (id, name) in [(1, "cobblestone"), (2, "netherite_ingot")] {
+            drops.spawn(
+                id,
+                stack(named_id(name), 1),
+                position,
+                Vec3::ZERO,
+                0,
+                PickupDelay::Thrown,
+            );
+        }
+        let workers = Workers::new(1).unwrap();
+        drops.update(1, &world, &workers);
+        {
+            let items = drops.0.lock().unwrap();
+            assert!(items[0].physics.burning());
+            assert_eq!(items[0].physics.health, 1);
+            assert!(!items[1].physics.burning());
+        }
+        drops.update(2, &world, &workers);
+        let items = drops.0.lock().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, 2);
+        assert!(items[0].physics.motion.position.y > position.y);
+    }
+
+    #[test]
     fn dropped_items_rise_in_water_and_follow_current_until_the_bank() {
         let world = NativeWorld::new(0);
         let water = Blocks::vanilla().named("water").unwrap();
@@ -298,17 +386,17 @@ mod tests {
                 .unwrap();
         }
         let position = pos.get_bottom_center().add(0.0, 0.2, 0.0);
-        let motion = PositionMoveRotation::new(position, Vec3::ZERO, 0.0, 0.0);
+        let physics = DropPhysics::new(position, Vec3::ZERO, false);
         let world = world.snapshot();
-        let (updated, grounded) = step_drop(1, 0, motion, &world).unwrap();
-        assert!(updated.position.x > position.x);
-        assert!(updated.position.y > position.y);
-        assert!(!grounded);
+        let updated = step_drop(1, 0, physics, &world).unwrap();
+        assert!(updated.motion.position.x > position.x);
+        assert!(updated.motion.position.y > position.y);
+        assert!(!updated.on_ground);
 
         let bank = Vec3::new(0.875, position.y, position.z);
-        let motion = PositionMoveRotation::new(bank, Vec3::ZERO, 0.0, 0.0);
-        let (updated, _) = step_drop(1, 0, motion, &world).unwrap();
-        assert_eq!(updated.position.x, bank.x);
-        assert!(updated.position.y > bank.y);
+        let physics = DropPhysics::new(bank, Vec3::ZERO, false);
+        let updated = step_drop(1, 0, physics, &world).unwrap();
+        assert_eq!(updated.motion.position.x, bank.x);
+        assert!(updated.motion.position.y > bank.y);
     }
 }

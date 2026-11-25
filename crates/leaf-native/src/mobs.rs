@@ -29,9 +29,10 @@ use crate::gameplay::PlayContext;
 use crate::items::{named_id, stack};
 use crate::mob_types::{self, MobType};
 use crate::peers::{clear_sight, clear_sight_with, MobTarget, Peers};
+use crate::player_environment::LAVA_FIRE_TICKS;
 use crate::simulation::SimulationContext;
 use crate::workers::Workers;
-use crate::world::{chunk, entity_bounds, BlockView, Fluid, NativeWorld};
+use crate::world::{chunk, entity_bounds, BlockView, NativeWorld};
 
 pub const COMMAND_LIMIT: i32 = 50_000;
 const FUSE_TICKS: i64 = 80;
@@ -653,29 +654,39 @@ impl Mob {
         world: &BlockView,
         ctx: &SimulationContext<'_>,
     ) {
-        if !matches!(
-            self.kind.name,
-            "zombie"
-                | "zombie_villager"
-                | "drowned"
-                | "skeleton"
-                | "stray"
-                | "bogged"
-                | "parched"
-                | "phantom"
-        ) {
+        if self.kind.fire_immune {
             return;
         }
-        if world.fluid_at(self.motion.position) == Some(Fluid::Water) {
+        let bounds = entity_bounds(self.motion.position, self.kind.width, self.kind.height);
+        let (in_water, in_lava) = world.touching_fluids(bounds);
+        if in_lava {
+            self.fire_until = now + i64::from(LAVA_FIRE_TICKS);
+            self.burning = true;
+            self.damage(4.0, self.motion.delta_movement, now, ctx);
+            return;
+        }
+        if in_water {
             self.fire_until = now;
-        } else if sunlight {
+        } else if sunlight
+            && matches!(
+                self.kind.name,
+                "zombie"
+                    | "zombie_villager"
+                    | "drowned"
+                    | "skeleton"
+                    | "stray"
+                    | "bogged"
+                    | "parched"
+                    | "phantom"
+            )
+        {
             let head = BlockPos::containing_vec3(&self.motion.position.add(
                 0.0,
                 self.kind.height * 0.8,
                 0.0,
             ));
             if world.sees_sky(head) {
-                self.fire_until = now + 160;
+                self.fire_until = self.fire_until.max(now + 160);
             }
         }
         self.burning = now < self.fire_until;
@@ -775,7 +786,7 @@ impl Mob {
         }
         let bounds = entity_bounds(position, self.kind.width, self.kind.height);
         if self.kind.is_pushed_by_fluid() {
-            velocity = world.push_by_fluid(bounds, velocity);
+            velocity = world.push_by_fluid(bounds, velocity).velocity;
         }
         if self.on_ground
             && velocity == Vec3::ZERO
@@ -931,6 +942,64 @@ mod tests {
     use crate::operators::Operators;
     use crate::tests::TestWorld;
     use crate::wire::PacketIds;
+
+    #[test]
+    fn lava_burns_pigs_but_not_blazes_and_water_extinguishes() {
+        let directory = TestWorld::new();
+        std::fs::create_dir_all(&directory.0).unwrap();
+        let world = NativeWorld::new(0);
+        let commands = Commands::new(Operators::open(directory.0.join("ops.txt")).unwrap(), 0);
+        let audience = Audience::default();
+        let drops = Drops::default();
+        let ids = AtomicI32::new(1);
+        let ctx = SimulationContext {
+            world: &world,
+            commands: &commands,
+            audience: &audience,
+            drops: &drops,
+            entity_ids: &ids,
+        };
+        let lava = BlockPos::new(0, 16, 0);
+        let water = lava.offset(4, 0, 0);
+        for (pos, name) in [(lava, "lava"), (water, "water")] {
+            let state = Blocks::vanilla().named(name).unwrap().default;
+            world
+                .fill(pos, pos, state, crate::world::FillMode::Keep, 1, &audience)
+                .unwrap();
+        }
+        let snapshot = world.snapshot();
+        let mobs = Mobs::default();
+        let mut scene = mobs.0.write().unwrap();
+        let mut add = |name| {
+            scene.add(
+                mob_types::named(name).unwrap(),
+                lava.get_bottom_center(),
+                false,
+                None,
+                &ids,
+            )
+        };
+        let pig = add("pig");
+        let blaze = add("blaze");
+        let pig = scene.entities.get_mut(&pig).unwrap();
+        pig.tick_fire(20, false, &snapshot, &ctx);
+        assert_eq!(pig.health, 6.0);
+        assert!(pig.burning);
+        pig.tick_fire(21, false, &snapshot, &ctx);
+        assert_eq!(pig.health, 6.0);
+        pig.motion.position = lava.offset(2, 0, 0).get_bottom_center();
+        pig.tick_fire(40, false, &snapshot, &ctx);
+        assert_eq!(pig.health, 5.0);
+        pig.motion.position = water.get_bottom_center();
+        pig.tick_fire(60, false, &snapshot, &ctx);
+        assert_eq!(pig.health, 5.0);
+        assert!(!pig.burning);
+
+        let blaze = scene.entities.get_mut(&blaze).unwrap();
+        blaze.tick_fire(20, false, &snapshot, &ctx);
+        assert_eq!(blaze.health, blaze.kind.health);
+        assert!(!blaze.burning);
+    }
 
     #[test]
     fn current_moves_land_mobs_and_primed_tnt_without_pushing_through_banks() {

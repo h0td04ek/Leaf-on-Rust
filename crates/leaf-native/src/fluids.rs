@@ -624,7 +624,7 @@ impl BlockView {
         (water, lava)
     }
 
-    pub fn push_by_fluid(&self, bounds: Aabb, mut velocity: Vec3) -> Vec3 {
+    pub fn push_by_fluid(&self, bounds: Aabb, mut velocity: Vec3) -> FluidMotion {
         let mut water = Current::default();
         let mut lava = Current::default();
         self.visit_fluids(bounds, |pos, liquid, depth| {
@@ -643,11 +643,13 @@ impl BlockView {
                 .add_vec(&self.flow_at(pos, liquid).scale(scale));
             current.cells += 1;
         });
+        let in_water = water.cells > 0;
+        let in_lava = lava.cells > 0;
         for (current, strength) in [(water, 0.014), (lava, 0.0023333333333333335)] {
             if current.cells == 0 || current.direction == Vec3::ZERO {
                 continue;
             }
-            // Non-player entities normalize the average before applying drag.
+            // Non-player entities normalize the average before applying the impulse.
             let direction = current
                 .direction
                 .scale(1.0 / f64::from(current.cells))
@@ -659,7 +661,11 @@ impl BlockView {
             };
             velocity = velocity.add_vec(&direction.scale(strength));
         }
-        velocity
+        FluidMotion {
+            velocity,
+            in_water,
+            in_lava,
+        }
     }
 
     fn visit_fluids(&self, bounds: Aabb, mut visit: impl FnMut(BlockPos, Liquid, f64)) {
@@ -737,6 +743,12 @@ impl BlockView {
         };
         f64::from(pos.y) + height
     }
+}
+
+pub struct FluidMotion {
+    pub velocity: Vec3,
+    pub in_water: bool,
+    pub in_lava: bool,
 }
 
 #[derive(Default)]
@@ -849,6 +861,7 @@ mod tests {
                 crate::world::entity_bounds(pos.get_bottom_center(), 0.25, 0.25),
                 initial,
             )
+            .velocity
         };
         assert_eq!(push(pool, Vec3::ZERO), Vec3::ZERO);
         assert_eq!(push(stream, Vec3::ZERO), Vec3::new(0.014, 0.0, 0.0));

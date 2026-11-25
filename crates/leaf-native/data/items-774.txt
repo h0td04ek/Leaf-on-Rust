@@ -1,4 +1,4 @@
-# Protocol 774 item ID, path, max stack size and optional preview block state.
+# Protocol 774 item ID, path, max stack size, preview block state (- if unavailable), optional damage resistance tag.
 0 air 64 -
 1 stone 64 1
 2 granite 64 -
@@ -81,7 +81,7 @@
 79 deepslate_diamond_ore 64 -
 80 nether_gold_ore 64 -
 81 nether_quartz_ore 64 -
-82 ancient_debris 64 -
+82 ancient_debris 64 - is_fire
 83 coal_block 64 -
 84 raw_iron_block 64 -
 85 raw_copper_block 64 -
@@ -93,7 +93,7 @@
 91 copper_block 64 -
 92 gold_block 64 -
 93 diamond_block 64 -
-94 netherite_block 64 -
+94 netherite_block 64 - is_fire
 95 exposed_copper 64 -
 96 weathered_copper 64 -
 97 oxidized_copper 64 -
@@ -908,8 +908,8 @@
 906 copper_ingot 64 -
 907 raw_gold 64 -
 908 gold_ingot 64 -
-909 netherite_ingot 64 -
-910 netherite_scrap 64 -
+909 netherite_ingot 64 - is_fire
+910 netherite_scrap 64 - is_fire
 911 wooden_sword 1 -
 912 wooden_shovel 1 -
 913 wooden_pickaxe 1 -
@@ -940,11 +940,11 @@
 938 diamond_pickaxe 1 -
 939 diamond_axe 1 -
 940 diamond_hoe 1 -
-941 netherite_sword 1 -
-942 netherite_shovel 1 -
-943 netherite_pickaxe 1 -
-944 netherite_axe 1 -
-945 netherite_hoe 1 -
+941 netherite_sword 1 - is_fire
+942 netherite_shovel 1 - is_fire
+943 netherite_pickaxe 1 - is_fire
+944 netherite_axe 1 - is_fire
+945 netherite_hoe 1 - is_fire
 946 stick 64 -
 947 mushroom_stew 1 -
 948 string 64 -
@@ -977,10 +977,10 @@
 975 golden_chestplate 1 -
 976 golden_leggings 1 -
 977 golden_boots 1 -
-978 netherite_helmet 1 -
-979 netherite_chestplate 1 -
-980 netherite_leggings 1 -
-981 netherite_boots 1 -
+978 netherite_helmet 1 - is_fire
+979 netherite_chestplate 1 - is_fire
+980 netherite_leggings 1 - is_fire
+981 netherite_boots 1 - is_fire
 982 flint 64 -
 983 porkchop 64 -
 984 cooked_porkchop 64 -
@@ -1239,7 +1239,7 @@
 1237 creeper_head 64 -
 1238 dragon_head 64 -
 1239 piglin_head 64 -
-1240 nether_star 64 -
+1240 nether_star 64 - is_explosion
 1241 pumpkin_pie 64 -
 1242 firework_rocket 64 -
 1243 firework_star 64 -
@@ -1258,7 +1258,7 @@
 1256 iron_horse_armor 1 -
 1257 golden_horse_armor 1 -
 1258 diamond_horse_armor 1 -
-1259 netherite_horse_armor 1 -
+1259 netherite_horse_armor 1 - is_fire
 1260 leather_horse_armor 1 -
 1261 lead 64 -
 1262 name_tag 64 -
@@ -1301,7 +1301,7 @@
 1299 iron_spear 1 -
 1300 golden_spear 1 -
 1301 diamond_spear 1 -
-1302 netherite_spear 1 -
+1302 netherite_spear 1 - is_fire
 1303 totem_of_undying 1 -
 1304 shulker_shell 64 -
 1305 iron_nugget 64 -
@@ -1335,7 +1335,7 @@
 1333 iron_nautilus_armor 1 -
 1334 golden_nautilus_armor 1 -
 1335 diamond_nautilus_armor 1 -
-1336 netherite_nautilus_armor 1 -
+1336 netherite_nautilus_armor 1 - is_fire
 1337 copper_nautilus_armor 1 -
 1338 heart_of_the_sea 64 -
 1339 crossbow 1 -
