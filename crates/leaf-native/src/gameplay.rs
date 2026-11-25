@@ -107,7 +107,7 @@ pub struct Gameplay {
     on_ground: bool,
     creative_flying: bool,
     gliding: bool,
-    environment: Environment,
+    sent_environment: Environment,
     drops: DropTracker,
     mining: Option<Digging>,
     loot_random: LegacyRandomSource,
@@ -128,7 +128,7 @@ impl Gameplay {
             on_ground: true,
             creative_flying,
             gliding: false,
-            environment: Environment::default(),
+            sent_environment: Environment::default(),
             drops: DropTracker::default(),
             mining: None,
             loot_random: LegacyRandomSource::new(i64::from(entity_id) << 32 ^ game_tick),
@@ -200,6 +200,7 @@ impl Gameplay {
         self.player.yaw = 0.0;
         self.player.pitch = 0.0;
         self.player.health = 20.0;
+        self.player.environment = Environment::default();
         self.on_ground = true;
         self.creative_flying = self.player.mode == GameType::Spectator;
         self.gliding = false;
@@ -848,7 +849,7 @@ impl Gameplay {
         self.gliding = gliding;
         wire.send(
             ids,
-            &gliding_packet(self.entity_id, gliding, self.environment.burning),
+            &gliding_packet(self.entity_id, gliding, self.player.environment.burning()),
         )
     }
 
@@ -858,25 +859,28 @@ impl Gameplay {
         wire: &mut Wire,
         ids: &PacketIds,
     ) -> io::Result<()> {
-        if self.environment == environment {
+        self.player.environment = environment;
+        let air_changed = environment.air != self.sent_environment.air;
+        let fire_changed = environment.burning() != self.sent_environment.burning();
+        if !air_changed && !fire_changed {
             return Ok(());
         }
         let mut values = Vec::new();
-        if environment.air != self.environment.air {
+        if air_changed {
             values.push(DataValue {
                 id: 1,
                 serializer: 1,
                 value: Box::new(environment.air),
             });
         }
-        if environment.burning != self.environment.burning {
-            values.push(flags(self.gliding, environment.burning));
+        if fire_changed {
+            values.push(flags(self.gliding, environment.burning()));
         }
         wire.send(
             ids,
             &ClientboundSetEntityDataPacket::new(self.entity_id, values),
         )?;
-        self.environment = environment;
+        self.sent_environment = environment;
         Ok(())
     }
 

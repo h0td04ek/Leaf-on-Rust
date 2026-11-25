@@ -137,7 +137,7 @@ impl Peers {
             let hazard = online
                 .hazards
                 .tick(underwater, in_water, in_lava, respiration, rules);
-            player.burning = online.hazards.environment().burning;
+            player.burning = online.hazards.environment().burning();
             if let Some(hazard) = hazard.filter(|_| can_hurt(online, tick)) {
                 let message = format!("{} {}", online.player.profile.name, hazard.death());
                 apply_hit(online, hazard.damage(), None, message, tick);
@@ -162,8 +162,20 @@ impl Peers {
         apply_hit(target, damage, Some(velocity), message, tick);
     }
 
-    pub fn join(&self, id: i32, profile: GameProfile, view: View, health: f32) -> Presence<'_> {
+    pub fn join(
+        &self,
+        id: i32,
+        profile: GameProfile,
+        view: View,
+        health: f32,
+        environment: Environment,
+    ) -> Presence<'_> {
         let profile_seed = profile.id.least_significant_bits;
+        let environment = if health > 0.0 && view.mode.is_survival() {
+            environment
+        } else {
+            Environment::default()
+        };
         let player = Player {
             profile,
             view,
@@ -171,7 +183,7 @@ impl Peers {
             swings: 0,
             last_swing: 0,
             hurt: 0,
-            burning: false,
+            burning: environment.burning(),
         };
         self.0.lock().unwrap().insert(
             id,
@@ -179,7 +191,7 @@ impl Peers {
                 player,
                 last_attack: None,
                 last_hurt: None,
-                hazards: Hazards::new(profile_seed),
+                hazards: Hazards::new(profile_seed, environment),
                 pending_hit: None,
                 pending_mode: None,
             },
@@ -220,7 +232,13 @@ impl Presence<'_> {
     }
 
     pub fn publish(&self, view: View) {
-        self.update(|player| player.player.view = view);
+        self.update(|player| {
+            if !view.mode.is_survival() {
+                player.hazards.clear();
+                player.player.burning = false;
+            }
+            player.player.view = view;
+        });
     }
 
     pub fn swing(&self, action: i32) {
@@ -269,13 +287,15 @@ impl Presence<'_> {
         respawned
     }
 
-    pub fn leave(self) -> f32 {
+    pub fn leave(self) -> (f32, Environment) {
         self.peers
             .0
             .lock()
             .unwrap()
             .remove(&self.id)
-            .map_or(20.0, |player| player.player.health)
+            .map_or((20.0, Environment::default()), |online| {
+                (online.player.health, online.hazards.environment())
+            })
     }
 
     pub fn attack(&self, target_id: i32, world: &NativeWorld, tick: i64) {

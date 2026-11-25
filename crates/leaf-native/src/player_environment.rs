@@ -1,8 +1,8 @@
 use leaf_core::random::{LegacyRandomSource, RandomSource};
 
-const MAX_AIR: i32 = 300;
-const DROWNING_THRESHOLD: i32 = -20;
-const LAVA_FIRE_TICKS: u16 = 15 * 20;
+pub const MAX_AIR: i32 = 300;
+pub const DROWNING_THRESHOLD: i32 = -20;
+pub const LAVA_FIRE_TICKS: u16 = 15 * 20;
 
 #[derive(Clone, Copy)]
 pub struct Rules {
@@ -13,21 +13,26 @@ pub struct Rules {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Environment {
     pub air: i32,
-    pub burning: bool,
+    pub fire_ticks: u16,
 }
 
 impl Default for Environment {
     fn default() -> Self {
         Self {
             air: MAX_AIR,
-            burning: false,
+            fire_ticks: 0,
         }
     }
 }
 
+impl Environment {
+    pub fn burning(self) -> bool {
+        self.fire_ticks > 0
+    }
+}
+
 pub struct Hazards {
-    air: i32,
-    fire_ticks: u16,
+    environment: Environment,
     random: LegacyRandomSource,
 }
 
@@ -56,24 +61,19 @@ impl Hazard {
 }
 
 impl Hazards {
-    pub fn new(seed: i64) -> Self {
+    pub fn new(seed: i64, environment: Environment) -> Self {
         Self {
-            air: MAX_AIR,
-            fire_ticks: 0,
+            environment,
             random: LegacyRandomSource::new(seed),
         }
     }
 
     pub fn environment(&self) -> Environment {
-        Environment {
-            air: self.air,
-            burning: self.fire_ticks > 0,
-        }
+        self.environment
     }
 
     pub fn clear(&mut self) {
-        self.air = MAX_AIR;
-        self.fire_ticks = 0;
+        self.environment = Environment::default();
     }
 
     pub fn tick(
@@ -87,28 +87,28 @@ impl Hazards {
         let drowning = if underwater {
             if respiration <= 0 || self.random.next_double() < 1.0 / (f64::from(respiration) + 1.0)
             {
-                self.air -= 1;
+                self.environment.air -= 1;
             }
-            if self.air <= DROWNING_THRESHOLD {
-                self.air = 0;
+            if self.environment.air <= DROWNING_THRESHOLD {
+                self.environment.air = 0;
                 rules.drowning_damage
             } else {
                 false
             }
         } else {
-            self.air = (self.air + 4).min(MAX_AIR);
+            self.environment.air = (self.environment.air + 4).min(MAX_AIR);
             false
         };
 
         if in_lava {
-            self.fire_ticks = LAVA_FIRE_TICKS;
+            self.environment.fire_ticks = LAVA_FIRE_TICKS;
             return rules.fire_damage.then_some(Hazard::Lava);
         }
         if in_water {
-            self.fire_ticks = 0;
+            self.environment.fire_ticks = 0;
         }
-        let burning = self.fire_ticks > 0 && self.fire_ticks % 20 == 0;
-        self.fire_ticks = self.fire_ticks.saturating_sub(1);
+        let burning = self.environment.fire_ticks > 0 && self.environment.fire_ticks % 20 == 0;
+        self.environment.fire_ticks = self.environment.fire_ticks.saturating_sub(1);
         if drowning {
             Some(Hazard::Drowning)
         } else if burning && rules.fire_damage {

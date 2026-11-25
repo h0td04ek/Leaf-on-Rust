@@ -255,10 +255,13 @@ impl Server {
         slot.joined = true;
         self.online.fetch_add(1, Ordering::Relaxed);
 
-        let presence =
-            self.simulation
-                .peers
-                .join(entity, profile.clone(), game.view(), game.player.health);
+        let presence = self.simulation.peers.join(
+            entity,
+            profile.clone(),
+            game.view(),
+            game.player.health,
+            game.player.environment,
+        );
         let mut saved = Vec::new();
         let result = self.play(
             wire,
@@ -269,7 +272,7 @@ impl Server {
             &presence,
             &mut saved,
         );
-        game.player.health = presence.leave();
+        (game.player.health, game.player.environment) = presence.leave();
         game.finish_session();
         if let Err(error) =
             self.player_data

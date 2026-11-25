@@ -1478,11 +1478,13 @@ fn buckets_waterlog_the_clicked_slab_and_keep_its_orientation() {
 }
 
 #[test]
-fn players_drown_burn_and_are_extinguished_by_water() {
+fn players_drown_burn_and_keep_environment_state_after_reconnecting() {
     use leaf_core::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
 
     let world = TestWorld::new();
-    let (mut client, worker) = connect(&world);
+    let server =
+        Arc::new(Server::new(PlayerStore::open(&world.0).unwrap(), 1, Generation::FLAT).unwrap());
+    let (mut client, worker) = connect_server(Arc::clone(&server));
     let player = enter_play(&mut client, "h0td04ek", 2);
     assert_eq!(multiplayer_packet(&mut client, 102).read_float(), 20.0);
     acknowledge_teleport(&mut client);
@@ -1571,6 +1573,34 @@ fn players_drown_burn_and_are_extinguished_by_water() {
     send_location(&mut client, Vec3::new(0.5, 16.0, 0.5), 0.0, 0.0);
     assert_eq!(sprint(&mut client, 320), (0, false, 13.0));
 
+    command(&mut client, "gamerule fire_damage true");
+    multiplayer_packet(&mut client, 119);
+    send_location(&mut client, Vec3::new(4.5, 16.0, 0.5), 0.0, 0.0);
+    assert_eq!(sprint(&mut client, 1), (4, true, 9.0));
+    send_location(&mut client, Vec3::new(8.5, 16.0, 0.5), 0.0, 0.0);
+    command(&mut client, "tick freeze");
+    multiplayer_packet(&mut client, 119);
+    drop(client);
+    assert!(worker.join().unwrap().is_err());
+
+    let (mut client, worker) = connect_server(server);
+    let player = enter_play(&mut client, "h0td04ek", 2);
+    assert_eq!(multiplayer_packet(&mut client, 102).read_float(), 9.0);
+    acknowledge_teleport(&mut client);
+    let data = ClientboundSetEntityDataPacket::stream_codec()
+        .decode(&mut multiplayer_packet(&mut client, 97));
+    assert_eq!(data.id, player);
+    assert!(data
+        .packed_items
+        .iter()
+        .any(|entry| { entry.id == 1 && entry.value.downcast_ref::<i32>() == Some(&4) }));
+    assert!(data.packed_items.iter().any(|entry| {
+        entry.id == 0
+            && entry
+                .value
+                .downcast_ref::<i8>()
+                .is_some_and(|flags| flags & 1 != 0)
+    }));
     drop(client);
     assert!(worker.join().unwrap().is_err());
 }

@@ -10,6 +10,7 @@ use leaf_core::world::level::game_type::GameType;
 use leaf_core::world::phys::vec3::Vec3;
 
 use crate::items::item_id;
+use crate::player_environment::{Environment, DROWNING_THRESHOLD, LAVA_FIRE_TICKS, MAX_AIR};
 use crate::wire::invalid;
 use crate::world::{Generation, WorldType, SPAWN_Y, TERRAIN_VERSION};
 
@@ -26,6 +27,7 @@ pub struct PlayerData {
     pub selection: usize,
     pub mode: GameType,
     pub health: f32,
+    pub environment: Environment,
     pub yaw: f32,
     pub pitch: f32,
 }
@@ -39,6 +41,7 @@ impl Default for PlayerData {
             selection: 0,
             mode: GameType::Creative,
             health: 20.0,
+            environment: Environment::default(),
             yaw: 0.0,
             pitch: 0.0,
         }
@@ -95,6 +98,24 @@ impl PlayerData {
             Some(_) => return Err(invalid("invalid saved health")),
         };
 
+        let air = match tag.get("Air") {
+            None => MAX_AIR,
+            Some(Tag::Short(value))
+                if (DROWNING_THRESHOLD + 1..=MAX_AIR).contains(&i32::from(*value)) =>
+            {
+                i32::from(*value)
+            }
+            Some(_) => return Err(invalid("invalid saved air supply")),
+        };
+        let fire_ticks = match tag.get("Fire") {
+            None => 0,
+            Some(Tag::Short(value)) if (0..=LAVA_FIRE_TICKS as i16).contains(value) => {
+                *value as u16
+            }
+            Some(_) => return Err(invalid("invalid saved fire duration")),
+        };
+        let environment = Environment { air, fire_ticks };
+
         let mut inventory = std::array::from_fn(|_| ItemStack::empty());
         let entries = tag
             .get("Inventory")
@@ -146,6 +167,7 @@ impl PlayerData {
             selection,
             mode,
             health,
+            environment,
             yaw: *yaw,
             pitch: *pitch,
         })
@@ -172,6 +194,8 @@ impl PlayerData {
         tag.put_int("SelectedItemSlot", self.selection as i32);
         tag.put_int("GameMode", self.mode.get_id());
         tag.put_float("Health", self.health);
+        tag.put_short("Air", self.environment.air as i16);
+        tag.put_short("Fire", self.environment.fire_ticks as i16);
         let mut inventory = Vec::new();
         for (index, item) in self.inventory.iter().enumerate() {
             if item.is_empty() {
